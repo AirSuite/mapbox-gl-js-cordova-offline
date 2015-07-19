@@ -20,6 +20,7 @@
     "mapbox-gl-function": "^1.0.0",
     "mapbox-gl-style-spec": "^7.4.0",
     "minifyify": "^6.1.0",
+    "pako": "^0.2.6",
     "pbf": "^1.2.0",
     "pngjs": "^0.4.0",
     "point-geometry": "0.0.0",

@@ -30,28 +30,18 @@ util.extend(Worker.prototype, {
     },
 
     'load tile': function(params, callback) {
+
+        var tileData = params.tileData;
+        delete params.tileData;
+
         var source = params.source,
             uid = params.uid;
 
-        if (!this.loading[source])
-            this.loading[source] = {};
-
-
-        var tile = this.loading[source][uid] = new WorkerTile(params);
-
-        tile.xhr = ajax.getArrayBuffer(params.url, done.bind(this));
-
-        function done(err, data) {
-            delete this.loading[source][uid];
-
-            if (err) return callback(err);
-
-            tile.data = new vt.VectorTile(new Protobuf(new Uint8Array(data)));
-            tile.parse(tile.data, this.layers, this.actor, callback);
-
-            this.loaded[source] = this.loaded[source] || {};
-            this.loaded[source][uid] = tile;
-        }
+        var tile = new WorkerTile(params);
+        tile.data = new vt.VectorTile(new Protobuf(tileData));
+        tile.parse(tile.data, this.layers, this.actor, callback);
+        this.loaded[source] = this.loaded[source] || {};
+        this.loaded[source][uid] = tile;
     },
 
     'reload tile': function(params, callback) {
