@@ -55,6 +55,20 @@ test('GeoJSONSource#setData', function(t) {
     });
 });
 
+test('GeoJSONSource#reload', function(t) {
+    t.test('before loaded', function(t) {
+        var source = new GeoJSONSource({data: {}});
+
+        t.doesNotThrow(function() {
+            source.reload();
+        }, null, 'reload ignored gracefully');
+
+        t.end();
+    });
+
+    t.end();
+});
+
 test('GeoJSONSource#update', function(t) {
     var transform = new Transform();
 
@@ -68,6 +82,29 @@ test('GeoJSONSource#update', function(t) {
         source.dispatcher = {
             send: function(message) {
                 t.equal(message, 'parse geojson');
+                t.end();
+            }
+        };
+
+        source.update(transform);
+    });
+
+    t.test('forwards geojson-vt options with worker request', function(t) {
+        var source = new GeoJSONSource({
+          data: {},
+          maxzoom: 10,
+          tolerance: 2,
+          buffer: 128
+        });
+
+        source.dispatcher = {
+            send: function(message, params) {
+                t.equal(message, 'parse geojson');
+                t.deepEqual(params.geojsonVtOptions, {
+                  maxZoom: 10,
+                  tolerance: 2,
+                  buffer: 128
+                });
                 t.end();
             }
         };

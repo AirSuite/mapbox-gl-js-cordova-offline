@@ -7,8 +7,8 @@ A WebGL JavaScript interactive maps library that can render [Mapbox Vector Tiles
 Include the source via HTML tags:
 
 ```html
-<script src='https://api.tiles.mapbox.com/mapbox-gl-js/v0.8.0/mapbox-gl.js'></script>
-<link href='https://api.tiles.mapbox.com/mapbox-gl-js/v0.8.0/mapbox-gl.css' rel='stylesheet' />
+<script src='https://api.tiles.mapbox.com/mapbox-gl-js/v0.9.0/mapbox-gl.js'></script>
+<link href='https://api.tiles.mapbox.com/mapbox-gl-js/v0.9.0/mapbox-gl.css' rel='stylesheet' />
 ```
 
 For more information, see the [API documentation](https://www.mapbox.com/mapbox-gl-js/api/) and [examples](https://www.mapbox.com/mapbox-gl-js/examples/).
@@ -23,12 +23,12 @@ manually. APT install steps are relevant to Ubuntu Linux users.
 
 * [git](https://git-scm.com/)
   * OSX: `brew install git`
-  * APT: `apt-get install git`
+  * APT: `sudo apt-get install git`
 * [node.js](https://nodejs.org/)
 * [GNU Make](http://www.gnu.org/software/make/)
 * [imagemagick](http://www.imagemagick.org/)
   * OSX: `brew install imagemagick`
-  * APT: `apt-get install imagemagik`
+  * APT: `sudo apt-get install imagemagick`
 
 On Linux, libglew-dev is required in order to run rendering tests:
 
@@ -80,6 +80,20 @@ public and private. Mark private classes and methods with `@private`.
 
 To generate the HTML documentation from JSDoc, run `npm run docs`. To view the result, run
 `jekyll serve` (requires [Jekyll](http://jekyllrb.com/)).
+
+## Releasing
+
+To prepare a release:
+
+* Update CHANGELOG.md
+* Update the version number in package.json, README.md, _config.yml, and _config.mb-pages.yml
+* Publish the build to the CDN (see below)
+* Publish the build to npm (`npm publish`)
+* Merge the `mb-pages` branch to `master`
+
+The CI server publishes builds to the Mapbox CDN automatically, but it does not currently support building tags. Therefore,
+to release a new version, push a _branch_ with a name of the form `vX.Y.Z`, with version matching package.json. Once the
+build is successful, delete the branch and replace it with a tag.
 
 ## [Style Reference](https://www.mapbox.com/mapbox-gl-style-spec/)
 
