@@ -2,10 +2,9 @@
 
 var util = require('../util/util');
 var Tile = require('./tile');
-var LatLng = require('../geo/lat_lng');
+var LngLat = require('../geo/lng_lat');
 var Point = require('point-geometry');
 var Evented = require('../util/evented');
-var Coordinate = require('../geo/coordinate');
 var ajax = require('../util/ajax');
 
 module.exports = VideoSource;
@@ -15,7 +14,7 @@ module.exports = VideoSource;
  * @class VideoSource
  * @param {Object} [options]
  * @param {string|Array} options.url A string or array of URL(s) to video files
- * @param {Array} options.coordinates lat,lng coordinates in order clockwise starting at the top left: tl, tr, br, bl
+ * @param {Array} options.coordinates lng, lat coordinates in order clockwise starting at the top left: tl, tr, br, bl
  * @example
  * var sourceObj = new mapboxgl.VideoSource({
  *    url: [
@@ -23,10 +22,10 @@ module.exports = VideoSource;
  *        'https://www.mapbox.com/videos/baltimore-smoke.webm'
  *    ],
  *    coordinates: [
- *        [39.18579907229748, -76.54335737228394],
- *        [39.1838364847587, -76.52803659439087],
- *        [39.17683392507606, -76.5295386314392],
- *        [39.17876344106642, -76.54520273208618]
+ *        [-76.54335737228394, 39.18579907229748],
+ *        [-76.52803659439087, 39.1838364847587],
+ *        [-76.5295386314392, 39.17683392507606],
+ *        [-76.54520273208618, 39.17876344106642]
  *    ]
  * });
  * map.addSource('some id', sourceObj); // add
@@ -35,7 +34,7 @@ module.exports = VideoSource;
 function VideoSource(options) {
     this.coordinates = options.coordinates;
 
-    ajax.getVideo(options.url, function(err, video) {
+    ajax.getVideo(options.urls, function(err, video) {
         // @TODO handle errors via event.
         if (err) return;
 
@@ -92,29 +91,12 @@ VideoSource.prototype = util.inherit(Evented, /** @lends VideoSource.prototype *
          * may be outside the tile, because raster tiles aren't clipped when rendering.
          */
         var map = this.map;
-        var coords = this.coordinates.map(function(latlng) {
-            var loc = LatLng.convert(latlng);
+        var coords = this.coordinates.map(function(lnglat) {
+            var loc = LngLat.convert(lnglat);
             return map.transform.locationCoordinate(loc).zoomTo(0);
         });
 
-        var minX = Infinity;
-        var minY = Infinity;
-        var maxX = -Infinity;
-        var maxY = -Infinity;
-
-        for (var i = 0; i < coords.length; i++) {
-            minX = Math.min(minX, coords[i].column);
-            minY = Math.min(minY, coords[i].row);
-            maxX = Math.max(maxX, coords[i].column);
-            maxY = Math.max(maxY, coords[i].row);
-        }
-
-        var dx = maxX - minX;
-        var dy = maxY - minY;
-        var dMax = Math.max(dx, dy);
-        var center = new Coordinate((minX + maxX) / 2, (minY + maxY) / 2, 0)
-            .zoomTo(Math.floor(-Math.log(dMax) / Math.LN2));
-
+        var center = util.getCoordinatesCenter(coords);
         var tileExtent = 4096;
         var tileCoords = coords.map(function(coord) {
             var zoomedCoord = coord.zoomTo(center.zoom);

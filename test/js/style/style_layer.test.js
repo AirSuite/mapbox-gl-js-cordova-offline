@@ -20,22 +20,6 @@ test('StyleLayer#resolveLayout', function(t) {
         t.ok(layer.layout instanceof LayoutProperties.fill);
         t.end();
     });
-
-    t.test('resolves layout constants', function (t) {
-        var layer = new StyleLayer({
-            type: 'line',
-            layout: {
-                'line-cap': '@square'
-            }
-        }, {
-            '@square': 'square'
-        });
-
-        layer.resolveLayout();
-
-        t.equal(layer.layout['line-cap'], 'square');
-        t.end();
-    });
 });
 
 test('StyleLayer#resolveReference', function(t) {
@@ -111,6 +95,22 @@ test('StyleLayer#setPaintProperty', function(t) {
         t.end();
     });
 
+    t.test('unsets property value', function(t) {
+        var layer = new StyleLayer({
+            "id": "background",
+            "type": "background",
+            "paint": {
+                "background-color": "red"
+            }
+        });
+
+        layer.resolvePaint({});
+        layer.setPaintProperty('background-color', null);
+
+        t.deepEqual(layer.getPaintProperty('background-color'), [0, 0, 0, 1]);
+        t.end();
+    });
+
     t.test('sets classed paint value', function(t) {
         var layer = new StyleLayer({
             "id": "background",
@@ -124,6 +124,22 @@ test('StyleLayer#setPaintProperty', function(t) {
         layer.setPaintProperty('background-color', 'blue', 'night');
 
         t.deepEqual(layer.getPaintProperty('background-color', 'night'), [0, 0, 1, 1]);
+        t.end();
+    });
+
+    t.test('unsets classed paint value', function(t) {
+        var layer = new StyleLayer({
+            "id": "background",
+            "type": "background",
+            "paint.night": {
+                "background-color": "red"
+            }
+        });
+
+        layer.resolvePaint({});
+        layer.setPaintProperty('background-color', null, 'night');
+
+        t.deepEqual(layer.getPaintProperty('background-color', 'night'), [0, 0, 0, 1]);
         t.end();
     });
 
@@ -161,39 +177,6 @@ test('StyleLayer#setPaintProperty', function(t) {
         t.deepEqual(layer.getPaintProperty('background-color-transition'), {duration: 400});
         t.end();
     });
-
-    t.test('resolves constants (create)', function(t) {
-        var layer = new StyleLayer({
-            "id": "background",
-            "type": "background"
-        }, {
-            '@blue': 'blue'
-        });
-
-        layer.resolvePaint();
-        layer.setPaintProperty('background-color', '@blue');
-
-        t.deepEqual(layer.getPaintProperty('background-color'), [0, 0, 1, 1]);
-        t.end();
-    });
-
-    t.test('resolves constants (update)', function(t) {
-        var layer = new StyleLayer({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red"
-            }
-        }, {
-            '@blue': 'blue'
-        });
-
-        layer.resolvePaint();
-        layer.setPaintProperty('background-color', '@blue');
-
-        t.deepEqual(layer.getPaintProperty('background-color'), [0, 0, 1, 1]);
-        t.end();
-    });
 });
 
 test('StyleLayer#setLayoutProperty', function(t) {
@@ -226,36 +209,19 @@ test('StyleLayer#setLayoutProperty', function(t) {
         t.end();
     });
 
-    t.test('resolves constants (create)', function(t) {
-        var layer = new StyleLayer({
-            "id": "symbol",
-            "type": "symbol"
-        }, {
-            '@lowercase': 'lowercase'
-        });
-
-        layer.resolveLayout();
-        layer.setLayoutProperty('text-transform', '@lowercase');
-
-        t.deepEqual(layer.getLayoutProperty('text-transform'), 'lowercase');
-        t.end();
-    });
-
-    t.test('resolves constants (update)', function(t) {
+    t.test('unsets property value', function(t) {
         var layer = new StyleLayer({
             "id": "symbol",
             "type": "symbol",
             "layout": {
                 "text-transform": "uppercase"
             }
-        }, {
-            '@lowercase': 'lowercase'
         });
 
         layer.resolveLayout();
-        layer.setLayoutProperty('text-transform', '@lowercase');
+        layer.setLayoutProperty('text-transform', null);
 
-        t.deepEqual(layer.getLayoutProperty('text-transform'), 'lowercase');
+        t.deepEqual(layer.getLayoutProperty('text-transform'), 'none');
         t.end();
     });
 });

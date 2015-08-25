@@ -22,7 +22,7 @@ module.exports = Interaction;
  * @memberof Map
  * @type {Object}
  * @property {Point} point the pixel location of the event
- * @property {LatLng} point the geographic location of the event
+ * @property {LngLat} lngLat the geographic location of the event
  * @property {Event} originalEvent the original DOM event
  */
 
@@ -33,7 +33,7 @@ module.exports = Interaction;
  * @memberof Map
  * @type {Object}
  * @property {Point} point the pixel location of the event
- * @property {LatLng} point the geographic location of the event
+ * @property {LngLat} lngLat the geographic location of the event
  * @property {Event} originalEvent the original DOM event
  */
 
@@ -44,8 +44,17 @@ module.exports = Interaction;
  * @memberof Map
  * @type {Object}
  * @property {Point} point the pixel location of the event
- * @property {LatLng} point the geographic location of the event
+ * @property {LngLat} lngLat the geographic location of the event
  * @property {Event} originalEvent the original DOM event
+ */
+
+/**
+ * Load event. This event is emitted immediately after all necessary resources have been downloaded
+ * and the first visually complete rendering has occurred.
+ *
+ * @event load
+ * @memberof Map
+ * @type {Object}
  */
 
 function Interaction(map) {
@@ -141,7 +150,7 @@ Interaction.prototype = {
         var pos = DOM.mousePos(this._el, e);
 
         this._map.fire(type, {
-            latLng: this._map.unproject(pos),
+            lngLat: this._map.unproject(pos),
             point: pos,
             originalEvent: e
         });
