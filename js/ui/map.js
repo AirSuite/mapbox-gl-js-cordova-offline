@@ -36,11 +36,17 @@ var Attribution = require('./control/attribution');
  * @param {string} options.container HTML element to initialize the map in (or element id as string)
  * @param {number} [options.minZoom=0] Minimum zoom of the map
  * @param {number} [options.maxZoom=20] Maximum zoom of the map
- * @param {Object} options.style Map style and data source definition (either a JSON object or a JSON URL), described in the [style reference](https://mapbox.com/mapbox-gl-style-spec/)
+ * @param {Object|string} [options.style] Map style. This must be an an object conforming to the schema described in the [style reference](https://mapbox.com/mapbox-gl-style-spec/), or a URL to a JSON style. To load a style from the Mapbox API, you can use a URL of the form `mapbox://styles/:owner/:style`, where `:owner` is your Mapbox account name and `:style` is the style ID. Or you can use one of the predefined Mapbox styles:
+ *   * `mapbox://styles/mapbox/basic-v8` - Simple and flexible starting template.
+ *   * `mapbox://styles/mapbox/bright-v8` - Template for complex custom basemaps.
+ *   * `mapbox://styles/mapbox/streets-v8` - A ready-to-use basemap, perfect for minor customization or incorporating your own data.
+ *   * `mapbox://styles/mapbox/light-v8` - Subtle light backdrop for data vizualizations.
+ *   * `mapbox://styles/mapbox/dark-v8` - Subtle dark backdrop for data vizualizations.
  * @param {boolean} [options.hash=false] If `true`, the map will track and update the page URL according to map position
  * @param {boolean} [options.interactive=true] If `false`, no mouse, touch, or keyboard listeners are attached to the map, so it will not respond to input
  * @param {number} [options.bearingSnap=7] Snap to north threshold in degrees.
- * @param {Array} options.classes Style class names with which to initialize the map
+ * @param {Array} [options.classes] Style class names with which to initialize the map
+ * @param {boolean} [options.attributionControl=true] If `true`, an attribution control will be added to the map.
  * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`, map creation will fail if the implementation determines that the performance of the created WebGL context would be dramatically lower than expected.
  * @param {boolean} [options.preserveDrawingBuffer=false] If `true`, The maps canvas can be exported to a PNG using `map.getCanvas().toDataURL();`. This is false by default as a performance optimization.
  * @example
@@ -76,6 +82,7 @@ var Map = module.exports = function(options) {
         '_onSourceRemove',
         '_onSourceUpdate',
         '_onWindowResize',
+        'onError',
         'update',
         'render'
     ], this);
@@ -115,6 +122,10 @@ var Map = module.exports = function(options) {
     if (options.classes) this.setClasses(options.classes);
     if (options.style) this.setStyle(options.style);
     if (options.attributionControl) this.addControl(new Attribution());
+
+    this.on('style.error', this.onError);
+    this.on('source.error', this.onError);
+    this.on('tile.error', this.onError);
 };
 
 util.extend(Map.prototype, Evented);
@@ -278,7 +289,7 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
     },
 
     /**
-     * Get all features at a point ([x, y])
+     * Get all features at a point ([x, y]). Only works on layers where `interactive` is set to true.
      *
      * @param {Array<number>} point [x, y] pixel coordinates
      * @param {Object} params
@@ -303,6 +314,59 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
         var location = this.unproject(point).wrap();
         var coord = this.transform.locationCoordinate(location);
         this.style.featuresAt(coord, params, callback);
+        return this;
+    },
+
+    /**
+     * Get all features in a rectangle.
+     *
+     * Note: because features come from vector tiles, the returned features will be:
+     *
+     * 1. Truncated at tile boundaries.
+     * 2. Duplicated across tile boundaries.
+     *
+     * For example, suppose there is a highway running through your rectangle in a `featuresIn` query. `featuresIn` will only give you the parts of the highway feature that lie within the map tiles covering your rectangle, even if the road actually extends into other tiles. Also, the portion of the highway within each map tile will come back as a separate feature.
+     *
+     * @param {Array<Point>|Array<Array<number>>} [bounds] Coordinates of opposite corners of bounding rectangle, in pixel coordinates. Optional: use entire viewport if omitted.
+     * @param {Object} params
+     * @param {string} params.layer Optional. Only return features from a given layer
+     * @param {string} params.type Optional. Either `raster` or `vector`
+     * @param {featuresAtCallback} callback function that receives the response
+     *
+     * @callback featuresInCallback
+     * @param {Object|null} err Error _If any_
+     * @param {Array} features A JSON array of features given the passed parameters of `featuresIn`
+     *
+     * @returns {Map} `this`
+     *
+     * @example
+     * map.featuresIn([[10, 20], [30, 50], { layer: 'my-layer-name' },
+     * function(err, features) {
+     *   console.log(features);
+     * });
+     */
+    featuresIn: function(bounds, params, callback) {
+        if (typeof callback === 'undefined') {
+          callback = params;
+          params = bounds;
+          // bounds was omitted: use full viewport
+          bounds = [
+            Point.convert([0, 0]),
+            Point.convert([this.transform.width, this.transform.height])
+          ];
+        }
+        bounds = bounds.map(Point.convert.bind(Point));
+        bounds = [
+          new Point(
+            Math.min(bounds[0].x, bounds[1].x),
+            Math.min(bounds[0].y, bounds[1].y)
+          ),
+          new Point(
+            Math.max(bounds[0].x, bounds[1].x),
+            Math.max(bounds[0].y, bounds[1].y)
+          )
+        ].map(this.transform.pointCoordinate.bind(this.transform));
+        this.style.featuresIn(bounds, params, callback);
         return this;
     },
 
@@ -494,9 +558,10 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
      * @returns {Map} `this`
      */
     setPaintProperty: function(layer, name, value, klass) {
-        this.style.setPaintProperty(layer, name, value, klass);
-        this.style._cascade(this._classes);
-        this.update(true);
+        this.batch(function(batch) {
+            batch.setPaintProperty(layer, name, value, klass);
+        });
+
         return this;
     },
 
@@ -521,7 +586,10 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
      * @returns {Map} `this`
      */
     setLayoutProperty: function(layer, name, value) {
-        this.style.setLayoutProperty(layer, name, value);
+        this.batch(function(batch) {
+            batch.setLayoutProperty(layer, name, value);
+        });
+
         return this;
     },
 
@@ -706,6 +774,20 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
         return this;
     },
 
+    /**
+     * A default error handler for `style.error`, `source.error`, and `tile.error` events.
+     * It logs the error via `console.error`.
+     *
+     * @example
+     * // Disable the default error handler
+     * map.off('style.error', map.onError);
+     * map.off('source.error', map.onError);
+     * map.off('tile.error', map.onError);
+     */
+    onError: function(e) {
+        console.error(e.error);
+    },
+
     _rerender: function() {
         if (this.style && !this._frameId) {
             this._frameId = browser.frame(this.render);
@@ -729,6 +811,16 @@ util.extend(Map.prototype, /** @lends Map.prototype */{
     },
 
     _onStyleLoad: function(e) {
+        var unset = new Transform(),
+            tr = this.transform;
+
+        if (tr.center.lng === unset.center.lng && tr.center.lat === unset.center.lat &&
+            tr.zoom === unset.zoom &&
+            tr.bearing === unset.bearing &&
+            tr.pitch === unset.pitch) {
+            this.jumpTo(this.style.stylesheet);
+        }
+
         this.style._cascade(this._classes, {transition: false});
         this._forwardStyleEvent(e);
     },

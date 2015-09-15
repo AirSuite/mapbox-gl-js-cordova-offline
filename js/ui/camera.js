@@ -13,10 +13,11 @@ var Point = require('point-geometry');
  * options will default to the current value for that property.
  *
  * @typedef {Object} CameraOptions
- * @property {Array} center Longitude and latitude (passed as `[lng, lat]`)
+ * @property {LngLat} center Map center
  * @property {number} zoom Map zoom level
  * @property {number} bearing Map rotation bearing in degrees counter-clockwise from north
- * @property {number} pitch The angle at which the camera is looking at the ground
+ * @property {number} pitch Map angle in degrees at which the camera is looking at the ground
+ * @property {LngLat} around If zooming, the zoom center (defaults to map center)
  */
 
 /**
@@ -43,7 +44,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
     /**
      * Sets a map location. Equivalent to `jumpTo({center: center})`.
      *
-     * @param {Array} center Longitude and latitude (passed as `[lng, lat]`)
+     * @param {LngLat} center Map center to jump to
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
@@ -58,7 +59,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
     /**
      * Pan by a certain number of pixels
      *
-     * @param {Array} offset [x, y]
+     * @param {Array<number>} offset [x, y]
      * @param {AnimationOptions} [options]
      * @fires movestart
      * @fires moveend
@@ -72,7 +73,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
     /**
      * Pan to a certain location with easing
      *
-     * @param {LngLat|Array<number>} lnglat
+     * @param {LngLat} lnglat Location to pan to
      * @param {AnimationOptions} [options]
      * @fires movestart
      * @fires moveend
@@ -427,7 +428,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
     /**
      * Easing animation to a specified location/zoom/bearing
      *
-     * @param {CameraOptions~AnimationOptions} options map view and animation options
+     * @param {CameraOptions|AnimationOptions} options map view and animation options
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
