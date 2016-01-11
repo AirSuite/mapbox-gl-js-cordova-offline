@@ -8,8 +8,8 @@ module.exports = drawFill;
 function drawFill(painter, layer, posMatrix, tile) {
     // No data
     if (!tile.buffers) return;
-    var elementGroups = tile.elementGroups[layer.ref || layer.id];
-    if (!elementGroups) return;
+    if (!tile.elementGroups[layer.ref || layer.id]) return;
+    var elementGroups = tile.elementGroups[layer.ref || layer.id].fill;
 
     var gl = painter.gl;
     var translatedPosMatrix = painter.translateMatrix(posMatrix, tile, layer.paint['fill-translate'], layer.paint['fill-translate-anchor']);
@@ -47,6 +47,7 @@ function drawFill(painter, layer, posMatrix, tile) {
     // Draw all buffers
     vertex = tile.buffers.fillVertex;
     vertex.bind(gl);
+
     elements = tile.buffers.fillElement;
     elements.bind(gl);
 
@@ -55,7 +56,7 @@ function drawFill(painter, layer, posMatrix, tile) {
     for (var i = 0; i < elementGroups.groups.length; i++) {
         group = elementGroups.groups[i];
         offset = group.vertexStartIndex * vertex.itemSize;
-        gl.vertexAttribPointer(painter.fillShader.a_pos, 2, gl.SHORT, false, 4, offset + 0);
+        vertex.setAttribPointers(gl, painter.fillShader, offset);
 
         count = group.elementLength * 3;
         elementOffset = group.elementStartIndex * elements.itemSize;
@@ -97,13 +98,13 @@ function drawFill(painter, layer, posMatrix, tile) {
 
         // Draw all buffers
         vertex = tile.buffers.fillVertex;
-        elements = tile.buffers.outlineElement;
+        elements = tile.buffers.fillSecondElement;
         elements.bind(gl);
 
         for (var k = 0; k < elementGroups.groups.length; k++) {
             group = elementGroups.groups[k];
             offset = group.vertexStartIndex * vertex.itemSize;
-            gl.vertexAttribPointer(painter.outlineShader.a_pos, 2, gl.SHORT, false, 4, offset + 0);
+            vertex.setAttribPointers(gl, painter.outlineShader, offset);
 
             count = group.secondElementLength * 2;
             elementOffset = group.secondElementStartIndex * elements.itemSize;

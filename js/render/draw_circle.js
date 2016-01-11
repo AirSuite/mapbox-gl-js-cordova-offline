@@ -10,8 +10,8 @@ function drawCircles(painter, layer, posMatrix, tile) {
 
     posMatrix = painter.translateMatrix(posMatrix, tile, layer.paint['circle-translate'], layer.paint['circle-translate-anchor']);
 
-    var elementGroups = tile.elementGroups[layer.ref || layer.id];
-    if (!elementGroups) return;
+    if (!tile.elementGroups[layer.ref || layer.id]) return;
+    var elementGroups = tile.elementGroups[layer.ref || layer.id].circle;
 
     var gl = painter.gl;
 
@@ -39,8 +39,10 @@ function drawCircles(painter, layer, posMatrix, tile) {
         var group = elementGroups.groups[k];
         var offset = group.vertexStartIndex * vertex.itemSize;
 
-        vertex.bind(gl, shader, offset);
-        elements.bind(gl, shader, offset);
+        vertex.bind(gl);
+        vertex.setAttribPointers(gl, shader, offset);
+
+        elements.bind(gl);
 
         var count = group.elementLength * 3;
         var elementOffset = group.elementStartIndex * elements.itemSize;

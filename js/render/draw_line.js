@@ -16,8 +16,8 @@ var mat2 = require('gl-matrix').mat2;
 module.exports = function drawLine(painter, layer, posMatrix, tile) {
     // No data
     if (!tile.buffers) return;
-    var elementGroups = tile.elementGroups[layer.ref || layer.id];
-    if (!elementGroups) return;
+    if (!tile.elementGroups[layer.ref || layer.id]) return;
+    var elementGroups = tile.elementGroups[layer.ref || layer.id].line;
 
     var gl = painter.gl;
 
@@ -100,6 +100,7 @@ module.exports = function drawLine(painter, layer, posMatrix, tile) {
         gl.uniform1f(shader.u_mix, dasharray.t);
 
         gl.uniform1f(shader.u_extra, extra);
+        gl.uniform1f(shader.u_offset, -layer.paint['line-offset']);
         gl.uniformMatrix2fv(shader.u_antialiasingmatrix, false, antialiasingMatrix);
 
     } else if (image) {
@@ -127,6 +128,7 @@ module.exports = function drawLine(painter, layer, posMatrix, tile) {
         gl.uniform1f(shader.u_opacity, layer.paint['line-opacity']);
 
         gl.uniform1f(shader.u_extra, extra);
+        gl.uniform1f(shader.u_offset, -layer.paint['line-offset']);
         gl.uniformMatrix2fv(shader.u_antialiasingmatrix, false, antialiasingMatrix);
 
     } else {
@@ -137,6 +139,7 @@ module.exports = function drawLine(painter, layer, posMatrix, tile) {
         gl.uniform1f(shader.u_ratio, ratio);
         gl.uniform1f(shader.u_blur, blur);
         gl.uniform1f(shader.u_extra, extra);
+        gl.uniform1f(shader.u_offset, -layer.paint['line-offset']);
         gl.uniformMatrix2fv(shader.u_antialiasingmatrix, false, antialiasingMatrix);
 
         gl.uniform4fv(shader.u_color, color);
@@ -150,8 +153,7 @@ module.exports = function drawLine(painter, layer, posMatrix, tile) {
     for (var i = 0; i < elementGroups.groups.length; i++) {
         var group = elementGroups.groups[i];
         var vtxOffset = group.vertexStartIndex * vertex.itemSize;
-        gl.vertexAttribPointer(shader.a_pos, 2, gl.SHORT, false, 8, vtxOffset + 0);
-        gl.vertexAttribPointer(shader.a_data, 4, gl.BYTE, false, 8, vtxOffset + 4);
+        vertex.setAttribPointers(gl, shader, vtxOffset);
 
         var count = group.elementLength * 3;
         var elementOffset = group.elementStartIndex * element.itemSize;

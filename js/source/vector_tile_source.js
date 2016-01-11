@@ -3,6 +3,7 @@
 var util = require('../util/util');
 var Evented = require('../util/evented');
 var Source = require('./source');
+var normalizeURL = require('../util/mapbox').normalizeTileURL;
 var Pako = require('pako');
 
 module.exports = VectorTileSource;
@@ -44,18 +45,6 @@ VectorTileSource.prototype = util.inherit(Evented, {
         }
     },
 
-    redoPlacement: function() {
-        if (!this._pyramid) {
-            return;
-        }
-
-        var ids = this._pyramid.orderedIDs();
-        for (var i = 0; i < ids.length; i++) {
-            var tile = this._pyramid.getTile(ids[i]);
-            this._redoTilePlacement(tile);
-        }
-    },
-
     render: Source._renderTiles,
     featuresAt: Source._vectorFeaturesAt,
     featuresIn: Source._vectorFeaturesIn,
@@ -63,11 +52,10 @@ VectorTileSource.prototype = util.inherit(Evented, {
     _loadTile: function(tile) {
         var overscaling = tile.coord.z > this.maxzoom ? Math.pow(2, tile.coord.z - this.maxzoom) : 1;
         var params = {
-            url: tile.coord.url(this.tiles, this.maxzoom),
+            url: normalizeURL(tile.coord.url(this.tiles, this.maxzoom), this.url),
             uid: tile.uid,
             coord: tile.coord,
             zoom: tile.coord.z,
-            maxZoom: this.maxzoom,
             tileSize: this.tileSize * overscaling,
             source: this.id,
             overscaling: overscaling,
@@ -117,7 +105,7 @@ VectorTileSource.prototype = util.inherit(Evented, {
             return;
 
         if (err) {
-            this.fire('tile.error', {tile: tile});
+            this.fire('tile.error', {tile: tile, error: err});
             return;
         }
 
@@ -125,7 +113,7 @@ VectorTileSource.prototype = util.inherit(Evented, {
 
         if (tile.redoWhenDone) {
             tile.redoWhenDone = false;
-            this._redoTilePlacement(tile);
+            tile.redoPlacement(this);
         }
 
         this.fire('tile.load', {tile: tile});
@@ -151,32 +139,9 @@ VectorTileSource.prototype = util.inherit(Evented, {
         this.dispatcher.send('remove tile', { uid: tile.uid, source: this.id }, null, tile.workerID);
     },
 
+    redoPlacement: Source.redoPlacement,
+
     _redoTilePlacement: function(tile) {
-
-        if (!tile.loaded || tile.redoingPlacement) {
-            tile.redoWhenDone = true;
-            return;
-        }
-
-        tile.redoingPlacement = true;
-
-        this.dispatcher.send('redo placement', {
-            uid: tile.uid,
-            source: this.id,
-            angle: this.map.transform.angle,
-            pitch: this.map.transform.pitch,
-            collisionDebug: this.map.collisionDebug
-        }, done.bind(this), tile.workerID);
-
-        function done(_, data) {
-            tile.reloadSymbolData(data, this.map.painter);
-            this.fire('tile.load', {tile: tile});
-
-            tile.redoingPlacement = false;
-            if (tile.redoWhenDone) {
-                this._redoTilePlacement(tile);
-                tile.redoWhenDone = false;
-            }
-        }
+        tile.redoPlacement(this);
     }
 });

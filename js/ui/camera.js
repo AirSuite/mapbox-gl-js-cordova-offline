@@ -268,7 +268,9 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         bearing = this._normalizeBearing(bearing, start);
 
         this.rotating = true;
-        this.fire('movestart');
+        if (!options.noMoveStart) {
+            this.fire('movestart');
+        }
 
         this._ease(function(k) {
             tr.setBearingAround(interpolate(start, bearing, k), around);
@@ -388,13 +390,13 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             bearingChanged = false,
             pitchChanged = false;
 
-        if ('center' in options) {
-            tr.center = LngLat.convert(options.center);
-        }
-
         if ('zoom' in options && tr.zoom !== +options.zoom) {
             zoomChanged = true;
             tr.zoom = +options.zoom;
+        }
+
+        if ('center' in options) {
+            tr.center = LngLat.convert(options.center);
         }
 
         if ('bearing' in options && tr.bearing !== +options.bearing) {
@@ -447,6 +449,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         var tr = this.transform,
             offset = Point.convert(options.offset).rotate(-tr.angle),
             from = tr.point,
+            startWorldSize = tr.worldSize,
             startZoom = this.getZoom(),
             startBearing = this.getBearing(),
             startPitch = this.getPitch(),
@@ -457,13 +460,17 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
 
             scale = tr.zoomScale(zoom - startZoom),
             to = 'center' in options ? tr.project(LngLat.convert(options.center)).sub(offset.div(scale)) : from,
-            around = LngLat.convert(options.around);
+            around = 'center' in options ? null : LngLat.convert(options.around);
 
         if (zoom !== startZoom) {
             this.zooming = true;
         }
         if (startBearing !== bearing) {
             this.rotating = true;
+        }
+
+        if (pitch !== startPitch) {
+            this.pitching = true;
         }
 
         if (this.zooming && !around) {
@@ -473,17 +480,18 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         this.fire('movestart');
 
         this._ease(function (k) {
-            if (this.zooming) {
+            if (this.zooming && around) {
                 tr.setZoomAround(interpolate(startZoom, zoom, k), around);
             } else {
-                tr.center = tr.unproject(from.add(to.sub(from).mult(k)));
+                if (this.zooming) tr.zoom = interpolate(startZoom, zoom, k);
+                tr.center = tr.unproject(from.add(to.sub(from).mult(k)), startWorldSize);
             }
 
             if (this.rotating) {
                 tr.bearing = interpolate(startBearing, bearing, k);
             }
 
-            if (pitch !== startPitch) {
+            if (this.pitching) {
                 tr.pitch = interpolate(startPitch, pitch, k);
             }
 
@@ -494,9 +502,13 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             if (this.rotating) {
                 this.fire('rotate');
             }
+            if (this.pitching) {
+                this.fire('pitch');
+            }
         }, function() {
             this.zooming = false;
             this.rotating = false;
+            this.pitching = false;
             this.fire('moveend');
         }, options);
 
@@ -540,15 +552,28 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         var tr = this.transform,
             offset = Point.convert(options.offset),
             startZoom = this.getZoom(),
-            startBearing = this.getBearing();
+            startBearing = this.getBearing(),
+            startPitch = this.getPitch();
 
         var center = 'center' in options ? LngLat.convert(options.center) : this.getCenter();
         var zoom = 'zoom' in options ?  +options.zoom : startZoom;
         var bearing = 'bearing' in options ? this._normalizeBearing(options.bearing, startBearing) : startBearing;
+        var pitch = 'pitch' in options ? +options.pitch : startPitch;
+
+        // If a path crossing the antimeridian would be shorter, extend the
+        // final coordinate so that interpolating between the two endpoints will
+        // cross it.
+        if (Math.abs(tr.center.lng) + Math.abs(center.lng) > 180) {
+            if (tr.center.lng > 0 && center.lng < 0) {
+                center.lng += 360;
+            } else if (tr.center.lng < 0 && center.lng > 0) {
+                center.lng -= 360;
+            }
+        }
 
         var scale = tr.zoomScale(zoom - startZoom),
             from = tr.point,
-            to = tr.project(center).sub(offset.div(scale));
+            to = 'center' in options ? tr.project(center).sub(offset.div(scale)) : from;
 
         var startWorldSize = tr.worldSize,
             rho = options.curve,
@@ -574,7 +599,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             S = (r(1) - r0) / rho;
 
         if (Math.abs(u1) < 0.000001) {
-            if (Math.abs(w0 - w1) < 0.000001) return this;
+            if (Math.abs(w0 - w1) < 0.000001) return this.easeTo(options);
 
             var k = w1 < w0 ? -1 : 1;
             S = Math.abs(Math.log(w1 / w0)) / rho;
@@ -587,6 +612,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
 
         this.zooming = true;
         if (startBearing !== bearing) this.rotating = true;
+        if (startPitch !== pitch) this.pitching = true;
 
         this.fire('movestart');
 
@@ -597,17 +623,24 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             tr.zoom = startZoom + tr.scaleZoom(1 / w(s));
             tr.center = tr.unproject(from.add(to.sub(from).mult(us)), startWorldSize);
 
-            if (bearing !== startBearing) {
+            if (this.rotating) {
                 tr.bearing = interpolate(startBearing, bearing, k);
+            }
+            if (this.pitching) {
+                tr.pitch = interpolate(startPitch, pitch, k);
             }
 
             this.fire('move').fire('zoom');
-            if (bearing !== startBearing) {
+            if (this.rotating) {
                 this.fire('rotate');
+            }
+            if (this.pitching) {
+                this.fire('pitch');
             }
         }, function() {
             this.zooming = false;
             this.rotating = false;
+            this.pitching = false;
             this.fire('moveend');
         }, options);
 

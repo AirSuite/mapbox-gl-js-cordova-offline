@@ -17,6 +17,11 @@ exports._loadTileJSON = function(options) {
         util.extend(this, util.pick(tileJSON,
             ['tiles', 'minzoom', 'maxzoom', 'attribution']));
 
+        if (tileJSON.vector_layers) {
+            this.vectorLayers = tileJSON.vector_layers;
+            this.vectorLayerIds = this.vectorLayers.map(function(layer) { return layer.id; });
+        }
+
         this._pyramid = new TilePyramid({
             tileSize: this.tileSize,
             cacheSize: 20,
@@ -39,6 +44,18 @@ exports._loadTileJSON = function(options) {
         ajax.getJSON(normalizeURL(options.url), loaded);
     } else {
         browser.frame(loaded.bind(this, null, options));
+    }
+};
+
+exports.redoPlacement = function() {
+    if (!this._pyramid) {
+        return;
+    }
+
+    var ids = this._pyramid.orderedIDs();
+    for (var i = 0; i < ids.length; i++) {
+        var tile = this._pyramid.getTile(ids[i]);
+        this._redoTilePlacement(tile);
     }
 };
 
