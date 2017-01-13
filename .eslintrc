@@ -1,17 +1,32 @@
 {
   "extends": "mourner",
+  "parser": "babel-eslint",
+  "parserOptions": {
+    "sourceType": "script",
+  },
+  "plugins": [
+    "flowtype"
+  ],
   "rules": {
-    "object-curly-spacing": 0,
-    "key-spacing": 0,
-    "array-bracket-spacing": 0,
-    "space-before-function-paren": 0,
-    "quotes": 0,
-    "no-eq-null": 0,
-    "consistent-return": 0,
-    "global-require": 0,
-    "block-scoped-var": 2
+    "array-bracket-spacing": "off",
+    "block-scoped-var": "error",
+    "consistent-return": "off",
+    "global-require": "off",
+    "key-spacing": "off",
+    "no-eq-null": "off",
+    "no-new": "off",
+    "no-var": "error",
+    "no-warning-comments": "error",
+    "object-curly-spacing": "off",
+    "prefer-arrow-callback": "error",
+    "prefer-const": "error",
+    "prefer-template": "error",
+    "quotes": "off",
+    "space-before-function-paren": "off",
+    "template-curly-spacing": "error"
   },
   "env": {
-    "es6": true
+    "es6": true,
+    "browser": false
   }
 }

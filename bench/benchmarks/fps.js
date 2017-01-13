@@ -1,37 +1,38 @@
 'use strict';
 
-var Evented = require('../../js/util/evented');
-var util = require('../../js/util/util');
-var formatNumber = require('../lib/format_number');
-var measureFramerate = require('../lib/measure_framerate');
+const Evented = require('../../js/util/evented');
+const formatNumber = require('../lib/format_number');
+const measureFramerate = require('../lib/measure_framerate');
+const createMap = require('../lib/create_map');
 
-var DURATION_MILLISECONDS = 5 * 1000;
+const DURATION_MILLISECONDS = 5 * 1000;
 
-module.exports = function(options) {
-    var evented = util.extend({}, Evented);
+module.exports = function() {
+    const evented = new Evented();
 
-    var map = options.createMap({
+    const map = createMap({
         width: 1024,
         height: 768,
         zoom: 5,
         center: [-77.032194, 38.912753],
-        style: 'mapbox://styles/mapbox/bright-v8'
+        style: 'mapbox://styles/mapbox/bright-v9'
     });
 
-    map.on('load', function() {
+    map.on('load', () => {
         map.repaint = true;
 
         evented.fire('log', {
-            message: 'starting ' + formatNumber(DURATION_MILLISECONDS / 1000) + ' second test',
+            message: `starting ${formatNumber(DURATION_MILLISECONDS / 1000)} second test`,
             color: 'dark'
         });
 
-        measureFramerate(DURATION_MILLISECONDS, function(err, fps) {
+        measureFramerate(DURATION_MILLISECONDS, (err, fps) => {
+            map.remove();
             if (err) {
                 evented.fire('error', { error: err });
             } else {
                 evented.fire('end', {
-                    message: formatNumber(fps) + ' frames per second',
+                    message: `${formatNumber(fps)} fps`,
                     score: 1 / fps
                 });
             }

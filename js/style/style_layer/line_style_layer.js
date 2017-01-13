@@ -1,32 +1,29 @@
 'use strict';
 
-var util = require('../../util/util');
-var StyleLayer = require('../style_layer');
+const StyleLayer = require('../style_layer');
+const LineBucket = require('../../data/bucket/line_bucket');
+const util = require('../../util/util');
 
-function LineStyleLayer() {
-    StyleLayer.apply(this, arguments);
-}
+class LineStyleLayer extends StyleLayer {
 
-module.exports = LineStyleLayer;
-
-LineStyleLayer.prototype = util.inherit(StyleLayer, {
-
-    getPaintValue: function(name, globalProperties, featureProperties) {
-        var value = StyleLayer.prototype.getPaintValue.apply(this, arguments);
+    getPaintValue(name, globalProperties, featureProperties) {
+        const value = super.getPaintValue(name, globalProperties, featureProperties);
 
         // If the line is dashed, scale the dash lengths by the line
         // width at the previous round zoom level.
         if (value && name === 'line-dasharray') {
-            var flooredZoom = Math.floor(globalProperties.zoom);
-            if (this._flooredZoom !== flooredZoom) {
-                this._flooredZoom = flooredZoom;
-                this._flooredLineWidth = this.getPaintValue('line-width', globalProperties, featureProperties);
-            }
-
-            value.fromScale *= this._flooredLineWidth;
-            value.toScale *= this._flooredLineWidth;
+            const width = this.getPaintValue('line-width',
+                    util.extend({}, globalProperties, {zoom: Math.floor(globalProperties.zoom)}), featureProperties);
+            value.fromScale *= width;
+            value.toScale *= width;
         }
 
         return value;
     }
-});
+
+    createBucket(options) {
+        return new LineBucket(options);
+    }
+}
+
+module.exports = LineStyleLayer;

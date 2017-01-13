@@ -3,6 +3,9 @@ layout: example
 category: example
 title: Change a layer's color with buttons
 description: Using setPaintProperty to change a layer's fill color
+tags:
+  - layers
+  - user-interaction
 ---
 <style>
 .map-overlay {
@@ -79,13 +82,13 @@ description: Using setPaintProperty to change a layer's fill color
 <script>
 var map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/mapbox/light-v8',
+    style: 'mapbox://styles/mapbox/light-v9',
     center: [12.338, 45.4385],
     zoom: 17.4
 });
 
 var swatches = document.getElementById('swatches');
-var layers = document.getElementById('layers');
+var layer = document.getElementById('layer');
 var colors = [
     '#ffffcc',
     '#a1dab4',

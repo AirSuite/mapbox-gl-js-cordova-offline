@@ -1,106 +1,122 @@
 'use strict';
 
-var util = require('../util/util');
-var interpolate = require('../util/interpolate');
-var browser = require('../util/browser');
-var LngLat = require('../geo/lng_lat');
-var LngLatBounds = require('../geo/lng_lat_bounds');
-var Point = require('point-geometry');
+const util = require('../util/util');
+const interpolate = require('../util/interpolate');
+const browser = require('../util/browser');
+const LngLat = require('../geo/lng_lat');
+const LngLatBounds = require('../geo/lng_lat_bounds');
+const Point = require('point-geometry');
+const Evented = require('../util/evented');
 
 /**
- * Options common to Map#jumpTo, Map#easeTo, and Map#flyTo, controlling the destination
- * location, zoom level, bearing and pitch. All properties are options; unspecified
- * options will default to the current value for that property.
+ * Options common to {@link Map#jumpTo}, {@link Map#easeTo}, and {@link Map#flyTo},
+ * controlling the destination's location, zoom level, bearing, and pitch.
+ * All properties are optional. Unspecified
+ * options will default to the map's current value for that property.
  *
  * @typedef {Object} CameraOptions
- * @property {LngLat} center Map center
- * @property {number} zoom Map zoom level
- * @property {number} bearing Map rotation bearing in degrees counter-clockwise from north
- * @property {number} pitch Map angle in degrees at which the camera is looking at the ground
- * @property {LngLat} around If zooming, the zoom center (defaults to map center)
+ * @property {LngLatLike} center The destination's center.
+ * @property {number} zoom The destination's zoom level.
+ * @property {number} bearing The destination's bearing (rotation), measured in degrees counter-clockwise from north.
+ * @property {number} pitch The destination's pitch (tilt), measured in degrees.
+ * @property {LngLatLike} around If a `zoom` is specified, `around` determines the zoom center (defaults to the center of the map).
  */
 
 /**
- * Options common to map movement methods that involve animation, such as Map#panBy and
- * Map#easeTo, controlling the duration of the animation and easing function. All properties
+ * Options common to map movement methods that involve animation, such as {@link Map#panBy} and
+ * {@link Map#easeTo}, controlling the duration and easing function of the animation. All properties
  * are optional.
  *
  * @typedef {Object} AnimationOptions
- * @property {number} duration Number in milliseconds
- * @property {Function} easing
- * @property {Array} offset point, origin of movement relative to map center
- * @property {boolean} animate When set to false, no animation happens
+ * @property {number} duration The animation's duration, measured in milliseconds.
+ * @property {Function} easing The animation's easing function.
+ * @property {PointLike} offset `x` and `y` coordinates representing the animation's origin of movement relative to the map's center.
+ * @property {boolean} animate If `false`, no animation will occur.
  */
 
-var Camera = module.exports = function() {};
+class Camera extends Evented {
 
-util.extend(Camera.prototype, /** @lends Map.prototype */{
-    /**
-     * Get the current view geographical point.
-     * @returns {LngLat}
-     */
-    getCenter: function() { return this.transform.center; },
+    constructor(transform, options) {
+        super();
+        this.transform = transform;
+        this._bearingSnap = options.bearingSnap;
+    }
 
     /**
-     * Sets a map location. Equivalent to `jumpTo({center: center})`.
+     * Returns the map's geographical centerpoint.
      *
-     * @param {LngLat} center Map center to jump to
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @returns {LngLat} The map's geographical centerpoint.
+     */
+    getCenter() { return this.transform.center; }
+
+    /**
+     * Sets the map's geographical centerpoint. Equivalent to `jumpTo({center: center})`.
+     *
+     * @memberof Map#
+     * @param {LngLatLike} center The centerpoint to set.
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      * @example
      * map.setCenter([-74, 38]);
+     * @see [Move symbol with the keyboard](https://www.mapbox.com/mapbox-gl-js/example/rotating-controllable-marker/)
      */
-    setCenter: function(center, eventData) {
+    setCenter(center, eventData) {
         this.jumpTo({center: center}, eventData);
         return this;
-    },
+    }
 
     /**
-     * Pan by a certain number of pixels
+     * Pans the map by the specified offest.
      *
-     * @param {Array<number>} offset [x, y]
+     * @memberof Map#
+     * @param {Array<number>} offset `x` and `y` coordinates by which to pan the map.
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
+     * @see [Navigate the map with game-like controls](https://www.mapbox.com/mapbox-gl-js/example/game-controls/)
      */
-    panBy: function(offset, options, eventData) {
+    panBy(offset, options, eventData) {
         this.panTo(this.transform.center,
             util.extend({offset: Point.convert(offset).mult(-1)}, options), eventData);
         return this;
-    },
+    }
 
     /**
-     * Pan to a certain location with easing
+     * Pans the map to the specified location, with an animated transition.
      *
-     * @param {LngLat} lnglat Location to pan to
+     * @memberof Map#
+     * @param {LngLatLike} lnglat The location to pan the map to.
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      */
-    panTo: function(lnglat, options, eventData) {
+    panTo(lnglat, options, eventData) {
         return this.easeTo(util.extend({
             center: lnglat
         }, options), eventData);
-    },
-
-
-    /**
-     * Get the current zoom
-     * @returns {number}
-     */
-    getZoom: function() { return this.transform.zoom; },
+    }
 
     /**
-     * Sets a map zoom. Equivalent to `jumpTo({zoom: zoom})`.
+     * Returns the map's current zoom level.
      *
-     * @param {number} zoom Map zoom level
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @returns {number} The map's current zoom level.
+     */
+    getZoom() { return this.transform.zoom; }
+
+    /**
+     * Sets the map's zoom level. Equivalent to `jumpTo({zoom: zoom})`.
+     *
+     * @memberof Map#
+     * @param {number} zoom The zoom level to set (0-20).
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -112,17 +128,18 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * // zoom the map to 5
      * map.setZoom(5);
      */
-    setZoom: function(zoom, eventData) {
+    setZoom(zoom, eventData) {
         this.jumpTo({zoom: zoom}, eventData);
         return this;
-    },
+    }
 
     /**
-     * Zooms to a certain zoom level with easing.
+     * Zooms the map to the specified zoom level, with an animated transition.
      *
-     * @param {number} zoom
+     * @memberof Map#
+     * @param {number} zoom The zoom level to transition to.
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -131,17 +148,18 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires zoomend
      * @returns {Map} `this`
      */
-    zoomTo: function(zoom, options, eventData) {
+    zoomTo(zoom, options, eventData) {
         return this.easeTo(util.extend({
             zoom: zoom
         }, options), eventData);
-    },
+    }
 
     /**
-     * Zoom in by 1 level
+     * Increases the map's zoom level by 1.
      *
+     * @memberof Map#
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -150,16 +168,17 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires zoomend
      * @returns {Map} `this`
      */
-    zoomIn: function(options, eventData) {
+    zoomIn(options, eventData) {
         this.zoomTo(this.getZoom() + 1, options, eventData);
         return this;
-    },
+    }
 
     /**
-     * Zoom out by 1 level
+     * Decreases the map's zoom level by 1.
      *
+     * @memberof Map#
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -168,23 +187,26 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires zoomend
      * @returns {Map} `this`
      */
-    zoomOut: function(options, eventData) {
+    zoomOut(options, eventData) {
         this.zoomTo(this.getZoom() - 1, options, eventData);
         return this;
-    },
-
-
-    /**
-     * Get the current bearing in degrees
-     * @returns {number}
-     */
-    getBearing: function() { return this.transform.bearing; },
+    }
 
     /**
-     * Sets a map rotation. Equivalent to `jumpTo({bearing: bearing})`.
+     * Returns the map's current bearing (rotation).
      *
-     * @param {number} bearing Map rotation bearing in degrees counter-clockwise from north
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @returns {number} The map's current bearing, measured in degrees counter-clockwise from north.
+     * @see [Navigate the map with game-like controls](https://www.mapbox.com/mapbox-gl-js/example/game-controls/)
+     */
+    getBearing() { return this.transform.bearing; }
+
+    /**
+     * Sets the maps' bearing (rotation). Equivalent to `jumpTo({bearing: bearing})`.
+     *
+     * @memberof Map#
+     * @param {number} bearing The bearing to set, measured in degrees counter-clockwise from north.
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
@@ -192,106 +214,115 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * // rotate the map to 90 degrees
      * map.setBearing(90);
      */
-    setBearing: function(bearing, eventData) {
+    setBearing(bearing, eventData) {
         this.jumpTo({bearing: bearing}, eventData);
         return this;
-    },
+    }
 
     /**
-     * Rotate bearing by a certain number of degrees with easing
+     * Rotates the map to the specified bearing, with an animated transition.
      *
-     * @param {number} bearing
+     * @memberof Map#
+     * @param {number} bearing The bearing to rotate the map to, measured in degrees counter-clockwise from north.
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      */
-    rotateTo: function(bearing, options, eventData) {
+    rotateTo(bearing, options, eventData) {
         return this.easeTo(util.extend({
             bearing: bearing
         }, options), eventData);
-    },
+    }
 
     /**
-     * Sets map bearing to 0 (north) with easing
+     * Rotates the map to a bearing of 0 (due north), with an animated transition.
      *
+     * @memberof Map#
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      */
-    resetNorth: function(options, eventData) {
+    resetNorth(options, eventData) {
         this.rotateTo(0, util.extend({duration: 1000}, options), eventData);
         return this;
-    },
+    }
 
     /**
-     * Animates map bearing to 0 (north) if it's already close to it.
+     * Snaps the map's bearing to 0 (due north), if the current bearing is close enough to it (i.e. within the `bearingSnap` threshold).
      *
+     * @memberof Map#
      * @param {AnimationOptions} [options]
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      */
-    snapToNorth: function(options, eventData) {
-        if (Math.abs(this.getBearing()) < this.options.bearingSnap) {
+    snapToNorth(options, eventData) {
+        if (Math.abs(this.getBearing()) < this._bearingSnap) {
             return this.resetNorth(options, eventData);
         }
         return this;
-    },
+    }
 
     /**
-     * Get the current angle in degrees
-     * @returns {number}
-     */
-    getPitch: function() { return this.transform.pitch; },
-
-    /**
-     * Sets a map angle. Equivalent to `jumpTo({pitch: pitch})`.
+     * Returns the map's current pitch (tilt).
      *
-     * @param {number} pitch The angle at which the camera is looking at the ground
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @returns {number} The map's current pitch, measured in degrees away from the plane of the screen.
+     */
+    getPitch() { return this.transform.pitch; }
+
+    /**
+     * Sets the map's pitch (tilt). Equivalent to `jumpTo({pitch: pitch})`.
+     *
+     * @memberof Map#
+     * @param {number} pitch The pitch to set, measured in degrees away from the plane of the screen (0-60).
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
      */
-    setPitch: function(pitch, eventData) {
+    setPitch(pitch, eventData) {
         this.jumpTo({pitch: pitch}, eventData);
         return this;
-    },
+    }
 
 
     /**
-     * Zoom to contain certain geographical bounds
+     * Pans and zooms the map to contain its visible area within the specified geographical bounds.
      *
-     * @param {LngLatBounds|Array<Array<number>>} bounds [[minLng, minLat], [maxLng, maxLat]]
-     * @param {Object} options
-     * @param {boolean} [options.linear] When true, the map transitions to the new camera using
-     *     {@link #Map.easeTo}. When false, the map transitions using {@link #Map.flyTo}. See
-     *     {@link #Map.flyTo} for information on options specific to that animation transition.
-     * @param {Function} options.easing
-     * @param {number} options.padding how much padding there is around the given bounds on each side in pixels
-     * @param {number} options.maxZoom The resulting zoom level will be at most
-     *     this value.
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @param {LngLatBoundsLike} bounds Center these bounds in the viewport and use the highest
+     *      zoom level up to and including `Map#getMaxZoom()` that fits them in the viewport.
+     * @param {Object} [options]
+     * @param {boolean} [options.linear=false] If `true`, the map transitions using
+     *     {@link Map#easeTo}. If `false`, the map transitions using {@link Map#flyTo}. See
+     *     {@link Map#flyTo} for information about the options specific to that animated transition.
+     * @param {Function} [options.easing] An easing function for the animated transition.
+     * @param {number} [options.padding=0] The amount of padding, in pixels, to allow around the specified bounds.
+     * @param {PointLike} [options.offset=[0, 0]] The center of the given bounds relative to the map's center, measured in pixels.
+     * @param {number} [options.maxZoom] The maximum zoom level to allow when the map view transitions to the specified bounds.
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires moveend
      * @returns {Map} `this`
+     * @see [Fit a map to a bounding box](https://www.mapbox.com/mapbox-gl-js/example/fitbounds/)
      */
-    fitBounds: function(bounds, options, eventData) {
+    fitBounds(bounds, options, eventData) {
 
         options = util.extend({
             padding: 0,
             offset: [0, 0],
-            maxZoom: Infinity
+            maxZoom: this.getMaxZoom()
         }, options);
 
         bounds = LngLatBounds.convert(bounds);
 
-        var offset = Point.convert(options.offset),
+        const offset = Point.convert(options.offset),
             tr = this.transform,
             nw = tr.project(bounds.getNorthWest()),
             se = tr.project(bounds.getSouthEast()),
@@ -306,15 +337,16 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         return options.linear ?
             this.easeTo(options, eventData) :
             this.flyTo(options, eventData);
-    },
+    }
 
     /**
-     * Change any combination of center, zoom, bearing, and pitch, without
-     * a transition. The map will retain the current values for any options
-     * not included in `options`.
+     * Changes any combination of center, zoom, bearing, and pitch, without
+     * an animated transition. The map will retain its current values for any
+     * details not specified in `options`.
      *
-     * @param {CameraOptions} options map view options
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @param {CameraOptions} options
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -325,11 +357,11 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires moveend
      * @returns {Map} `this`
      */
-    jumpTo: function(options, eventData) {
+    jumpTo(options, eventData) {
         this.stop();
 
-        var tr = this.transform,
-            zoomChanged = false,
+        const tr = this.transform;
+        let zoomChanged = false,
             bearingChanged = false,
             pitchChanged = false;
 
@@ -370,15 +402,16 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         }
 
         return this.fire('moveend', eventData);
-    },
+    }
 
     /**
-     * Change any combination of center, zoom, bearing, and pitch, with a smooth animation
-     * between old and new values. The map will retain the current values for any options
-     * not included in `options`.
+     * Changes any combination of center, zoom, bearing, and pitch, with an animated transition
+     * between old and new values. The map will retain its current values for any
+     * details not specified in `options`.
      *
-     * @param {CameraOptions|AnimationOptions} options map view and animation options
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @memberof Map#
+     * @param {CameraOptions|AnimationOptions} options Options describing the destination and animation of the transition.
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -388,8 +421,9 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires zoomend
      * @fires moveend
      * @returns {Map} `this`
+     * @see [Navigate the map with game-like controls](https://www.mapbox.com/mapbox-gl-js/example/game-controls/)
      */
-    easeTo: function(options, eventData) {
+    easeTo(options, eventData) {
         this.stop();
 
         options = util.extend({
@@ -398,7 +432,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             easing: util.ease
         }, options);
 
-        var tr = this.transform,
+        const tr = this.transform,
             offset = Point.convert(options.offset),
             startZoom = this.getZoom(),
             startBearing = this.getBearing(),
@@ -406,9 +440,9 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
 
             zoom = 'zoom' in options ? +options.zoom : startZoom,
             bearing = 'bearing' in options ? this._normalizeBearing(options.bearing, startBearing) : startBearing,
-            pitch = 'pitch' in options ? +options.pitch : startPitch,
+            pitch = 'pitch' in options ? +options.pitch : startPitch;
 
-            toLngLat,
+        let toLngLat,
             toPoint;
 
         if ('center' in options) {
@@ -422,13 +456,17 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             toLngLat = tr.pointLocation(toPoint);
         }
 
-        var fromPoint = tr.locationPoint(toLngLat);
+        const fromPoint = tr.locationPoint(toLngLat);
 
         if (options.animate === false) options.duration = 0;
 
         this.zooming = (zoom !== startZoom);
         this.rotating = (startBearing !== bearing);
         this.pitching = (pitch !== startPitch);
+
+        if (options.smoothEasing && options.duration !== 0) {
+            options.easing = this._smoothOutEasing(options.duration);
+        }
 
         if (!options.noMoveStart) {
             this.fire('movestart', eventData);
@@ -464,52 +502,56 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             if (this.pitching) {
                 this.fire('pitch', eventData);
             }
-        }, function() {
+        }, () => {
             if (options.delayEndEvents) {
                 this._onEaseEnd = setTimeout(this._easeToEnd.bind(this, eventData), options.delayEndEvents);
             } else {
                 this._easeToEnd(eventData);
             }
-        }.bind(this), options);
+        }, options);
 
         return this;
-    },
+    }
 
-    _easeToEnd: function(eventData) {
-        if (this.zooming) {
+    _easeToEnd(eventData) {
+        const wasZooming = this.zooming;
+        this.zooming = false;
+        this.rotating = false;
+        this.pitching = false;
+
+        if (wasZooming) {
             this.fire('zoomend', eventData);
         }
         this.fire('moveend', eventData);
 
-        this.zooming = false;
-        this.rotating = false;
-        this.pitching = false;
-    },
+    }
 
     /**
-     * Change any combination of center, zoom, bearing, and pitch, animated along a curve that
-     * evokes flight. The transition animation seamlessly incorporates zooming and panning to help
-     * the user find his or her bearings even after traversing a great distance.
+     * Changes any combination of center, zoom, bearing, and pitch, animating the transition along a curve that
+     * evokes flight. The animation seamlessly incorporates zooming and panning to help
+     * the user maintain her bearings even after traversing a great distance.
      *
-     * @param {CameraOptions|AnimationOptions} options map view and animation options
-     * @param {number} [options.curve=1.42] Relative amount of zooming that takes place along the
+     * @memberof Map#
+     * @param {Object} options Options describing the destination and animation of the transition.
+     *     Accepts [CameraOptions](#CameraOptions), [AnimationOptions](#AnimationOptions),
+     *     and the following additional options.
+     * @param {number} [options.curve=1.42] The zooming "curve" that will occur along the
      *     flight path. A high value maximizes zooming for an exaggerated animation, while a low
-     *     value minimizes zooming for something closer to {@link #Map.easeTo}. 1.42 is the average
-     *     value selected by participants in the user study in
+     *     value minimizes zooming for an effect closer to {@link Map#easeTo}. 1.42 is the average
+     *     value selected by participants in the user study discussed in
      *     [van Wijk (2003)](https://www.win.tue.nl/~vanwijk/zoompan.pdf). A value of
      *     `Math.pow(6, 0.25)` would be equivalent to the root mean squared average velocity. A
      *     value of 1 would produce a circular motion.
-     * @param {number} [options.minZoom] Zero-based zoom level at the peak of the flight path. If
+     * @param {number} [options.minZoom] The zero-based zoom level at the peak of the flight path. If
      *     `options.curve` is specified, this option is ignored.
-     * @param {number} [options.speed=1.2] Average speed of the animation. A speed of 1.2 means that
-     *     the map appears to move along the flight path by 1.2 times `options.curve` screenfuls every
-     *     second. A _screenful_ is the visible span in pixels. It does not correspond to a fixed
-     *     physical distance but rather varies by zoom level.
-     * @param {number} [options.screenSpeed] Average speed of the animation, measured in screenfuls
-     *     per second, assuming a linear timing curve. If `options.speed` is specified, this option
-     *     is ignored.
-     * @param {Function} [options.easing] Transition timing curve
-     * @param {EventData} [eventData] Data to propagate to any event receivers
+     * @param {number} [options.speed=1.2] The average speed of the animation defined in relation to
+     *     `options.curve`. A speed of 1.2 means that the map appears to move along the flight path
+     *     by 1.2 times `options.curve` screenfuls every second. A _screenful_ is the map's visible span.
+     *     It does not correspond to a fixed physical distance, but varies by zoom level.
+     * @param {number} [options.screenSpeed] The average speed of the animation measured in screenfuls
+     *     per second, assuming a linear timing curve. If `options.speed` is specified, this option is ignored.
+     * @param {Function} [options.easing] An easing function for the animated transition.
+     * @param {Object} [eventData] Data to propagate to any event listeners.
      * @fires movestart
      * @fires zoomstart
      * @fires move
@@ -518,7 +560,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      * @fires pitch
      * @fires zoomend
      * @fires moveend
-     * @returns {this}
+     * @returns {Map} `this`
      * @example
      * // fly with default options to null island
      * map.flyTo({center: [0, 0], zoom: 9});
@@ -528,12 +570,15 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
      *   zoom: 9,
      *   speed: 0.2,
      *   curve: 1,
-     *   easing: function(t) {
+     *   easing(t) {
      *     return t;
      *   }
      * });
+     * @see [Fly to a location](https://www.mapbox.com/mapbox-gl-js/example/flyto/)
+     * @see [Slowly fly to a location](https://www.mapbox.com/mapbox-gl-js/example/flyto-options/)
+     * @see [Fly to a location based on scroll position](https://www.mapbox.com/mapbox-gl-js/example/scroll-fly-to/)
      */
-    flyTo: function(options, eventData) {
+    flyTo(options, eventData) {
         // This method implements an “optimal path” animation, as detailed in:
         //
         // Van Wijk, Jarke J.; Nuij, Wim A. A. “Smooth and efficient zooming and panning.” INFOVIS
@@ -551,16 +596,16 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             easing: util.ease
         }, options);
 
-        var tr = this.transform,
+        const tr = this.transform,
             offset = Point.convert(options.offset),
             startZoom = this.getZoom(),
             startBearing = this.getBearing(),
             startPitch = this.getPitch();
 
-        var center = 'center' in options ? LngLat.convert(options.center) : this.getCenter();
-        var zoom = 'zoom' in options ?  +options.zoom : startZoom;
-        var bearing = 'bearing' in options ? this._normalizeBearing(options.bearing, startBearing) : startBearing;
-        var pitch = 'pitch' in options ? +options.pitch : startPitch;
+        const center = 'center' in options ? LngLat.convert(options.center) : this.getCenter();
+        const zoom = 'zoom' in options ?  +options.zoom : startZoom;
+        const bearing = 'bearing' in options ? this._normalizeBearing(options.bearing, startBearing) : startBearing;
+        const pitch = 'pitch' in options ? +options.pitch : startPitch;
 
         // If a path crossing the antimeridian would be shorter, extend the final coordinate so that
         // interpolating between the two endpoints will cross it.
@@ -572,15 +617,14 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             }
         }
 
-        var scale = tr.zoomScale(zoom - startZoom),
+        const scale = tr.zoomScale(zoom - startZoom),
             from = tr.point,
             to = 'center' in options ? tr.project(center).sub(offset.div(scale)) : from;
 
-        var startWorldSize = tr.worldSize,
-            rho = options.curve,
+        let rho = options.curve;
 
             // w₀: Initial visible span, measured in pixels at the initial scale.
-            w0 = Math.max(tr.width, tr.height),
+        const w0 = Math.max(tr.width, tr.height),
             // w₁: Final visible span, measured in pixels with respect to the initial scale.
             w1 = w0 / scale,
             // Length of the flight path as projected onto the ground plane, measured in pixels from
@@ -588,15 +632,15 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             u1 = to.sub(from).mag();
 
         if ('minZoom' in options) {
-            var minZoom = util.clamp(Math.min(options.minZoom, startZoom, zoom), tr.minZoom, tr.maxZoom);
+            const minZoom = util.clamp(Math.min(options.minZoom, startZoom, zoom), tr.minZoom, tr.maxZoom);
             // w<sub>m</sub>: Maximum visible span, measured in pixels with respect to the initial
             // scale.
-            var wMax = w0 / tr.zoomScale(minZoom - startZoom);
+            const wMax = w0 / tr.zoomScale(minZoom - startZoom);
             rho = Math.sqrt(wMax / u1 * 2);
         }
 
         // ρ²
-        var rho2 = rho * rho;
+        const rho2 = rho * rho;
 
         /**
          * rᵢ: Returns the zoom-out factor at one end of the animation.
@@ -605,7 +649,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
          * @private
          */
         function r(i) {
-            var b = (w1 * w1 - w0 * w0 + (i ? -1 : 1) * rho2 * rho2 * u1 * u1) / (2 * (i ? w1 : w0) * rho2 * u1);
+            const b = (w1 * w1 - w0 * w0 + (i ? -1 : 1) * rho2 * rho2 * u1 * u1) / (2 * (i ? w1 : w0) * rho2 * u1);
             return Math.log(Math.sqrt(b * b + 1) - b);
         }
 
@@ -614,7 +658,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         function tanh(n) { return sinh(n) / cosh(n); }
 
         // r₀: Zoom-out factor during ascent.
-        var r0 = r(0),
+        const r0 = r(0);
             /**
              * w(s): Returns the visible span on the ground, measured in pixels with respect to the
              * initial scale.
@@ -622,7 +666,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
              * Assumes an angular field of view of 2 arctan ½ ≈ 53°.
              * @private
              */
-            w = function (s) { return (cosh(r0) / cosh(r0 + rho * s)); },
+        let w = function (s) { return (cosh(r0) / cosh(r0 + rho * s)); },
             /**
              * u(s): Returns the distance along the flight path as projected onto the ground plane,
              * measured in pixels from the world image origin at the initial scale.
@@ -637,7 +681,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
             // Perform a more or less instantaneous transition if the path is too short.
             if (Math.abs(w0 - w1) < 0.000001) return this.easeTo(options);
 
-            var k = w1 < w0 ? -1 : 1;
+            const k = w1 < w0 ? -1 : 1;
             S = Math.abs(Math.log(w1 / w0)) / rho;
 
             u = function() { return 0; };
@@ -647,7 +691,7 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
         if ('duration' in options) {
             options.duration = +options.duration;
         } else {
-            var V = 'screenSpeed' in options ? +options.screenSpeed / rho : +options.speed;
+            const V = 'screenSpeed' in options ? +options.screenSpeed / rho : +options.speed;
             options.duration = 1000 * S / V;
         }
 
@@ -660,11 +704,12 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
 
         this._ease(function (k) {
             // s: The distance traveled along the flight path, measured in ρ-screenfuls.
-            var s = k * S,
+            const s = k * S,
                 us = u(s);
 
-            tr.zoom = startZoom + tr.scaleZoom(1 / w(s));
-            tr.center = tr.unproject(from.add(to.sub(from).mult(us)), startWorldSize);
+            const scale = 1 / w(s);
+            tr.zoom = startZoom + tr.scaleZoom(scale);
+            tr.center = tr.unproject(from.add(to.sub(from).mult(us)).mult(scale));
 
             if (this.rotating) {
                 tr.bearing = interpolate(startBearing, bearing, k);
@@ -682,34 +727,36 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
                 this.fire('pitch', eventData);
             }
         }, function() {
-            this.fire('zoomend', eventData);
-            this.fire('moveend', eventData);
             this.zooming = false;
             this.rotating = false;
             this.pitching = false;
+
+            this.fire('zoomend', eventData);
+            this.fire('moveend', eventData);
         }, options);
 
         return this;
-    },
+    }
 
-    isEasing: function() {
+    isEasing() {
         return !!this._abortFn;
-    },
+    }
 
     /**
-     * Stop current animation
+     * Stops any animated transition underway.
      *
+     * @memberof Map#
      * @returns {Map} `this`
      */
-    stop: function() {
+    stop() {
         if (this._abortFn) {
             this._abortFn();
             this._finishEase();
         }
         return this;
-    },
+    }
 
-    _ease: function(frame, finish, options) {
+    _ease(frame, finish, options) {
         this._finishFn = finish;
         this._abortFn = browser.timed(function (t) {
             frame.call(this, options.easing(t));
@@ -717,31 +764,32 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
                 this._finishEase();
             }
         }, options.animate === false ? 0 : options.duration, this);
-    },
+    }
 
-    _finishEase: function() {
+    _finishEase() {
         delete this._abortFn;
         // The finish function might emit events which trigger new eases, which
         // set a new _finishFn. Ensure we don't delete it unintentionally.
-        var finish = this._finishFn;
+        const finish = this._finishFn;
         delete this._finishFn;
         finish.call(this);
-    },
+    }
 
     // convert bearing so that it's numerically close to the current one so that it interpolates properly
-    _normalizeBearing: function(bearing, currentBearing) {
+    _normalizeBearing(bearing, currentBearing) {
         bearing = util.wrap(bearing, -180, 180);
-        var diff = Math.abs(bearing - currentBearing);
+        const diff = Math.abs(bearing - currentBearing);
         if (Math.abs(bearing - 360 - currentBearing) < diff) bearing -= 360;
         if (Math.abs(bearing + 360 - currentBearing) < diff) bearing += 360;
         return bearing;
-    },
+    }
 
-    _updateEasing: function(duration, zoom, bezier) {
-        var easing;
+    // only used on mouse-wheel zoom to smooth out animation
+    _smoothOutEasing(duration) {
+        let easing = util.ease;
 
-        if (this.ease) {
-            var ease = this.ease,
+        if (this._prevEase) {
+            const ease = this._prevEase,
                 t = (Date.now() - ease.start) / ease.duration,
                 speed = ease.easing(t + 0.01) - ease.easing(t),
 
@@ -750,18 +798,25 @@ util.extend(Camera.prototype, /** @lends Map.prototype */{
                 y = Math.sqrt(0.27 * 0.27 - x * x);
 
             easing = util.bezier(x, y, 0.25, 1);
-        } else {
-            easing = bezier ? util.bezier.apply(util, bezier) : util.ease;
         }
 
-        // store information on current easing
-        this.ease = {
+        this._prevEase = {
             start: (new Date()).getTime(),
-            to: Math.pow(2, zoom),
             duration: duration,
             easing: easing
         };
 
         return easing;
     }
-});
+}
+
+/**
+ * Fired whenever the map's pitch (tilt) changes.
+ *
+ * @event pitch
+ * @memberof Map
+ * @instance
+ * @property {MapEventData} data
+ */
+
+module.exports = Camera;

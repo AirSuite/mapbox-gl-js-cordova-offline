@@ -1,32 +1,51 @@
 'use strict';
 
-/*
- * When browserify builds Mapbox GL JS, it redirects all require() statements
- * from this file, js/util/browser.js, to js/util/browser/browser.js.
- * The latter relies on running in a real browser: 'window' must be defined,
- * as well as other browser-specific globals. This file, on the other hand,
- * is comfortable running under node.js, which is why it's the default require:
- * it's used for tests.
+/**
+ * @module browser
+ * @private
  */
 
+const window = require('./window');
+
+/**
+ * Provides a function that outputs milliseconds: either performance.now()
+ * or a fallback to Date.now()
+ */
+module.exports.now = (function() {
+    if (window.performance &&
+        window.performance.now) {
+        return window.performance.now.bind(window.performance);
+    } else {
+        return Date.now.bind(Date);
+    }
+}());
+
+const frame = window.requestAnimationFrame ||
+    window.mozRequestAnimationFrame ||
+    window.webkitRequestAnimationFrame ||
+    window.msRequestAnimationFrame;
+
 exports.frame = function(fn) {
-    return setImmediate(fn);
+    return frame(fn);
 };
+
+const cancel = window.cancelAnimationFrame ||
+    window.mozCancelAnimationFrame ||
+    window.webkitCancelAnimationFrame ||
+    window.msCancelAnimationFrame;
 
 exports.cancelFrame = function(id) {
-    return clearImmediate(id);
+    cancel(id);
 };
 
-module.exports.now = Date.now.bind(Date);
-
-exports.timed = function(fn, dur, ctx) {
+exports.timed = function (fn, dur, ctx) {
     if (!dur) {
         fn.call(ctx, 1);
         return null;
     }
 
-    var abort = false,
-        start = module.exports.now();
+    let abort = false;
+    const start = module.exports.now();
 
     function tick(now) {
         if (abort) return;
@@ -45,11 +64,35 @@ exports.timed = function(fn, dur, ctx) {
     return function() { abort = true; };
 };
 
-exports.supported = function () {
-    return true;
+exports.getImageData = function (img) {
+    const canvas = window.document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    context.drawImage(img, 0, 0);
+    return context.getImageData(0, 0, img.width, img.height).data;
 };
 
-exports.devicePixelRatio = 1;
-exports.hardwareConcurrency = 8;
+/**
+ * Test if the current browser supports Mapbox GL JS
+ * @param {Object} options
+ * @param {boolean} [options.failIfMajorPerformanceCaveat=false] Return `false`
+ *   if the performance of Mapbox GL JS would be dramatically worse than
+ *   expected (i.e. a software renderer would be used)
+ * @return {boolean}
+ */
+exports.supported = require('mapbox-gl-supported');
+
+exports.hardwareConcurrency = window.navigator.hardwareConcurrency || 4;
+
+Object.defineProperty(exports, 'devicePixelRatio', {
+    get: function() { return window.devicePixelRatio; }
+});
+
 exports.supportsWebp = false;
-exports.supportsGeolocation = false;
+
+const webpImgTest = window.document.createElement('img');
+webpImgTest.onload = function() {
+    exports.supportsWebp = true;
+};
+webpImgTest.src = 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAQAAAAfQ//73v/+BiOh/AAA=';

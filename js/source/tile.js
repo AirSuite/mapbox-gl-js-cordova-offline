@@ -1,37 +1,54 @@
 'use strict';
 
-var util = require('../util/util');
-var Bucket = require('../data/bucket');
-var FeatureIndex = require('../data/feature_index');
-var vt = require('vector-tile');
-var Protobuf = require('pbf');
-var GeoJSONFeature = require('../util/vectortile_to_geojson');
-var featureFilter = require('feature-filter');
-var CollisionTile = require('../symbol/collision_tile');
-var CollisionBoxArray = require('../symbol/collision_box');
-
-module.exports = Tile;
+const util = require('../util/util');
+const Bucket = require('../data/bucket');
+const FeatureIndex = require('../data/feature_index');
+const vt = require('vector-tile');
+const Protobuf = require('pbf');
+const GeoJSONFeature = require('../util/vectortile_to_geojson');
+const featureFilter = require('feature-filter');
+const CollisionTile = require('../symbol/collision_tile');
+const CollisionBoxArray = require('../symbol/collision_box');
+const SymbolInstancesArray = require('../symbol/symbol_instances');
+const SymbolQuadsArray = require('../symbol/symbol_quads');
 
 /**
  * A tile object is the combination of a Coordinate, which defines
  * its place, as well as a unique ID and data tracking for its content
  *
- * @param {Coordinate} coord
- * @param {number} size
  * @private
  */
-function Tile(coord, size, sourceMaxZoom) {
-    this.coord = coord;
-    this.uid = util.uniqueId();
-    this.loaded = false; // TODO rename loaded
-    this.isUnloaded = false;
-    this.uses = 0;
-    this.tileSize = size;
-    this.sourceMaxZoom = sourceMaxZoom;
-    this.buckets = {};
-}
+class Tile {
+    /**
+     * @param {Coordinate} coord
+     * @param {number} size
+     */
+    constructor(coord, size, sourceMaxZoom) {
+        this.coord = coord;
+        this.uid = util.uniqueId();
+        this.uses = 0;
+        this.tileSize = size;
+        this.sourceMaxZoom = sourceMaxZoom;
+        this.buckets = {};
 
-Tile.prototype = {
+        // `this.state` must be one of
+        //
+        // - `loading`:   Tile data is in the process of loading.
+        // - `loaded`:    Tile data has been loaded. Tile can be rendered.
+        // - `reloading`: Tile data has been loaded and is being updated. Tile can be rendered.
+        // - `unloaded`:  Tile data has been deleted.
+        // - `errored`:   Tile data was not loaded because of an error.
+        this.state = 'loading';
+    }
+
+    registerFadeDuration(animationLoop, duration) {
+        const fadeEndTime = duration + this.timeAdded;
+        if (fadeEndTime < Date.now()) return;
+        if (this.fadeEndTime && fadeEndTime < this.fadeEndTime) return;
+
+        this.fadeEndTime = fadeEndTime;
+        animationLoop.set(this.fadeEndTime - Date.now());
+    }
 
     /**
      * Given a data object with a 'buffers' property, load it into
@@ -42,78 +59,89 @@ Tile.prototype = {
      * @returns {undefined}
      * @private
      */
-    loadVectorData: function(data, style) {
-        this.loaded = true;
+    loadVectorData(data, painter) {
+        if (this.hasData()) {
+            this.unloadVectorData(painter);
+        }
+
+        this.state = 'loaded';
 
         // empty GeoJSON tile
         if (!data) return;
 
+        // If we are redoing placement for the same tile, we will not recieve
+        // a new "rawTileData" object. If we are loading a new tile, we will
+        // recieve a new "rawTileData" object.
+        if (data.rawTileData) {
+            this.rawTileData = data.rawTileData;
+        }
+
         this.collisionBoxArray = new CollisionBoxArray(data.collisionBoxArray);
         this.collisionTile = new CollisionTile(data.collisionTile, this.collisionBoxArray);
-        this.featureIndex = new FeatureIndex(data.featureIndex, data.rawTileData, this.collisionTile);
-        this.rawTileData = data.rawTileData;
-        this.buckets = unserializeBuckets(data.buckets, style);
-    },
+        this.symbolInstancesArray = new SymbolInstancesArray(data.symbolInstancesArray);
+        this.symbolQuadsArray = new SymbolQuadsArray(data.symbolQuadsArray);
+        this.featureIndex = new FeatureIndex(data.featureIndex, this.rawTileData, this.collisionTile);
+        this.buckets = Bucket.deserialize(data.buckets, painter.style);
+    }
 
     /**
-     * given a data object and a GL painter, destroy and re-create
-     * all of its buffers.
+     * Replace this tile's symbol buckets with fresh data.
      * @param {Object} data
-     * @param {Object} painter
+     * @param {Style} style
      * @returns {undefined}
      * @private
      */
-    reloadSymbolData: function(data, painter, style) {
-        if (this.isUnloaded) return;
+    reloadSymbolData(data, style) {
+        if (this.state === 'unloaded') return;
 
         this.collisionTile = new CollisionTile(data.collisionTile, this.collisionBoxArray);
         this.featureIndex.setCollisionTile(this.collisionTile);
 
-        // Destroy and delete existing symbol buckets
-        for (var id in this.buckets) {
-            var bucket = this.buckets[id];
-            if (bucket.type === 'symbol') {
-                bucket.destroy(painter.gl);
+        for (const id in this.buckets) {
+            const bucket = this.buckets[id];
+            if (bucket.layers[0].type === 'symbol') {
+                bucket.destroy();
                 delete this.buckets[id];
             }
         }
 
         // Add new symbol buckets
-        util.extend(this.buckets, unserializeBuckets(data.buckets, style));
-    },
+        util.extend(this.buckets, Bucket.deserialize(data.buckets, style));
+    }
 
     /**
-     * Make sure that this tile doesn't own any data within a given
-     * painter, so that it doesn't consume any memory or maintain
-     * any references to the painter.
-     * @param {Object} painter gl painter object
+     * Release any data or WebGL resources referenced by this tile.
      * @returns {undefined}
      * @private
      */
-    unloadVectorData: function(painter) {
-        for (var id in this.buckets) {
-            var bucket = this.buckets[id];
-            bucket.destroy(painter.gl);
+    unloadVectorData() {
+        for (const id in this.buckets) {
+            this.buckets[id].destroy();
         }
+        this.buckets = {};
 
         this.collisionBoxArray = null;
+        this.symbolQuadsArray = null;
+        this.symbolInstancesArray = null;
         this.collisionTile = null;
         this.featureIndex = null;
-        this.rawTileData = null;
-        this.buckets = null;
-        this.loaded = false;
-        this.isUnloaded = true;
-    },
+        this.state = 'unloaded';
+    }
 
-    redoPlacement: function(source) {
-        if (!this.loaded || this.redoingPlacement) {
+    redoPlacement(source) {
+        if (source.type !== 'vector' && source.type !== 'geojson') {
+            return;
+        }
+
+        if (this.state !== 'loaded' || this.state === 'reloading') {
             this.redoWhenDone = true;
             return;
         }
 
-        this.redoingPlacement = true;
+        this.state = 'reloading';
 
-        source.dispatcher.send('redo placement', {
+        source.dispatcher.send('redoPlacement', {
+            type: source.type,
             uid: this.uid,
             source: source.id,
             angle: source.map.transform.angle,
@@ -122,54 +150,51 @@ Tile.prototype = {
         }, done.bind(this), this.workerID);
 
         function done(_, data) {
-            this.reloadSymbolData(data, source.map.painter, source.map.style);
-            source.fire('tile.load', {tile: this});
+            this.reloadSymbolData(data, source.map.style);
+            source.fire('data', {tile: this, coord: this.coord, dataType: 'tile'});
 
-            this.redoingPlacement = false;
+            // HACK this is nescessary to fix https://github.com/mapbox/mapbox-gl-js/issues/2986
+            if (source.map) source.map.painter.tileExtentVAO.vao = null;
+
+            this.state = 'loaded';
             if (this.redoWhenDone) {
                 this.redoPlacement(source);
                 this.redoWhenDone = false;
             }
         }
-    },
+    }
 
-    getBucket: function(layer) {
-        return this.buckets && this.buckets[layer.ref || layer.id];
-    },
+    getBucket(layer) {
+        return this.buckets[layer.id];
+    }
 
-    querySourceFeatures: function(result, params) {
+    querySourceFeatures(result, params) {
         if (!this.rawTileData) return;
 
         if (!this.vtLayers) {
-            this.vtLayers = new vt.VectorTile(new Protobuf(new Uint8Array(this.rawTileData))).layers;
+            this.vtLayers = new vt.VectorTile(new Protobuf(this.rawTileData)).layers;
         }
 
-        var layer = this.vtLayers._geojsonTileLayer || this.vtLayers[params.sourceLayer];
+        const layer = this.vtLayers._geojsonTileLayer || this.vtLayers[params.sourceLayer];
 
         if (!layer) return;
 
-        var filter = featureFilter(params.filter);
-        var coord = { z: this.coord.z, x: this.coord.x, y: this.coord.y };
+        const filter = featureFilter(params && params.filter);
+        const coord = { z: this.coord.z, x: this.coord.x, y: this.coord.y };
 
-        for (var i = 0; i < layer.length; i++) {
-            var feature = layer.feature(i);
+        for (let i = 0; i < layer.length; i++) {
+            const feature = layer.feature(i);
             if (filter(feature)) {
-                var geojsonFeature = new GeoJSONFeature(feature, this.coord.z, this.coord.x, this.coord.y);
+                const geojsonFeature = new GeoJSONFeature(feature, this.coord.z, this.coord.x, this.coord.y);
                 geojsonFeature.tile = coord;
                 result.push(geojsonFeature);
             }
         }
     }
-};
 
-function unserializeBuckets(input, style) {
-    var output = {};
-    for (var i = 0; i < input.length; i++) {
-        var bucket = Bucket.create(util.extend({
-            childLayers: input[i].childLayerIds.map(style.getLayer.bind(style)),
-            layer: style.getLayer(input[i].layerId)
-        }, input[i]));
-        output[bucket.id] = bucket;
+    hasData() {
+        return this.state === 'loaded' || this.state === 'reloading';
     }
-    return output;
 }
+
+module.exports = Tile;

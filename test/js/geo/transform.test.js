@@ -1,18 +1,19 @@
 'use strict';
 
-var test = require('tap').test;
-var Point = require('point-geometry');
-var Transform = require('../../../js/geo/transform');
-var LngLat = require('../../../js/geo/lng_lat');
+const test = require('mapbox-gl-js-test').test;
+const Point = require('point-geometry');
+const Transform = require('../../../js/geo/transform');
+const TileCoord = require('../../../js/source/tile_coord');
+const LngLat = require('../../../js/geo/lng_lat');
 
-var fixed = require('../../testutil/fixed');
-var fixedLngLat = fixed.LngLat;
-var fixedCoord = fixed.Coord;
+const fixed = require('mapbox-gl-js-test/fixed');
+const fixedLngLat = fixed.LngLat;
+const fixedCoord = fixed.Coord;
 
-test('transform', function(t) {
+test('transform', (t) => {
 
-    t.test('creates a transform', function(t) {
-        var transform = new Transform();
+    t.test('creates a transform', (t) => {
+        const transform = new Transform();
         transform.resize(500, 500);
         t.equal(transform.unmodified, true);
         t.equal(transform.tileSize, 512, 'tileSize');
@@ -44,18 +45,15 @@ test('transform', function(t) {
         t.end();
     });
 
-    t.test('panBy', function(t) {
-        var transform = new Transform();
+    t.test('does not throw on bad center', (t) => {
+        const transform = new Transform();
         transform.resize(500, 500);
-        transform.latRange = undefined;
-        t.deepEqual(transform.center, { lng: 0, lat: 0 });
-        t.equal(transform.panBy(new Point(10, 10)), undefined);
-        t.deepEqual(fixedLngLat(transform.center), fixedLngLat({ lng: 7.03125, lat: -7.01366792756663 }));
+        transform.center = {lng: 50, lat: -90};
         t.end();
     });
 
-    t.test('setLocationAt', function(t) {
-        var transform = new Transform();
+    t.test('setLocationAt', (t) => {
+        const transform = new Transform();
         transform.resize(500, 500);
         transform.zoom = 4;
         t.deepEqual(transform.center, { lng: 0, lat: 0 });
@@ -64,8 +62,8 @@ test('transform', function(t) {
         t.end();
     });
 
-    t.test('setLocationAt tilted', function(t) {
-        var transform = new Transform();
+    t.test('setLocationAt tilted', (t) => {
+        const transform = new Transform();
         transform.resize(500, 500);
         transform.zoom = 4;
         transform.pitch = 50;
@@ -75,16 +73,16 @@ test('transform', function(t) {
         t.end();
     });
 
-    t.test('has a default zoom', function(t) {
-        var transform = new Transform();
+    t.test('has a default zoom', (t) => {
+        const transform = new Transform();
         transform.resize(500, 500);
         t.equal(transform.tileZoom, 0);
         t.equal(transform.tileZoom, transform.zoom);
         t.end();
     });
 
-    t.test('lngRange & latRange constrain zoom and center', function(t) {
-        var transform = new Transform();
+    t.test('lngRange & latRange constrain zoom and center', (t) => {
+        const transform = new Transform();
         transform.center = new LngLat(0, 0);
         transform.zoom = 10;
         transform.resize(500, 500);
@@ -101,6 +99,112 @@ test('transform', function(t) {
         transform.zoom = 10;
         transform.center = new LngLat(-50, -30);
         t.same(transform.center, new LngLat(-4.828338623046875, -4.828969771321582));
+
+        t.end();
+    });
+
+    test('coveringTiles', (t) => {
+        const options = {
+            minzoom: 1,
+            maxzoom: 10,
+            tileSize: 512
+        };
+
+        const transform = new Transform();
+        transform.resize(200, 200);
+
+        // make slightly off center so that sort order is not subject to precision issues
+        transform.center = { lng: -0.01, lat: 0.01 };
+
+        transform.zoom = 0;
+        t.deepEqual(transform.coveringTiles(options), []);
+
+        transform.zoom = 1;
+        t.deepEqual(transform.coveringTiles(options), ['1', '33', '65', '97'].map(TileCoord.fromID));
+
+        transform.zoom = 2.4;
+        t.deepEqual(transform.coveringTiles(options), ['162', '194', '290', '322'].map(TileCoord.fromID));
+
+        transform.zoom = 10;
+        t.deepEqual(transform.coveringTiles(options), ['16760810', '16760842', '16793578', '16793610'].map(TileCoord.fromID));
+
+        transform.zoom = 11;
+        t.deepEqual(transform.coveringTiles(options), ['16760810', '16760842', '16793578', '16793610'].map(TileCoord.fromID));
+
+        t.end();
+    });
+
+    test('coveringZoomLevel', (t) => {
+        const options = {
+            minzoom: 1,
+            maxzoom: 10,
+            tileSize: 512
+        };
+
+        const transform = new Transform();
+
+        transform.zoom = 0;
+        t.deepEqual(transform.coveringZoomLevel(options), 0);
+
+        transform.zoom = 0.1;
+        t.deepEqual(transform.coveringZoomLevel(options), 0);
+
+        transform.zoom = 1;
+        t.deepEqual(transform.coveringZoomLevel(options), 1);
+
+        transform.zoom = 2.4;
+        t.deepEqual(transform.coveringZoomLevel(options), 2);
+
+        transform.zoom = 10;
+        t.deepEqual(transform.coveringZoomLevel(options), 10);
+
+        transform.zoom = 11;
+        t.deepEqual(transform.coveringZoomLevel(options), 11);
+
+        transform.zoom = 11.5;
+        t.deepEqual(transform.coveringZoomLevel(options), 11);
+
+        options.tileSize = 256;
+
+        transform.zoom = 0;
+        t.deepEqual(transform.coveringZoomLevel(options), 1);
+
+        transform.zoom = 0.1;
+        t.deepEqual(transform.coveringZoomLevel(options), 1);
+
+        transform.zoom = 1;
+        t.deepEqual(transform.coveringZoomLevel(options), 2);
+
+        transform.zoom = 2.4;
+        t.deepEqual(transform.coveringZoomLevel(options), 3);
+
+        transform.zoom = 10;
+        t.deepEqual(transform.coveringZoomLevel(options), 11);
+
+        transform.zoom = 11;
+        t.deepEqual(transform.coveringZoomLevel(options), 12);
+
+        transform.zoom = 11.5;
+        t.deepEqual(transform.coveringZoomLevel(options), 12);
+
+        options.roundZoom = true;
+
+        t.deepEqual(transform.coveringZoomLevel(options), 13);
+
+        t.end();
+    });
+
+    t.test('clamps pitch', (t) => {
+        const transform = new Transform();
+
+        transform.pitch = 45;
+        t.equal(transform.pitch, 45);
+
+        transform.pitch = -10;
+        t.equal(transform.pitch, 0);
+
+        transform.pitch = 90;
+        t.equal(transform.pitch, 60);
 
         t.end();
     });

@@ -1,46 +1,44 @@
 'use strict';
 
-var parseCSSColor = require('csscolorparser').parseCSSColor;
-var util = require('../util/util');
+const parseColorString = require('csscolorparser').parseCSSColor;
+const util = require('../util/util');
+const MapboxGLFunction = require('mapbox-gl-function');
 
-var colorCache = {};
+const cache = {};
 
-function parseColor(input) {
+module.exports = function parseColor(input) {
 
-    if (colorCache[input]) {
-        return colorCache[input];
+    if (input && MapboxGLFunction.isFunctionDefinition(input)) {
 
-    // RGBA array
+        if (!input.stops) return input;
+        else return util.extend({}, input, {
+            stops: input.stops.map((stop) => {
+                return [stop[0], parseColor(stop[1])];
+            })
+        });
+
+    } else if (typeof input === 'string') {
+
+        if (!cache[input]) {
+            const rgba = parseColorString(input);
+            if (!rgba) { throw new Error(`Invalid color ${input}`); }
+
+            // GL expects all components to be in the range [0, 1] and to be
+            // multipled by the alpha value.
+            cache[input] = [
+                rgba[0] / 255 * rgba[3],
+                rgba[1] / 255 * rgba[3],
+                rgba[2] / 255 * rgba[3],
+                rgba[3]
+            ];
+        }
+
+        return cache[input];
+
     } else if (Array.isArray(input)) {
         return input;
 
-    // GL function
-    } else if (input && input.stops) {
-        return util.extend({}, input, {
-            stops: input.stops.map(parseFunctionStopColor)
-        });
-
-    // Color string
-    } else if (typeof input === 'string') {
-        var parsedColor = parseCSSColor(input);
-        if (!parsedColor) { throw new Error('Invalid color ' + input); }
-
-        var output = colorDowngrade(parsedColor);
-        colorCache[input] = output;
-        return output;
-
     } else {
-        throw new Error('Invalid color ' + input);
+        throw new Error(`Invalid color ${input}`);
     }
-
-}
-
-function parseFunctionStopColor(stop) {
-    return [stop[0], parseColor(stop[1])];
-}
-
-function colorDowngrade(color) {
-    return [color[0] / 255, color[1] / 255, color[2] / 255, color[3] / 1];
-}
-
-module.exports = parseColor;
+};

@@ -1,18 +1,36 @@
 'use strict';
 
+const isCounterClockwise = require('./util').isCounterClockwise;
+
 module.exports = {
     multiPolygonIntersectsBufferedMultiPoint: multiPolygonIntersectsBufferedMultiPoint,
     multiPolygonIntersectsMultiPolygon: multiPolygonIntersectsMultiPolygon,
-    multiPolygonIntersectsBufferedMultiLine: multiPolygonIntersectsBufferedMultiLine
+    multiPolygonIntersectsBufferedMultiLine: multiPolygonIntersectsBufferedMultiLine,
+    polygonIntersectsPolygon: polygonIntersectsPolygon,
+    distToSegmentSquared: distToSegmentSquared
 };
 
+function polygonIntersectsPolygon(polygonA, polygonB) {
+    for (let i = 0; i < polygonA.length; i++) {
+        if (polygonContainsPoint(polygonB, polygonA[i])) return true;
+    }
+
+    for (let i = 0; i < polygonB.length; i++) {
+        if (polygonContainsPoint(polygonA, polygonB[i])) return true;
+    }
+
+    if (lineIntersectsLine(polygonA, polygonB)) return true;
+
+    return false;
+}
+
 function multiPolygonIntersectsBufferedMultiPoint(multiPolygon, rings, radius) {
-    for (var j = 0; j < multiPolygon.length; j++) {
-        var polygon = multiPolygon[j];
-        for (var i = 0; i < rings.length; i++) {
-            var ring = rings[i];
-            for (var k = 0; k < ring.length; k++) {
-                var point = ring[k];
+    for (let j = 0; j < multiPolygon.length; j++) {
+        const polygon = multiPolygon[j];
+        for (let i = 0; i < rings.length; i++) {
+            const ring = rings[i];
+            for (let k = 0; k < ring.length; k++) {
+                const point = ring[k];
                 if (polygonContainsPoint(polygon, point)) return true;
                 if (pointIntersectsBufferedLine(point, polygon, radius)) return true;
             }
@@ -27,20 +45,20 @@ function multiPolygonIntersectsMultiPolygon(multiPolygonA, multiPolygonB) {
         return multiPolygonContainsPoint(multiPolygonB, multiPolygonA[0][0]);
     }
 
-    for (var m = 0; m < multiPolygonB.length; m++) {
-        var ring = multiPolygonB[m];
-        for (var n = 0; n < ring.length; n++) {
+    for (let m = 0; m < multiPolygonB.length; m++) {
+        const ring = multiPolygonB[m];
+        for (let n = 0; n < ring.length; n++) {
             if (multiPolygonContainsPoint(multiPolygonA, ring[n])) return true;
         }
     }
 
-    for (var j = 0; j < multiPolygonA.length; j++) {
-        var polygon = multiPolygonA[j];
-        for (var i = 0; i < polygon.length; i++) {
+    for (let j = 0; j < multiPolygonA.length; j++) {
+        const polygon = multiPolygonA[j];
+        for (let i = 0; i < polygon.length; i++) {
             if (multiPolygonContainsPoint(multiPolygonB, polygon[i])) return true;
         }
 
-        for (var k = 0; k < multiPolygonB.length; k++) {
+        for (let k = 0; k < multiPolygonB.length; k++) {
             if (lineIntersectsLine(polygon, multiPolygonB[k])) return true;
         }
     }
@@ -49,14 +67,14 @@ function multiPolygonIntersectsMultiPolygon(multiPolygonA, multiPolygonB) {
 }
 
 function multiPolygonIntersectsBufferedMultiLine(multiPolygon, multiLine, radius) {
-    for (var i = 0; i < multiLine.length; i++) {
-        var line = multiLine[i];
+    for (let i = 0; i < multiLine.length; i++) {
+        const line = multiLine[i];
 
-        for (var j = 0; j < multiPolygon.length; j++) {
-            var polygon = multiPolygon[j];
+        for (let j = 0; j < multiPolygon.length; j++) {
+            const polygon = multiPolygon[j];
 
             if (polygon.length >= 3) {
-                for (var k = 0; k < line.length; k++) {
+                for (let k = 0; k < line.length; k++) {
                     if (polygonContainsPoint(polygon, line[k])) return true;
                 }
             }
@@ -73,12 +91,12 @@ function lineIntersectsBufferedLine(lineA, lineB, radius) {
         if (lineIntersectsLine(lineA, lineB)) return true;
 
         // Check whether any point in either line is within radius of the other line
-        for (var j = 0; j < lineB.length; j++) {
+        for (let j = 0; j < lineB.length; j++) {
             if (pointIntersectsBufferedLine(lineB[j], lineA, radius)) return true;
         }
     }
 
-    for (var k = 0; k < lineA.length; k++) {
+    for (let k = 0; k < lineA.length; k++) {
         if (pointIntersectsBufferedLine(lineA[k], lineB, radius)) return true;
     }
 
@@ -86,22 +104,17 @@ function lineIntersectsBufferedLine(lineA, lineB, radius) {
 }
 
 function lineIntersectsLine(lineA, lineB) {
-    for (var i = 0; i < lineA.length - 1; i++) {
-        var a0 = lineA[i];
-        var a1 = lineA[i + 1];
-        for (var j = 0; j < lineB.length - 1; j++) {
-            var b0 = lineB[j];
-            var b1 = lineB[j + 1];
+    if (lineA.length === 0 || lineB.length === 0) return false;
+    for (let i = 0; i < lineA.length - 1; i++) {
+        const a0 = lineA[i];
+        const a1 = lineA[i + 1];
+        for (let j = 0; j < lineB.length - 1; j++) {
+            const b0 = lineB[j];
+            const b1 = lineB[j + 1];
             if (lineSegmentIntersectsLineSegment(a0, a1, b0, b1)) return true;
         }
     }
     return false;
-}
-
-
-// http://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
-function isCounterClockwise(a, b, c) {
-    return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
 }
 
 function lineSegmentIntersectsLineSegment(a0, a1, b0, b1) {
@@ -110,14 +123,14 @@ function lineSegmentIntersectsLineSegment(a0, a1, b0, b1) {
 }
 
 function pointIntersectsBufferedLine(p, line, radius) {
-    var radiusSquared = radius * radius;
+    const radiusSquared = radius * radius;
 
     if (line.length === 1) return p.distSqr(line[0]) < radiusSquared;
 
-    for (var i = 1; i < line.length; i++) {
+    for (let i = 1; i < line.length; i++) {
         // Find line segments that have a distance <= radius^2 to p
         // In that case, we treat the line as "containing point p".
-        var v = line[i - 1], w = line[i];
+        const v = line[i - 1], w = line[i];
         if (distToSegmentSquared(p, v, w) < radiusSquared) return true;
     }
     return false;
@@ -125,9 +138,9 @@ function pointIntersectsBufferedLine(p, line, radius) {
 
 // Code from http://stackoverflow.com/a/1501725/331379.
 function distToSegmentSquared(p, v, w) {
-    var l2 = v.distSqr(w);
+    const l2 = v.distSqr(w);
     if (l2 === 0) return p.distSqr(v);
-    var t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+    const t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
     if (t < 0) return p.distSqr(v);
     if (t > 1) return p.distSqr(w);
     return p.distSqr(w.sub(v)._mult(t)._add(v));
@@ -135,12 +148,12 @@ function distToSegmentSquared(p, v, w) {
 
 // point in polygon ray casting algorithm
 function multiPolygonContainsPoint(rings, p) {
-    var c = false,
+    let c = false,
         ring, p1, p2;
 
-    for (var k = 0; k < rings.length; k++) {
+    for (let k = 0; k < rings.length; k++) {
         ring = rings[k];
-        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
             p1 = ring[i];
             p2 = ring[j];
             if (((p1.y > p.y) !== (p2.y > p.y)) && (p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
@@ -152,10 +165,10 @@ function multiPolygonContainsPoint(rings, p) {
 }
 
 function polygonContainsPoint(ring, p) {
-    var c = false;
-    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        var p1 = ring[i];
-        var p2 = ring[j];
+    let c = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const p1 = ring[i];
+        const p2 = ring[j];
         if (((p1.y > p.y) !== (p2.y > p.y)) && (p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
             c = !c;
         }

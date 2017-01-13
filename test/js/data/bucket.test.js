@@ -1,59 +1,15 @@
 'use strict';
 
-var test = require('tap').test;
-var Bucket = require('../../../js/data/bucket');
-var util = require('../../../js/util/util');
-var StyleLayer = require('../../../js/style/style_layer');
+const test = require('mapbox-gl-js-test').test;
+const Bucket = require('../../../js/data/bucket');
+const createVertexArrayType = require('../../../js/data/vertex_array_type');
+const createElementArrayType = require('../../../js/data/element_array_type');
+const FeatureIndex = require('../../../js/data/feature_index');
+const StyleLayer = require('../../../js/style/style_layer');
+const featureFilter = require('feature-filter');
+const TileCoord = require('../../../js/source/tile_coord');
 
-test('Bucket', function(t) {
-
-    function createClass(options) {
-        function Class() {
-            Bucket.apply(this, arguments);
-        }
-
-        Class.prototype = util.inherit(Bucket, {});
-
-        Class.prototype.programInterfaces = {
-            test: {
-                vertexBuffer: 'testVertex',
-                elementBuffer: 'testElement',
-                secondElementBuffer: 'testSecondElement',
-                secondElementBufferComponents: 2,
-
-                layoutAttributes: options.layoutAttributes || [{
-                    name: 'box',
-                    components: 2,
-                    type: 'Int16'
-                }],
-                paintAttributes: options.paintAttributes || [{
-                    name: 'map',
-                    type: 'Int16',
-                    getValue: function(layer, globalProperties, featureProperties) {
-                        return [featureProperties.x];
-                    },
-                    paintProperty: 'circle-color'
-                }]
-            }
-        };
-
-        Class.prototype.addTestVertex = function(x, y) {
-            return this.arrays.testVertex.emplaceBack(x * 2, y * 2);
-        };
-
-        Class.prototype.addFeature = function(feature) {
-            this.makeRoomFor('test', 1);
-            var point = feature.loadGeometry()[0][0];
-            var startIndex = this.arrays.testVertex.length;
-            this.addTestVertex(point.x, point.y);
-            this.arrays.testElement.emplaceBack(1, 2, 3);
-            this.arrays.testSecondElement.emplaceBack(point.x, point.y);
-            this.addPaintAttributes('test', {}, feature.properties, startIndex, this.arrays.testVertex.length);
-        };
-
-        return Class;
-    }
-
+test('Bucket', (t) => {
     function createFeature(x, y) {
         return {
             loadGeometry: function() {
@@ -65,97 +21,122 @@ test('Bucket', function(t) {
         };
     }
 
-    var dataDrivenPaint = {
-        'circle-color': {
-            stops: [[0, 'red'], [100, 'violet']],
-            property: 'mapbox'
+    const dataDrivenPaint = {
+        'circle-opacity': {
+            stops: [[0, 0], [100, 100]],
+            property: 'x'
         }
     };
 
-    var constantPaint = {};
+    const constantPaint = {};
 
     function create(options) {
         options = options || {};
 
-        var serializedLayers = (options.layers || [{
+        const programInterface = {
+            layoutVertexArrayType: createVertexArrayType(options.layoutAttributes || [{
+                name: 'a_box',
+                components: 2,
+                type: 'Int16'
+            }]),
+            elementArrayType: createElementArrayType(),
+            elementArrayType2: createElementArrayType(2),
+
+            paintAttributes: options.paintAttributes || [{
+                property: 'circle-opacity',
+                type: 'Int16'
+            }]
+        };
+
+        class Class extends Bucket {
+            constructor(options) {
+                super(options, programInterface);
+            }
+
+            addFeature(feature) {
+                const arrays = this.arrays;
+                const point = feature.loadGeometry()[0][0];
+                arrays.layoutVertexArray.emplaceBack(point.x * 2, point.y * 2);
+                arrays.elementArray.emplaceBack(1, 2, 3);
+                arrays.elementArray2.emplaceBack(point.x, point.y);
+                arrays.populatePaintArrays(feature.properties);
+            }
+        }
+
+        const serializedLayers = (options.layers || [{
             id: 'layerid',
             type: 'circle',
             paint: dataDrivenPaint
         }]);
-        var layers = serializedLayers.map(function(serializedLayer) {
-            var styleLayer = new StyleLayer(serializedLayer);
+        const layers = serializedLayers.map((serializedLayer) => {
+            const styleLayer = new StyleLayer(serializedLayer);
+            styleLayer.filter = featureFilter();
             styleLayer.updatePaintTransitions([], {}, {});
             return styleLayer;
         });
 
-
-        var Class = createClass(options);
-        return new Class({
-            layer: layers[0],
-            childLayers: layers,
-            buffers: {}
-        });
+        return new Class({layers});
     }
 
-    t.test('add features', function(t) {
-        var bucket = create();
+    function createOptions() {
+        return {featureIndex: new FeatureIndex(new TileCoord(0, 0, 0), 0, null)};
+    }
 
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
+    t.test('add features', (t) => {
+        const bucket = create();
 
-        var testVertex = bucket.arrays.testVertex;
+        bucket.populate([createFeature(17, 42)], createOptions());
+
+        const testVertex = bucket.arrays.layoutVertexArray;
         t.equal(testVertex.length, 1);
-        var v0 = testVertex.get(0);
-        t.equal(v0.box0, 34);
-        t.equal(v0.box1, 84);
-        var paintVertex = bucket.arrays.layeridTest;
+        const v0 = testVertex.get(0);
+        t.equal(v0.a_box0, 34);
+        t.equal(v0.a_box1, 84);
+        const paintVertex = bucket.arrays.layerData.layerid.paintVertexArray;
         t.equal(paintVertex.length, 1);
-        var p0 = paintVertex.get(0);
-        t.equal(p0.map, 17);
+        const p0 = paintVertex.get(0);
+        t.equal(p0.a_opacity, 17);
 
-        var testElement = bucket.arrays.testElement;
+        const testElement = bucket.arrays.elementArray;
         t.equal(testElement.length, 1);
-        var e1 = testElement.get(0);
+        const e1 = testElement.get(0);
         t.equal(e1.vertices0, 1);
         t.equal(e1.vertices1, 2);
         t.equal(e1.vertices2, 3);
 
-        var testSecondElement = bucket.arrays.testSecondElement;
-        t.equal(testSecondElement.length, 1);
-        var e2 = testSecondElement.get(0);
+        const testElement2 = bucket.arrays.elementArray2;
+        t.equal(testElement2.length, 1);
+        const e2 = testElement2.get(0);
         t.equal(e2.vertices0, 17);
         t.equal(e2.vertices1, 42);
 
         t.end();
     });
 
-    t.test('add features, multiple layers', function(t) {
-        var bucket = create({layers: [
+    t.test('add features, multiple layers', (t) => {
+        const bucket = create({layers: [
             { id: 'one', type: 'circle', paint: dataDrivenPaint },
             { id: 'two', type: 'circle', paint: dataDrivenPaint }
         ]});
 
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
+        bucket.populate([createFeature(17, 42)], createOptions());
 
-        var v0 = bucket.arrays.testVertex.get(0);
-        var a0 = bucket.arrays.oneTest.get(0);
-        var b0 = bucket.arrays.twoTest.get(0);
-        t.equal(a0.map, 17);
-        t.equal(b0.map, 17);
-        t.equal(v0.box0, 34);
-        t.equal(v0.box1, 84);
+        const v0 = bucket.arrays.layoutVertexArray.get(0);
+        const a0 = bucket.arrays.layerData.one.paintVertexArray.get(0);
+        const b0 = bucket.arrays.layerData.two.paintVertexArray.get(0);
+        t.equal(a0.a_opacity, 17);
+        t.equal(b0.a_opacity, 17);
+        t.equal(v0.a_box0, 34);
+        t.equal(v0.a_box1, 84);
 
         t.end();
     });
 
-    t.test('add features, disabled attribute', function(t) {
-        var bucket = create({
+    t.test('add features, disabled attribute', (t) => {
+        const bucket = create({
             paintAttributes: [{
-                name: 'map',
-                type: 'Int16',
-                getValue: function() { return [5]; },
-                paintProperty: 'circle-color'
+                property: 'circle-opacity',
+                type: 'Int16'
             }],
             layoutAttributes: [],
             layers: [
@@ -163,123 +144,58 @@ test('Bucket', function(t) {
             ]
         });
 
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
+        bucket.populate([createFeature(17, 42)], createOptions());
 
-        t.equal(bucket.arrays.testVertex.bytesPerElement, 0);
-        t.deepEqual(
-            bucket.paintAttributes.test.one.uniforms[0].getValue.call(bucket),
-            [5]
-        );
-
+        t.equal(bucket.arrays.layoutVertexArray.bytesPerElement, 0);
         t.end();
     });
 
-    t.test('add features, array type attribute', function(t) {
-        var bucket = create({
+    t.test('add features, array type attribute', (t) => {
+        const bucket = create({
             paintAttributes: [],
             layoutAttributes: [{
-                name: 'map',
+                name: 'a_map',
                 type: 'Int16'
             }]
         });
 
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
+        bucket.populate([createFeature(17, 42)], createOptions());
 
-        var v0 = bucket.arrays.testVertex.get(0);
-        t.equal(v0.map, 34);
-
-        t.end();
-    });
-
-    t.test('reset buffers', function(t) {
-        var bucket = create();
-
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
-
-        bucket.createArrays();
-        var arrays = bucket.arrays;
-
-        t.equal(bucket.arrays, arrays);
-        t.equal(arrays.testElement.length, 0);
-        t.equal(arrays.testSecondElement.length, 0);
-        t.equal(bucket.elementGroups.test.length, 0);
+        const v0 = bucket.arrays.layoutVertexArray.get(0);
+        t.equal(v0.a_map, 34);
 
         t.end();
     });
 
-    t.test('add features after resetting buffers', function(t) {
-        var bucket = create();
+    t.test('isEmpty', (t) => {
+        const bucket = create();
+        t.ok(bucket.isEmpty());
 
-        bucket.features = [createFeature(1, 5)];
-        bucket.populateBuffers();
-        bucket.createArrays();
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
-
-        var testVertex = bucket.arrays.testVertex;
-        t.equal(testVertex.length, 1);
-        var v0 = testVertex.get(0);
-        t.equal(v0.box0, 34);
-        t.equal(v0.box1, 84);
-        var testPaintVertex = bucket.arrays.layeridTest;
-        t.equal(testPaintVertex.length, 1);
-        var p0 = testPaintVertex.get(0);
-        t.equal(p0.map, 17);
-
-        var testElement = bucket.arrays.testElement;
-        t.equal(testElement.length, 1);
-        var e1 = testElement.get(0);
-        t.equal(e1.vertices0, 1);
-        t.equal(e1.vertices1, 2);
-        t.equal(e1.vertices2, 3);
-
-        var testSecondElement = bucket.arrays.testSecondElement;
-        t.equal(testSecondElement.length, 1);
-        var e2 = testSecondElement.get(0);
-        t.equal(e2.vertices0, 17);
-        t.equal(e2.vertices1, 42);
+        bucket.populate([createFeature(17, 42)], createOptions());
+        t.ok(!bucket.isEmpty());
 
         t.end();
     });
 
-    t.test('layout properties', function(t) {
-        var bucket = create();
-        t.equal(bucket.layer.layout.visibility, 'visible');
+    t.test('serialize', (t) => {
+        const bucket = create();
+        bucket.populate([createFeature(17, 42)], createOptions());
+
+        const transferables = [];
+        bucket.serialize(transferables);
+
+        t.equal(4, transferables.length);
+        t.equal(bucket.arrays.layoutVertexArray.arrayBuffer, transferables[0]);
+        t.equal(bucket.arrays.elementArray.arrayBuffer, transferables[1]);
+        t.equal(bucket.arrays.elementArray2.arrayBuffer, transferables[2]);
+        t.equal(bucket.arrays.layerData.layerid.paintVertexArray.arrayBuffer, transferables[3]);
+
         t.end();
     });
 
-    t.test('add features', function(t) {
-        var bucket = create();
-
-        bucket.features = [createFeature(17, 42)];
-        bucket.populateBuffers();
-
-        var testVertex = bucket.arrays.testVertex;
-        t.equal(testVertex.length, 1);
-        var v0 = testVertex.get(0);
-        t.equal(v0.box0, 34);
-        t.equal(v0.box1, 84);
-        var testPaintVertex = bucket.arrays.layeridTest;
-        t.equal(testPaintVertex.length, 1);
-        var p0 = testPaintVertex.get(0);
-        t.equal(p0.map, 17);
-
-        var testElement = bucket.arrays.testElement;
-        t.equal(testElement.length, 1);
-        var e1 = testElement.get(0);
-        t.equal(e1.vertices0, 1);
-        t.equal(e1.vertices1, 2);
-        t.equal(e1.vertices2, 3);
-
-        var testSecondElement = bucket.arrays.testSecondElement;
-        t.equal(testSecondElement.length, 1);
-        var e2 = testSecondElement.get(0);
-        t.equal(e2.vertices0, 17);
-        t.equal(e2.vertices1, 42);
-
+    t.test('layout properties', (t) => {
+        const bucket = create();
+        t.equal(bucket.layers[0].layout.visibility, 'visible');
         t.end();
     });
 

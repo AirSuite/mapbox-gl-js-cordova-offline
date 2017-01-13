@@ -1,20 +1,20 @@
 'use strict';
 
-var Evented = require('../../js/util/evented');
-var util = require('../../js/util/util');
+const Evented = require('../../js/util/evented');
+const createMap = require('../lib/create_map');
 
-var width = 1024;
-var height = 768;
+const width = 1024;
+const height = 768;
 
-var zoomLevels = [];
-for (var i = 4; i < 19; i++) {
+const zoomLevels = [];
+for (let i = 4; i < 19; i++) {
     zoomLevels.push(i);
 }
 
-var queryPoints = [];
-var d = 20;
-for (var x = 0; x < d; x++) {
-    for (var y = 0; y < d; y++) {
+const queryPoints = [];
+const d = 20;
+for (let x = 0; x < d; x++) {
+    for (let y = 0; y < d; y++) {
         queryPoints.push([
             (x / d) * width,
             (y / d) * height
@@ -22,40 +22,41 @@ for (var x = 0; x < d; x++) {
     }
 }
 
-module.exports = function(options) {
-    var evented = util.extend({}, Evented);
+module.exports = function() {
+    const evented = new Evented();
 
-    var sum = 0;
-    var count = 0;
+    let sum = 0;
+    let count = 0;
 
-    asyncSeries(zoomLevels.length, function(n, callback) {
-        var zoomLevel = zoomLevels[zoomLevels.length - n];
-        var map = options.createMap({
+    asyncSeries(zoomLevels.length, (n, callback) => {
+        const zoomLevel = zoomLevels[zoomLevels.length - n];
+        const map = createMap({
             width: width,
             height: height,
             zoom: zoomLevel,
             center: [-77.032194, 38.912753],
-            style: 'mapbox://styles/mapbox/streets-v8'
+            style: 'mapbox://styles/mapbox/streets-v9'
         });
-        document.getElementById('map').style.display = 'none';
+        map.getContainer().style.display = 'none';
 
-        map.on('load', function() {
+        map.on('load', () => {
 
-            var zoomSum = 0;
-            var zoomCount = 0;
-            asyncSeries(queryPoints.length, function(n, callback) {
-                var queryPoint = queryPoints[queryPoints.length - n];
-                var start = performance.now();
-                map.queryRenderedFeatures(queryPoint);
-                var duration = performance.now() - start;
+            let zoomSum = 0;
+            let zoomCount = 0;
+            asyncSeries(queryPoints.length, (n, callback) => {
+                const queryPoint = queryPoints[queryPoints.length - n];
+                const start = performance.now();
+                map.queryRenderedFeatures(queryPoint, {});
+                const duration = performance.now() - start;
                 sum += duration;
                 count++;
                 zoomSum += duration;
                 zoomCount++;
                 callback();
-            }, function() {
+            }, () => {
+                map.remove();
                 evented.fire('log', {
-                    message: 'zoom ' + zoomLevel + ' average: ' + (zoomSum / zoomCount).toFixed(2) + ' ms'
+                    message: `${(zoomSum / zoomCount).toFixed(2)} ms at zoom ${zoomLevel}`
                 });
                 callback();
             });
@@ -64,13 +65,13 @@ module.exports = function(options) {
 
 
     function done() {
-        var average = sum / count;
+        const average = sum / count;
         evented.fire('end', {
-            message: (average).toFixed(2) + ' ms',
+            message: `${(average).toFixed(2)} ms`,
             score: average
         });
     }
-    setTimeout(function() {
+    setTimeout(() => {
         evented.fire('log', {
             message: 'loading assets',
             color: 'dark'
@@ -82,7 +83,7 @@ module.exports = function(options) {
 
 function asyncSeries(times, work, callback) {
     if (times > 0) {
-        work(times, function(err) {
+        work(times, (err) => {
             if (err) callback(err);
             else asyncSeries(times - 1, work, callback);
         });
@@ -90,4 +91,3 @@ function asyncSeries(times, work, callback) {
         callback();
     }
 }
-

@@ -1,122 +1,147 @@
 'use strict';
 
-module.exports = KeyboardHandler;
-
-
-var panDelta = 80,
-    rotateDelta = 2,
-    pitchDelta = 5;
+const panStep = 100,
+    bearingStep = 15,
+    pitchStep = 10;
 
 /**
- * The `KeyboardHandler` allows a user to zoom, rotate, and pan the map using
- * following keyboard shortcuts:
- *  * `=` / `+`: increase zoom level by 1
- *  * `Shift-=` / `Shift-+`: increase zoom level by 2
- *  * `-`: decrease zoom level by 1
- *  * `Shift--`: decrease zoom level by 2
- *  * Arrow keys: pan by 80 pixels
- *  * `Shift+⇢`: increase rotation by 2 degrees
- *  * `Shift+⇠`: decrease rotation by 2 degrees
- *  * `Shift+⇡`: increase pitch by 5 degrees
- *  * `Shift+⇣`: decrease pitch by 5 degrees
- * @class KeyboardHandler
+ * The `KeyboardHandler` allows the user to zoom, rotate, and pan the map using
+ * the following keyboard shortcuts:
+ *
+ * - `=` / `+`: Increase the zoom level by 1.
+ * - `Shift-=` / `Shift-+`: Increase the zoom level by 2.
+ * - `-`: Decrease the zoom level by 1.
+ * - `Shift--`: Decrease the zoom level by 2.
+ * - Arrow keys: Pan by 100 pixels.
+ * - `Shift+⇢`: Increase the rotation by 15 degrees.
+ * - `Shift+⇠`: Decrease the rotation by 15 degrees.
+ * - `Shift+⇡`: Increase the pitch by 10 degrees.
+ * - `Shift+⇣`: Decrease the pitch by 10 degrees.
+ *
+ * @param {Map} map The Mapbox GL JS map to add the handler to.
  */
-function KeyboardHandler(map) {
-    this._map = map;
-    this._el = map.getCanvasContainer();
+class KeyboardHandler {
+    constructor(map) {
+        this._map = map;
+        this._el = map.getCanvasContainer();
 
-    this._onKeyDown = this._onKeyDown.bind(this);
-}
-
-KeyboardHandler.prototype = {
-
-    _enabled: false,
+        this._onKeyDown = this._onKeyDown.bind(this);
+    }
 
     /**
-     * Returns the current enabled/disabled state of keyboard interaction.
-     * @returns {boolean} enabled state
+     * Returns a Boolean indicating whether keyboard interaction is enabled.
+     *
+     * @returns {boolean} `true` if keyboard interaction is enabled.
      */
-    isEnabled: function () {
-        return this._enabled;
-    },
+    isEnabled() {
+        return !!this._enabled;
+    }
 
     /**
-     * Enable the ability to interact with the map using keyboard input.
+     * Enables keyboard interaction.
+     *
      * @example
-     *   map.keyboard.enable();
+     * map.keyboard.enable();
      */
-    enable: function () {
+    enable() {
         if (this.isEnabled()) return;
         this._el.addEventListener('keydown', this._onKeyDown, false);
         this._enabled = true;
-    },
+    }
 
     /**
-     * Disable the ability to interact with the map using keyboard input.
+     * Disables keyboard interaction.
+     *
      * @example
-     *   map.keyboard.disable();
+     * map.keyboard.disable();
      */
-    disable: function () {
+    disable() {
         if (!this.isEnabled()) return;
         this._el.removeEventListener('keydown', this._onKeyDown);
         this._enabled = false;
-    },
+    }
 
-    _onKeyDown: function (e) {
+    _onKeyDown(e) {
         if (e.altKey || e.ctrlKey || e.metaKey) return;
 
-        var map = this._map,
-            eventData = { originalEvent: e };
+        let zoomDir = 0;
+        let bearingDir = 0;
+        let pitchDir = 0;
+        let xDir = 0;
+        let yDir = 0;
 
         switch (e.keyCode) {
         case 61:
         case 107:
         case 171:
         case 187:
-            map.zoomTo(Math.round(map.getZoom()) + (e.shiftKey ? 2 : 1), eventData);
+            zoomDir = 1;
             break;
 
         case 189:
         case 109:
         case 173:
-            map.zoomTo(Math.round(map.getZoom()) - (e.shiftKey ? 2 : 1), eventData);
+            zoomDir = -1;
             break;
 
         case 37:
             if (e.shiftKey) {
-                map.easeTo({ bearing: map.getBearing() - rotateDelta }, eventData);
+                bearingDir = -1;
             } else {
                 e.preventDefault();
-                map.panBy([-panDelta, 0], eventData);
+                xDir = -1;
             }
             break;
 
         case 39:
             if (e.shiftKey) {
-                map.easeTo({ bearing: map.getBearing() + rotateDelta }, eventData);
+                bearingDir = 1;
             } else {
                 e.preventDefault();
-                map.panBy([panDelta, 0], eventData);
+                xDir = 1;
             }
             break;
 
         case 38:
             if (e.shiftKey) {
-                map.easeTo({ pitch: map.getPitch() + pitchDelta }, eventData);
+                pitchDir = 1;
             } else {
                 e.preventDefault();
-                map.panBy([0, -panDelta], eventData);
+                yDir = -1;
             }
             break;
 
         case 40:
             if (e.shiftKey) {
-                map.easeTo({ pitch: Math.max(map.getPitch() - pitchDelta, 0) }, eventData);
+                pitchDir = -1;
             } else {
+                yDir = 1;
                 e.preventDefault();
-                map.panBy([0, panDelta], eventData);
             }
             break;
         }
+
+        const map = this._map;
+        const zoom = map.getZoom();
+
+        const easeOptions = {
+            duration: 300,
+            delayEndEvents: 500,
+            easing: easeOut,
+
+            zoom: zoomDir ? Math.round(zoom) + zoomDir * (e.shiftKey ? 2 : 1) : zoom,
+            bearing: map.getBearing() + bearingDir * bearingStep,
+            pitch: map.getPitch() + pitchDir * pitchStep,
+            offset: [-xDir * panStep, -yDir * panStep],
+            center: map.getCenter()
+        };
+
+        map.easeTo(easeOptions, {originalEvent: e});
     }
-};
+}
+
+function easeOut(t) {
+    return t * (2 - t);
+}
+
+module.exports = KeyboardHandler;

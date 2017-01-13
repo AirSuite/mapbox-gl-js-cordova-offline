@@ -1,5 +1,3 @@
-precision highp float;
-
 uniform mat4 u_matrix;
 uniform vec2 u_tl_parent;
 uniform float u_scale_parent;

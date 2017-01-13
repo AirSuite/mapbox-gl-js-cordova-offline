@@ -1,29 +1,29 @@
 'use strict';
 
-var NUM_TILES = 6;
+module.exports = function(sourceCache, data, callback) {
+    const sampleCount = 50;
+    let startTime = null;
+    const samples = [];
 
-module.exports = function(source, numCalls, geojson, cb) {
-    var tileCount = 0;
-    var startTime = null;
-    var times = [];
-
-    source.on('tile.load', function tileCounter() {
-        tileCount++;
-        if (tileCount === NUM_TILES) {
-            tileCount = 0;
-            times.push(performance.now() - startTime);
-
-            if (times.length < numCalls) {
+    sourceCache.on('data', function onData() {
+        if (sourceCache.loaded()) {
+            samples.push(performance.now() - startTime);
+            sourceCache.off('data', onData);
+            if (samples.length < sampleCount) {
                 startTime = performance.now();
-                source.setData(geojson);
+                sourceCache.clearTiles();
+                sourceCache.on('data', onData);
+                sourceCache.getSource().setData(data);
             } else {
-                var avgTileTime = times.reduce((v, t) => v + t, 0) / times.length;
-                source.off('tile.load', tileCounter);
-                cb(null, avgTileTime);
+                callback(null, average(samples));
             }
         }
     });
 
     startTime = performance.now();
-    source.setData(geojson);
+    sourceCache.getSource().setData(data);
 };
+
+function average(array) {
+    return array.reduce((sum, value) => { return sum + value; }, 0) / array.length;
+}

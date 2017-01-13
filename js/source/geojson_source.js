@@ -1,32 +1,30 @@
 'use strict';
 
-var util = require('../util/util');
-var Evented = require('../util/evented');
-var TilePyramid = require('./tile_pyramid');
-var Source = require('./source');
-var urlResolve = require('resolve-url');
-var EXTENT = require('../data/bucket').EXTENT;
-
-module.exports = GeoJSONSource;
+const Evented = require('../util/evented');
+const util = require('../util/util');
+const window = require('../util/window');
+const EXTENT = require('../data/extent');
 
 /**
- * Create a GeoJSON data source instance given an options object
- * @class GeoJSONSource
- * @param {Object} [options]
- * @param {Object|string} options.data A GeoJSON data object or URL to it. The latter is preferable in case of large GeoJSON files.
- * @param {number} [options.maxzoom=18] Maximum zoom to preserve detail at.
- * @param {number} [options.buffer] Tile buffer on each side in pixels.
- * @param {number} [options.tolerance] Simplification tolerance (higher means simpler) in pixels.
- * @param {number} [options.cluster] If the data is a collection of point features, setting this to true clusters the points by radius into groups.
- * @param {number} [options.clusterRadius=50] Radius of each cluster when clustering points, in pixels.
- * @param {number} [options.clusterMaxZoom] Max zoom to cluster points on. Defaults to one zoom less than `maxzoom` (so that last zoom features are not clustered).
-
+ * A source containing GeoJSON.
+ * (See the [Style Specification](https://www.mapbox.com/mapbox-gl-style-spec/#sources-geojson) for detailed documentation of options.)
+ *
+ * @interface GeoJSONSource
  * @example
- * var sourceObj = new mapboxgl.GeoJSONSource({
+ *
+ * map.addSource('some id', {
+ *     type: 'geojson',
+ *     data: 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_10m_ports.geojson'
+ * });
+ *
+ * @example
+ * map.addSource('some id', {
+ *    type: 'geojson',
  *    data: {
  *        "type": "FeatureCollection",
  *        "features": [{
  *            "type": "Feature",
+ *            "properties": {},
  *            "geometry": {
  *                "type": "Point",
  *                "coordinates": [
@@ -37,140 +35,137 @@ module.exports = GeoJSONSource;
  *        }]
  *    }
  * });
- * map.addSource('some id', sourceObj); // add
- * map.removeSource('some id');  // remove
+ *
+ * @example
+ * map.getSource('some id').setData({
+ *   "type": "FeatureCollection",
+ *   "features": [{
+ *       "type": "Feature",
+ *       "properties": { "name": "Null Island" },
+ *       "geometry": {
+ *           "type": "Point",
+ *           "coordinates": [ 0, 0 ]
+ *       }
+ *   }]
+ * });
+ * @see [Draw GeoJSON points](https://www.mapbox.com/mapbox-gl-js/example/geojson-markers/)
+ * @see [Add a GeoJSON line](https://www.mapbox.com/mapbox-gl-js/example/geojson-line/)
+ * @see [Create a heatmap from points](https://www.mapbox.com/mapbox-gl-js/example/heatmap/)
  */
-function GeoJSONSource(options) {
-    options = options || {};
+class GeoJSONSource extends Evented {
 
-    this._data = options.data;
+    constructor(id, options, dispatcher, eventedParent) {
+        super();
+        options = options || {};
+        this.id = id;
 
-    if (options.maxzoom !== undefined) this.maxzoom = options.maxzoom;
+        // `type` is a property rather than a constant to make it easy for 3rd
+        // parties to use GeoJSONSource to build their own source types.
+        this.type = 'geojson';
 
-    var scale = EXTENT / this.tileSize;
+        this.minzoom = 0;
+        this.maxzoom = 18;
+        this.tileSize = 512;
+        this.isTileClipped = true;
+        this.reparseOverscaled = true;
 
-    this.geojsonVtOptions = {
-        buffer: (options.buffer !== undefined ? options.buffer : 128) * scale,
-        tolerance: (options.tolerance !== undefined ? options.tolerance : 0.375) * scale,
-        extent: EXTENT,
-        maxZoom: this.maxzoom
-    };
+        this.dispatcher = dispatcher;
+        this.setEventedParent(eventedParent);
 
-    this.cluster = options.cluster || false;
-    this.superclusterOptions = {
-        maxZoom: Math.min(options.clusterMaxZoom, this.maxzoom - 1) || (this.maxzoom - 1),
-        extent: EXTENT,
-        radius: (options.clusterRadius || 50) * scale,
-        log: false
-    };
+        this._data = options.data;
 
-    this._pyramid = new TilePyramid({
-        tileSize: this.tileSize,
-        minzoom: this.minzoom,
-        maxzoom: this.maxzoom,
-        reparseOverscaled: true,
-        load: this._loadTile.bind(this),
-        abort: this._abortTile.bind(this),
-        unload: this._unloadTile.bind(this),
-        add: this._addTile.bind(this),
-        remove: this._removeTile.bind(this),
-        redoPlacement: this._redoTilePlacement.bind(this)
-    });
-}
+        if (options.maxzoom !== undefined) this.maxzoom = options.maxzoom;
+        if (options.type) this.type = options.type;
 
-GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototype */{
-    minzoom: 0,
-    maxzoom: 18,
-    tileSize: 512,
-    _dirty: true,
-    isTileClipped: true,
+        const scale = EXTENT / this.tileSize;
+
+        // sent to the worker, along with `url: ...` or `data: literal geojson`,
+        // so that it can load/parse/index the geojson data
+        // extending with `options.workerOptions` helps to make it easy for
+        // third-party sources to hack/reuse GeoJSONSource.
+        this.workerOptions = util.extend({
+            source: this.id,
+            cluster: options.cluster || false,
+            geojsonVtOptions: {
+                buffer: (options.buffer !== undefined ? options.buffer : 128) * scale,
+                tolerance: (options.tolerance !== undefined ? options.tolerance : 0.375) * scale,
+                extent: EXTENT,
+                maxZoom: this.maxzoom
+            },
+            superclusterOptions: {
+                maxZoom: Math.min(options.clusterMaxZoom, this.maxzoom - 1) || (this.maxzoom - 1),
+                extent: EXTENT,
+                radius: (options.clusterRadius || 50) * scale,
+                log: false
+            }
+        }, options.workerOptions);
+    }
+
+    load() {
+        this.fire('dataloading', {dataType: 'source'});
+        this._updateWorkerData((err) => {
+            if (err) {
+                this.fire('error', {error: err});
+                return;
+            }
+            this.fire('data', {dataType: 'source'});
+            this.fire('source.load');
+        });
+    }
+
+    onAdd(map) {
+        this.load();
+        this.map = map;
+    }
 
     /**
-     * Update source geojson data and rerender map
+     * Sets the GeoJSON data and re-renders the map.
      *
-     * @param {Object|string} data A GeoJSON data object or URL to it. The latter is preferable in case of large GeoJSON files.
+     * @param {Object|string} data A GeoJSON data object or a URL to one. The latter is preferable in the case of large GeoJSON files.
      * @returns {GeoJSONSource} this
      */
-    setData: function(data) {
+    setData(data) {
         this._data = data;
-        this._dirty = true;
 
-        this.fire('change');
-
-        if (this.map)
-            this.update(this.map.transform);
+        this.fire('dataloading', {dataType: 'source'});
+        this._updateWorkerData((err) => {
+            if (err) {
+                return this.fire('error', { error: err });
+            }
+            this.fire('data', {dataType: 'source'});
+        });
 
         return this;
-    },
+    }
 
-    onAdd: function(map) {
-        this.map = map;
-    },
-
-    loaded: function() {
-        return this._loaded && this._pyramid.loaded();
-    },
-
-    update: function(transform) {
-        if (this._dirty) {
-            this._updateData();
-        }
-
-        if (this._loaded) {
-            this._pyramid.update(this.used, transform);
-        }
-    },
-
-    reload: function() {
-        if (this._loaded) {
-            this._pyramid.reload();
-        }
-    },
-
-    serialize: function() {
-        return {
-            type: 'geojson',
-            data: this._data
-        };
-    },
-
-    getVisibleCoordinates: Source._getVisibleCoordinates,
-    getTile: Source._getTile,
-
-    queryRenderedFeatures: Source._queryRenderedVectorFeatures,
-    querySourceFeatures: Source._querySourceFeatures,
-
-    _updateData: function() {
-        this._dirty = false;
-        var options = {
-            tileSize: this.tileSize,
-            source: this.id,
-            geojsonVtOptions: this.geojsonVtOptions,
-            cluster: this.cluster,
-            superclusterOptions: this.superclusterOptions
-        };
-
-        var data = this._data;
+    /*
+     * Responsible for invoking WorkerSource's geojson.loadData target, which
+     * handles loading the geojson data and preparing to serve it up as tiles,
+     * using geojson-vt or supercluster as appropriate.
+     */
+    _updateWorkerData(callback) {
+        const options = util.extend({}, this.workerOptions);
+        const data = this._data;
         if (typeof data === 'string') {
-            options.url = typeof window != 'undefined' ? urlResolve(window.location.href, data) : data;
+            options.url = resolveURL(data);
         } else {
             options.data = JSON.stringify(data);
         }
-        this.workerID = this.dispatcher.send('parse geojson', options, function(err) {
+
+        // target {this.type}.loadData rather than literally geojson.loadData,
+        // so that other geojson-like source types can easily reuse this
+        // implementation
+        this.workerID = this.dispatcher.send(`${this.type}.loadData`, options, (err) => {
             this._loaded = true;
-            if (err) {
-                this.fire('error', {error: err});
-            } else {
-                this._pyramid.reload();
-                this.fire('change');
-            }
+            callback(err);
 
-        }.bind(this));
-    },
+        });
+    }
 
-    _loadTile: function(tile) {
-        var overscaling = tile.coord.z > this.maxzoom ? Math.pow(2, tile.coord.z - this.maxzoom) : 1;
-        var params = {
+    loadTile(tile, callback) {
+        const overscaling = tile.coord.z > this.maxzoom ? Math.pow(2, tile.coord.z - this.maxzoom) : 1;
+        const params = {
+            type: this.type,
             uid: tile.uid,
             coord: tile.coord,
             zoom: tile.coord.z,
@@ -183,50 +178,54 @@ GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototy
             showCollisionBoxes: this.map.showCollisionBoxes
         };
 
-        tile.workerID = this.dispatcher.send('load geojson tile', params, function(err, data) {
+        tile.workerID = this.dispatcher.send('loadTile', params, (err, data) => {
 
-            tile.unloadVectorData(this.map.painter);
+            tile.unloadVectorData();
 
             if (tile.aborted)
                 return;
 
             if (err) {
-                this.fire('tile.error', {tile: tile});
-                return;
+                return callback(err);
             }
 
-            tile.loadVectorData(data, this.map.style);
+            tile.loadVectorData(data, this.map.painter);
 
             if (tile.redoWhenDone) {
                 tile.redoWhenDone = false;
                 tile.redoPlacement(this);
             }
 
-            this.fire('tile.load', {tile: tile});
+            return callback(null);
 
-        }.bind(this), this.workerID);
-    },
-
-    _abortTile: function(tile) {
-        tile.aborted = true;
-    },
-
-    _addTile: function(tile) {
-        this.fire('tile.add', {tile: tile});
-    },
-
-    _removeTile: function(tile) {
-        this.fire('tile.remove', {tile: tile});
-    },
-
-    _unloadTile: function(tile) {
-        tile.unloadVectorData(this.map.painter);
-        this.dispatcher.send('remove tile', { uid: tile.uid, source: this.id }, null, tile.workerID);
-    },
-
-    redoPlacement: Source.redoPlacement,
-
-    _redoTilePlacement: function(tile) {
-        tile.redoPlacement(this);
+        }, this.workerID);
     }
-});
+
+    abortTile(tile) {
+        tile.aborted = true;
+    }
+
+    unloadTile(tile) {
+        tile.unloadVectorData();
+        this.dispatcher.send('removeTile', { uid: tile.uid, type: this.type, source: this.id }, () => {}, tile.workerID);
+    }
+
+    onRemove() {
+        this.dispatcher.broadcast('removeSource', { type: this.type, source: this.id }, () => {});
+    }
+
+    serialize() {
+        return {
+            type: this.type,
+            data: this._data
+        };
+    }
+}
+
+function resolveURL(url) {
+    const a = window.document.createElement('a');
+    a.href = url;
+    return a.href;
+}
+
+module.exports = GeoJSONSource;

@@ -1,69 +1,64 @@
 'use strict';
 
-module.exports = function (features, textFeatures, geometries) {
-
-    var leftIndex = {},
-        rightIndex = {},
-        mergedFeatures = [],
-        mergedGeom = [],
-        mergedTexts = [],
-        mergedIndex = 0,
-        k;
+module.exports = function (features) {
+    const leftIndex = {};
+    const rightIndex = {};
+    const mergedFeatures = [];
+    let mergedIndex = 0;
 
     function add(k) {
         mergedFeatures.push(features[k]);
-        mergedGeom.push(geometries[k]);
-        mergedTexts.push(textFeatures[k]);
         mergedIndex++;
     }
 
     function mergeFromRight(leftKey, rightKey, geom) {
-        var i = rightIndex[leftKey];
+        const i = rightIndex[leftKey];
         delete rightIndex[leftKey];
         rightIndex[rightKey] = i;
 
-        mergedGeom[i][0].pop();
-        mergedGeom[i][0] = mergedGeom[i][0].concat(geom[0]);
+        mergedFeatures[i].geometry[0].pop();
+        mergedFeatures[i].geometry[0] = mergedFeatures[i].geometry[0].concat(geom[0]);
         return i;
     }
 
     function mergeFromLeft(leftKey, rightKey, geom) {
-        var i = leftIndex[rightKey];
+        const i = leftIndex[rightKey];
         delete leftIndex[rightKey];
         leftIndex[leftKey] = i;
 
-        mergedGeom[i][0].shift();
-        mergedGeom[i][0] = geom[0].concat(mergedGeom[i][0]);
+        mergedFeatures[i].geometry[0].shift();
+        mergedFeatures[i].geometry[0] = geom[0].concat(mergedFeatures[i].geometry[0]);
         return i;
     }
 
     function getKey(text, geom, onRight) {
-        var point = onRight ? geom[0][geom[0].length - 1] : geom[0][0];
-        return text + ':' + point.x + ':' + point.y;
+        const point = onRight ? geom[0][geom[0].length - 1] : geom[0][0];
+        return `${text}:${point.x}:${point.y}`;
     }
 
-    for (k = 0; k < features.length; k++) {
-        var geom = geometries[k],
-            text = textFeatures[k];
+    for (let k = 0; k < features.length; k++) {
+        const feature = features[k];
+        const geom = feature.geometry;
+        const text = feature.text;
 
         if (!text) {
             add(k);
             continue;
         }
 
-        var leftKey = getKey(text, geom),
+        const leftKey = getKey(text, geom),
             rightKey = getKey(text, geom, true);
 
         if ((leftKey in rightIndex) && (rightKey in leftIndex) && (rightIndex[leftKey] !== leftIndex[rightKey])) {
             // found lines with the same text adjacent to both ends of the current line, merge all three
-            var j = mergeFromLeft(leftKey, rightKey, geom);
-            var i = mergeFromRight(leftKey, rightKey, mergedGeom[j]);
+            const j = mergeFromLeft(leftKey, rightKey, geom);
+            const i = mergeFromRight(leftKey, rightKey, mergedFeatures[j].geometry);
 
             delete leftIndex[leftKey];
             delete rightIndex[rightKey];
 
-            rightIndex[getKey(text, mergedGeom[i], true)] = i;
-            mergedGeom[j] = null;
+            rightIndex[getKey(text, mergedFeatures[i].geometry, true)] = i;
+            mergedFeatures[j].geometry = null;
 
         } else if (leftKey in rightIndex) {
             // found mergeable line adjacent to the start of the current line, merge
@@ -81,9 +76,5 @@ module.exports = function (features, textFeatures, geometries) {
         }
     }
 
-    return {
-        features: mergedFeatures,
-        textFeatures: mergedTexts,
-        geometries: mergedGeom
-    };
+    return mergedFeatures.filter((f) => f.geometry);
 };

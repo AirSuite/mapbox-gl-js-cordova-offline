@@ -1,10 +1,10 @@
 'use strict';
 
-var test = require('tap').test;
-var StyleDeclaration = require('../../../js/style/style_declaration');
+const test = require('mapbox-gl-js-test').test;
+const StyleDeclaration = require('../../../js/style/style_declaration');
 
-test('StyleDeclaration', function(t) {
-    t.test('constant', function(t) {
+test('StyleDeclaration', (t) => {
+    t.test('constant', (t) => {
         t.equal((new StyleDeclaration({type: "number"}, 5)).calculate({zoom: 0}), 5);
         t.equal((new StyleDeclaration({type: "number"}, 5)).calculate({zoom: 100}), 5);
         t.ok((new StyleDeclaration({type: "number"}, 5)).isFeatureConstant);
@@ -12,8 +12,14 @@ test('StyleDeclaration', function(t) {
         t.end();
     });
 
-    t.test('interpolated functions', function(t) {
-        var reference = {type: "number", function: "interpolated"};
+    t.test('with minimum value', (t) => {
+        t.equal((new StyleDeclaration({type: "number", minimum: -2}, -5)).calculate({zoom: 0}), -2);
+        t.equal((new StyleDeclaration({type: "number", minimum: -2}, 5)).calculate({zoom: 0}), 5);
+        t.end();
+    });
+
+    t.test('interpolated functions', (t) => {
+        const reference = {type: "number", function: "interpolated"};
         t.equal((new StyleDeclaration(reference, { stops: [[0, 1]] })).calculate({zoom: 0}), 1);
         t.equal((new StyleDeclaration(reference, { stops: [[2, 2], [5, 10]] })).calculate({zoom: 0}), 2);
         t.equal((new StyleDeclaration(reference, { stops: [[0, 0], [5, 10]] })).calculate({zoom: 12}), 10);
@@ -27,43 +33,21 @@ test('StyleDeclaration', function(t) {
         t.end();
     });
 
-    t.test('non-interpolated piecewise-constant function', function(t) {
-        var decl = new StyleDeclaration({type: "array", function: "piecewise-constant"}, {stops: [[0, [0, 10, 5]]]});
+    t.test('piecewise-constant function', (t) => {
+        const decl = new StyleDeclaration({type: "array", function: "piecewise-constant"}, {stops: [[0, [0, 10, 5]]]});
         t.deepEqual(decl.calculate({zoom: 0}), [0, 10, 5]);
         t.end();
     });
 
-    t.test('interpolated piecewise-constant function', function(t) {
-        var reference = {type: "image", function: "piecewise-constant", transition: true};
-
-        var constant = new StyleDeclaration(reference, 'a.png');
-        t.deepEqual(
-            constant.calculate({zoom: 0, zoomHistory: { lastIntegerZoomTime: 0, lastIntegerZoom: 0 }, duration: 300}),
-            { to: 'a.png', toScale: 1, from: 'a.png', fromScale: 0.5, t: 1 }
-        );
-
-        var variable = new StyleDeclaration(reference, {stops: [[0, 'a.png'], [1, 'b.png']]});
-        t.deepEqual(
-            variable.calculate({
-                zoom: 1,
-                zoomHistory: { lastIntegerZoomTime: 0, lastIntegerZoom: 0 },
-                duration: 300
-            }),
-            { to: 'b.png', toScale: 1, from: 'a.png', fromScale: 2, t: 1 }
-        );
-
-        t.end();
-    });
-
-    t.test('color parsing', function(t) {
-        var reference = {type: "color", function: "interpolated"};
+    t.test('color parsing', (t) => {
+        const reference = {type: "color", function: "interpolated"};
         t.deepEqual(new StyleDeclaration(reference, 'red').calculate({zoom: 0}), [ 1, 0, 0, 1 ]);
         t.deepEqual(new StyleDeclaration(reference, '#ff00ff').calculate({zoom: 0}), [ 1, 0, 1, 1 ]);
         t.deepEqual(new StyleDeclaration(reference, { stops: [[0, '#f00'], [1, '#0f0']] }).calculate({zoom: 0}), [1, 0, 0, 1]);
-        t.throws(function () {
+        t.throws(() => {
             t.ok(new StyleDeclaration(reference, { stops: [[0, '#f00'], [1, null]] }));
         }, /Invalid color/);
-        t.throws(function() {
+        t.throws(() => {
             // hex value with only 5 digits should throw an Invalid color error
             t.ok(new StyleDeclaration(reference, '#00000'));
         }, Error, /Invalid color/i);
@@ -73,8 +57,8 @@ test('StyleDeclaration', function(t) {
         t.end();
     });
 
-    t.test('property functions', function(t) {
-        var declaration = new StyleDeclaration(
+    t.test('property functions', (t) => {
+        const declaration = new StyleDeclaration(
             {type: "number", function: "interpolated"},
             { stops: [[0, 1]], property: 'mapbox' }
         );

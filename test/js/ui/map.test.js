@@ -1,43 +1,126 @@
 'use strict';
 
-var test = require('tap').test;
-var extend = require('../../../js/util/util').extend;
-var Map = require('../../../js/ui/map');
-var Style = require('../../../js/style/style');
-var LngLat = require('../../../js/geo/lng_lat');
+const test = require('mapbox-gl-js-test').test;
+const util = require('../../../js/util/util');
+const window = require('../../../js/util/window');
+const Map = require('../../../js/ui/map');
+const LngLat = require('../../../js/geo/lng_lat');
 
-var fixed = require('../../testutil/fixed');
-var fixedNum = fixed.Num;
-var fixedLngLat = fixed.LngLat;
+const fixed = require('mapbox-gl-js-test/fixed');
+const fixedNum = fixed.Num;
+const fixedLngLat = fixed.LngLat;
+const fixedCoord = fixed.Coord;
 
-test('Map', function(t) {
-    function createMap(options) {
-        return new Map(extend({
-            container: {
-                offsetWidth: 200,
-                offsetHeight: 200,
-                classList: {
-                    add: function() {},
-                    remove: function() {}
-                }
-            },
-            interactive: false,
-            attributionControl: false
-        }, options));
-    }
+function createMap(options, callback) {
+    const container = window.document.createElement('div');
+    container.offsetWidth = 200;
+    container.offsetHeight = 200;
 
-    t.test('constructor', function(t) {
-        var map = createMap();
+    const map = new Map(util.extend({
+        container: container,
+        interactive: false,
+        attributionControl: false,
+        trackResize: true,
+        style: {
+            "version": 8,
+            "sources": {},
+            "layers": []
+        }
+    }, options));
+
+    if (callback) map.on('load', () => {
+        callback(null, map);
+    });
+
+    return map;
+}
+
+test('Map', (t) => {
+    t.beforeEach((callback) => {
+        window.useFakeXMLHttpRequest();
+        callback();
+    });
+
+    t.afterEach((callback) => {
+        window.restore();
+        callback();
+    });
+
+    t.test('constructor', (t) => {
+        const map = createMap({interactive: true, style: null});
         t.ok(map.getContainer());
+        t.equal(map.getStyle(), undefined);
+        t.ok(map.boxZoom.isEnabled());
+        t.ok(map.doubleClickZoom.isEnabled());
+        t.ok(map.dragPan.isEnabled());
+        t.ok(map.dragRotate.isEnabled());
+        t.ok(map.keyboard.isEnabled());
+        t.ok(map.scrollZoom.isEnabled());
+        t.ok(map.touchZoomRotate.isEnabled());
+        t.throws(() => {
+            new Map({
+                container: 'anElementIdWhichDoesNotExistInTheDocument'
+            });
+        }, new Error("Container 'anElementIdWhichDoesNotExistInTheDocument' not found"), 'throws on invalid map container id');
+
+        const largeContainer = window.document.createElement('div');
+        largeContainer.offsetWidth = 10000;
+        largeContainer.offsetHeight = 10000;
+        t.throws(() => {
+            new Map({
+                container: largeContainer
+            });
+        }, /Map canvas \(\d+x\d+\) is larger than half of gl.MAX_RENDERBUFFER_SIZE \(\d+\)/,
+        'throws on then map canvas is larger than allowed by gl.MAX_RENDERBUFFER_SIZE');
+
         t.end();
     });
 
-    t.test('emits load event after a style is set', function(t) {
-        var map = createMap();
+    t.test('disables handlers', (t) => {
+        t.test('disables all handlers', (t) => {
+            const map = createMap({interactive: false});
+
+            t.notOk(map.boxZoom.isEnabled());
+            t.notOk(map.doubleClickZoom.isEnabled());
+            t.notOk(map.dragPan.isEnabled());
+            t.notOk(map.dragRotate.isEnabled());
+            t.notOk(map.keyboard.isEnabled());
+            t.notOk(map.scrollZoom.isEnabled());
+            t.notOk(map.touchZoomRotate.isEnabled());
+
+            t.end();
+        });
+
+        const handlerNames = [
+            'scrollZoom',
+            'boxZoom',
+            'dragRotate',
+            'dragPan',
+            'keyboard',
+            'doubleClickZoom',
+            'touchZoomRotate'
+        ];
+        handlerNames.forEach((handlerName) => {
+            t.test(`disables "${handlerName}" handler`, (t) => {
+                const options = {};
+                options[handlerName] = false;
+                const map = createMap(options);
+
+                t.notOk(map[handlerName].isEnabled());
+
+                t.end();
+            });
+        });
+
+        t.end();
+    });
+
+    t.test('emits load event after a style is set', (t) => {
+        const map = createMap();
 
         map.on('load', fail);
 
-        setTimeout(function() {
+        setTimeout(() => {
             map.off('load', fail);
             map.on('load', pass);
             map.setStyle(createStyle());
@@ -47,9 +130,9 @@ test('Map', function(t) {
         function pass() { t.end(); }
     });
 
-    t.test('#setStyle', function(t) {
-        t.test('returns self', function(t) {
-            var map = createMap(),
+    t.test('#setStyle', (t) => {
+        t.test('returns self', (t) => {
+            const map = createMap(),
                 style = {
                     version: 8,
                     sources: {},
@@ -59,51 +142,67 @@ test('Map', function(t) {
             t.end();
         });
 
-        t.test('sets up event forwarding', function(t) {
-            var map = createMap(),
-                style = new Style({
-                    version: 8,
-                    sources: {},
-                    layers: []
-                });
+        t.test('sets up event forwarding', (t) => {
+            createMap({}, (error, map) => {
+                t.error(error);
 
-            var events = [];
+                const events = [];
+                function recordEvent(event) { events.push(event.type); }
 
-            function checkEvent(e) {
-                t.equal(e.style, style);
-                events.push(e.type);
-            }
+                map.on('error', recordEvent);
+                map.on('data', recordEvent);
+                map.on('dataloading', recordEvent);
 
-            map.on('style.load',    checkEvent);
-            map.on('style.error',   checkEvent);
-            map.on('style.change',  checkEvent);
-            map.on('source.load',   checkEvent);
-            map.on('source.error',  checkEvent);
-            map.on('source.change', checkEvent);
-            map.on('tile.add',      checkEvent);
-            map.on('tile.error',    checkEvent);
-            map.on('tile.remove',   checkEvent);
+                map.style.fire('error');
+                map.style.fire('data');
+                map.style.fire('dataloading');
 
-            map.off('style.error', map.onError);
-            map.off('source.error', map.onError);
-            map.off('tile.error', map.onError);
-            map.off('layer.error', map.onError);
+                t.deepEqual(events, [
+                    'error',
+                    'data',
+                    'dataloading',
+                ]);
 
-            t.plan(10);
-            map.setStyle(style); // Fires load
-            style.fire('error');
-            style.fire('change');
-            style.fire('source.load');
-            style.fire('source.error');
-            style.fire('source.change');
-            style.fire('tile.add');
-            style.fire('tile.error');
-            style.fire('tile.remove');
-            style.fire('layer.error');
+                t.end();
+            });
         });
 
-        t.test('can be called more than once', function(t) {
-            var map = createMap();
+        t.test('fires *data and *dataloading events', (t) => {
+            createMap({}, (error, map) => {
+                t.error(error);
+
+                const events = [];
+                function recordEvent(event) { events.push(event.type); }
+
+                map.on('styledata', recordEvent);
+                map.on('styledataloading', recordEvent);
+                map.on('sourcedata', recordEvent);
+                map.on('sourcedataloading', recordEvent);
+                map.on('tiledata', recordEvent);
+                map.on('tiledataloading', recordEvent);
+
+                map.style.fire('data', {dataType: 'style'});
+                map.style.fire('dataloading', {dataType: 'style'});
+                map.style.fire('data', {dataType: 'source'});
+                map.style.fire('dataloading', {dataType: 'source'});
+                map.style.fire('data', {dataType: 'tile'});
+                map.style.fire('dataloading', {dataType: 'tile'});
+
+                t.deepEqual(events, [
+                    'styledata',
+                    'styledataloading',
+                    'sourcedata',
+                    'sourcedataloading',
+                    'tiledata',
+                    'tiledataloading'
+                ]);
+
+                t.end();
+            });
+        });
+
+        t.test('can be called more than once', (t) => {
+            const map = createMap();
 
             map.setStyle({version: 8, sources: {}, layers: []});
             map.setStyle({version: 8, sources: {}, layers: []});
@@ -111,15 +210,15 @@ test('Map', function(t) {
             t.end();
         });
 
-        t.test('style transform overrides unmodified map transform', function (t) {
-            var map = createMap();
+        t.test('style transform overrides unmodified map transform', (t) => {
+            const map = createMap();
             map.transform.lngRange = [-120, 140];
             map.transform.latRange = [-60, 80];
             map.transform.resize(600, 400);
             t.equal(map.transform.zoom, 0.6983039737971012, 'map transform is constrained');
             t.ok(map.transform.unmodified, 'map transform is not modified');
             map.setStyle(createStyle());
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -73.9749, lat: 40.7736 }));
                 t.equal(fixedNum(map.transform.zoom), 12.5);
                 t.equal(fixedNum(map.transform.bearing), 29);
@@ -128,11 +227,11 @@ test('Map', function(t) {
             });
         });
 
-        t.test('style transform does not override map transform modified via options', function (t) {
-            var map = createMap({zoom: 10, center: [-77.0186, 38.8888]});
+        t.test('style transform does not override map transform modified via options', (t) => {
+            const map = createMap({zoom: 10, center: [-77.0186, 38.8888]});
             t.notOk(map.transform.unmodified, 'map transform is modified by options');
             map.setStyle(createStyle());
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -77.0186, lat: 38.8888 }));
                 t.equal(fixedNum(map.transform.zoom), 10);
                 t.equal(fixedNum(map.transform.bearing), 0);
@@ -141,14 +240,14 @@ test('Map', function(t) {
             });
         });
 
-        t.test('style transform does not override map transform modified via setters', function (t) {
-            var map = createMap();
+        t.test('style transform does not override map transform modified via setters', (t) => {
+            const map = createMap();
             t.ok(map.transform.unmodified);
             map.setZoom(10);
             map.setCenter([-77.0186, 38.8888]);
             t.notOk(map.transform.unmodified, 'map transform is modified via setters');
             map.setStyle(createStyle());
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -77.0186, lat: 38.8888 }));
                 t.equal(fixedNum(map.transform.zoom), 10);
                 t.equal(fixedNum(map.transform.bearing), 0);
@@ -157,10 +256,20 @@ test('Map', function(t) {
             });
         });
 
+        t.test('passing null removes style', (t) => {
+            const map = createMap();
+            const style = map.style;
+            t.ok(style);
+            t.spy(style, '_remove');
+            map.setStyle(null);
+            t.equal(style._remove.callCount, 1);
+            t.end();
+        });
+
         t.end();
     });
 
-    t.test('#getStyle', function(t) {
+    t.test('#getStyle', (t) => {
         function createStyle() {
             return {
                 version: 8,
@@ -190,48 +299,91 @@ test('Map', function(t) {
             };
         }
 
-        t.test('returns the style', function(t) {
-            var style = createStyle();
-            var map = createMap({style: style});
+        t.test('returns the style', (t) => {
+            const style = createStyle();
+            const map = createMap({style: style});
 
-            map.on('load', function () {
+            map.on('load', () => {
                 t.deepEqual(map.getStyle(), style);
                 t.end();
             });
         });
 
-        t.test('returns the style with added sources', function(t) {
-            var style = createStyle();
-            var map = createMap({style: style});
+        t.test('returns the style with added sources', (t) => {
+            const style = createStyle();
+            const map = createMap({style: style});
 
-            map.on('load', function () {
+            map.on('load', () => {
                 map.addSource('geojson', createStyleSource());
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
+                t.deepEqual(map.getStyle(), util.extend(createStyle(), {
                     sources: {geojson: createStyleSource()}
                 }));
                 t.end();
             });
         });
 
-        t.test('returns the style with added layers', function(t) {
-            var style = createStyle();
-            var map = createMap({style: style});
+        t.test('returns the style with added layers', (t) => {
+            const style = createStyle();
+            const map = createMap({style: style});
 
-            map.on('load', function () {
+            map.on('load', () => {
                 map.addLayer(createStyleLayer());
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
+                t.deepEqual(map.getStyle(), util.extend(createStyle(), {
                     layers: [createStyleLayer()]
                 }));
                 t.end();
             });
         });
 
+        t.test('returns the style with added source and layer', (t) => {
+            const style = createStyle();
+            const map = createMap({style: style});
+            const layer = util.extend(createStyleLayer(), {
+                source: createStyleSource()
+            });
+
+            map.on('load', () => {
+                map.addLayer(layer);
+                t.deepEqual(map.getStyle(), util.extend(createStyle(), {
+                    sources: {background: createStyleSource()},
+                    layers: [util.extend(createStyleLayer(), {source: 'background'})]
+                }));
+                t.end();
+            });
+        });
+
+        t.test('creates a new Style if diff fails', (t) => {
+            const style = createStyle();
+            const map = createMap({ style: style });
+            t.stub(map.style, 'setState', () => {
+                throw new Error('Dummy error');
+            });
+
+            const previousStyle = map.style;
+            map.setStyle(style);
+            t.ok(map.style && map.style !== previousStyle);
+            t.end();
+        });
+
+        t.test('creates a new Style if diff option is false', (t) => {
+            const style = createStyle();
+            const map = createMap({ style: style });
+            t.stub(map.style, 'setState', () => {
+                t.fail();
+            });
+
+            const previousStyle = map.style;
+            map.setStyle(style, {diff: false});
+            t.ok(map.style && map.style !== previousStyle);
+            t.end();
+        });
+
         t.end();
     });
 
-    t.test('#resize', function(t) {
-        t.test('sets width and height from container offsets', function(t) {
-            var map = createMap(),
+    t.test('#resize', (t) => {
+        t.test('sets width and height from container offsets', (t) => {
+            const map = createMap(),
                 container = map.getContainer();
 
             container.offsetWidth = 250;
@@ -244,12 +396,12 @@ test('Map', function(t) {
             t.end();
         });
 
-        t.test('fires movestart, move, resize, and moveend events', function(t) {
-            var map = createMap(),
+        t.test('fires movestart, move, resize, and moveend events', (t) => {
+            const map = createMap(),
                 events = [];
 
-            ['movestart', 'move', 'resize', 'moveend'].forEach(function (event) {
-                map.on(event, function(e) {
+            ['movestart', 'move', 'resize', 'moveend'].forEach((event) => {
+                map.on(event, (e) => {
                     events.push(e.type);
                 });
             });
@@ -260,64 +412,129 @@ test('Map', function(t) {
             t.end();
         });
 
+
+        t.test('listen to window resize event', (t) => {
+            window.addEventListener = function(type) {
+                if (type === 'resize') {
+                    //restore empty function not to mess with other tests
+                    window.addEventListener = function() {};
+
+                    t.end();
+                }
+            };
+
+            createMap();
+        });
+
+        t.test('do not resize if trackResize is false', (t) => {
+            const map = createMap({trackResize: false});
+
+            t.spy(map, 'stop');
+            t.spy(map, '_update');
+            t.spy(map, 'resize');
+
+            map._onWindowResize();
+
+            t.notOk(map.stop.called);
+            t.notOk(map._update.called);
+            t.notOk(map.resize.called);
+
+            t.end();
+        });
+
+        t.test('do resize if trackResize is true (default)', (t) => {
+            const map = createMap();
+
+            t.spy(map, 'stop');
+            t.spy(map, '_update');
+            t.spy(map, 'resize');
+
+            map._onWindowResize();
+
+            t.ok(map.stop.called);
+            t.ok(map._update.called);
+            t.ok(map.resize.called);
+
+            t.end();
+        });
+
         t.end();
     });
 
-    t.test('#getBounds', function(t) {
-        var map = createMap({ zoom: 0 });
+    t.test('#getBounds', (t) => {
+        const map = createMap({ zoom: 0 });
         t.deepEqual(parseFloat(map.getBounds().getCenter().lng.toFixed(10)), 0, 'getBounds');
         t.deepEqual(parseFloat(map.getBounds().getCenter().lat.toFixed(10)), 0, 'getBounds');
 
         t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
-            [ -70.31249999999976, -57.32652122521695 ],
-            [ 70.31249999999977, 57.326521225216965 ] ]));
+            [ -70.31249999999976, -57.326521225216965 ],
+            [ 70.31249999999977, 57.32652122521695 ] ]));
 
-        t.test('rotated bounds', function(t) {
-            var map = createMap({ zoom: 1, bearing: 45 });
-            t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
-                [ -49.718445552178764, -44.44541580601936 ],
-                [ 49.71844555217925, 44.445415806019355 ] ]));
+        t.test('rotated bounds', (t) => {
+            const map = createMap({ zoom: 1, bearing: 45 });
+            t.deepEqual(
+                toFixed([[-49.718445552178764, 0], [49.7184455522, 0]]),
+                toFixed(map.getBounds().toArray())
+            );
             t.end();
         });
         t.end();
 
         function toFixed(bounds) {
-            var n = 10;
+            const n = 10;
             return [
-                [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
-                [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
+                [normalizeFixed(bounds[0][0], n), normalizeFixed(bounds[0][1], n)],
+                [normalizeFixed(bounds[1][0], n), normalizeFixed(bounds[1][1], n)]
             ];
+        }
+
+        function normalizeFixed(num, n) {
+            // workaround for "-0.0000000000" ≠ "0.0000000000"
+            return parseFloat(num.toFixed(n)).toFixed(n);
         }
     });
 
-    t.test('#setMaxBounds', function (t) {
-        t.test('constrains map bounds', function (t) {
-            var map = createMap({zoom:0});
+    t.test('#setMaxBounds', (t) => {
+        t.test('constrains map bounds', (t) => {
+            const map = createMap({zoom:0});
             map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
-            t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
-                [-112.5000192114, 24.2068800000],
-                [-79.4531207886, 50.0642000000]]));
+            t.deepEqual(
+                toFixed([[-130.4297000000, 7.0136641176], [-61.5234400000, 60.2398142283]]),
+                toFixed(map.getBounds().toArray())
+            );
             t.end();
         });
 
-        t.test('when no argument is passed, map bounds constraints are removed', function (t) {
-            var map = createMap({zoom:0});
+        t.test('when no argument is passed, map bounds constraints are removed', (t) => {
+            const map = createMap({zoom:0});
             map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
-            t.deepEqual(toFixed(map.setMaxBounds(null).setZoom(0).getBounds().toArray()), toFixed([
-                [-166.28906999999964, -27.683527055417144],
-                [-25.664070000000066, 73.8248206696509]]));
+            t.deepEqual(
+                toFixed([[-166.28906999999964, -27.6835270554], [-25.664070000000066, 73.8248206697]]),
+                toFixed(map.setMaxBounds(null).setZoom(0).getBounds().toArray())
+            );
             t.end();
         });
 
-        t.test('should not zoom out farther than bounds', function (t) {
-            var map = createMap();
+        t.test('should not zoom out farther than bounds', (t) => {
+            const map = createMap();
             map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
             t.notEqual(map.setZoom(0).getZoom(), 0);
             t.end();
         });
 
+        t.test('throws on invalid bounds', (t) => {
+            const map = createMap({zoom:0});
+            t.throws(() => {
+                map.setMaxBounds([-130.4297, 50.0642], [-61.52344, 24.20688]);
+            }, Error, 'throws on two decoupled array coordinate arguments');
+            t.throws(() => {
+                map.setMaxBounds(-130.4297, 50.0642, -61.52344, 24.20688);
+            }, Error, 'throws on individual coordinate arguments');
+            t.end();
+        });
+
         function toFixed(bounds) {
-            var n = 10;
+            const n = 9;
             return [
                 [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
                 [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
@@ -327,25 +544,33 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#setMinZoom', function(t) {
-        var map = createMap({zoom:5});
+    t.test('#setMinZoom', (t) => {
+        const map = createMap({zoom:5});
         map.setMinZoom(3.5);
         map.setZoom(1);
         t.equal(map.getZoom(), 3.5);
         t.end();
     });
 
-    t.test('unset minZoom', function(t) {
-        var map = createMap({minZoom:5});
+    t.test('unset minZoom', (t) => {
+        const map = createMap({minZoom:5});
         map.setMinZoom(null);
         map.setZoom(1);
         t.equal(map.getZoom(), 1);
         t.end();
     });
 
-    t.test('ignore minZooms over maxZoom', function(t) {
-        var map = createMap({zoom:2, maxZoom:5});
-        t.throws(function() {
+    t.test('#getMinZoom', (t) => {
+        const map = createMap({zoom: 0});
+        t.equal(map.getMinZoom(), 0, 'returns default value');
+        map.setMinZoom(10);
+        t.equal(map.getMinZoom(), 10, 'returns custom value');
+        t.end();
+    });
+
+    t.test('ignore minZooms over maxZoom', (t) => {
+        const map = createMap({zoom:2, maxZoom:5});
+        t.throws(() => {
             map.setMinZoom(6);
         });
         map.setZoom(0);
@@ -353,25 +578,33 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#setMaxZoom', function (t) {
-        var map = createMap({zoom:0});
+    t.test('#setMaxZoom', (t) => {
+        const map = createMap({zoom:0});
         map.setMaxZoom(3.5);
         map.setZoom(4);
         t.equal(map.getZoom(), 3.5);
         t.end();
     });
 
-    t.test('unset maxZoom', function(t) {
-        var map = createMap({maxZoom:5});
+    t.test('unset maxZoom', (t) => {
+        const map = createMap({maxZoom:5});
         map.setMaxZoom(null);
         map.setZoom(6);
         t.equal(map.getZoom(), 6);
         t.end();
     });
 
-    t.test('ignore maxZooms over minZoom', function(t) {
-        var map = createMap({minZoom:5});
-        t.throws(function() {
+    t.test('#getMaxZoom', (t) => {
+        const map = createMap({zoom: 0});
+        t.equal(map.getMaxZoom(), 20, 'returns default value');
+        map.setMaxZoom(10);
+        t.equal(map.getMaxZoom(), 10, 'returns custom value');
+        t.end();
+    });
+
+    t.test('ignore maxZooms over minZoom', (t) => {
+        const map = createMap({minZoom:5});
+        t.throws(() => {
             map.setMaxZoom(4);
         });
         map.setZoom(5);
@@ -379,58 +612,58 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#remove', function(t) {
-        var map = createMap(),
-            removedCanvas,
-            removedControls;
-
-        map._canvasContainer.parentNode = {
-            removeChild: function (child) {
-                t.equal(child, map._canvasContainer);
-                removedCanvas = true;
-            }
-        };
-        map._controlContainer.parentNode = {
-            removeChild: function (child) {
-                t.equal(child, map._controlContainer);
-                removedControls = true;
-            }
-        };
-
-        t.equal(map.remove(), undefined);
-        t.ok(removedCanvas);
-        t.ok(removedControls);
+    t.test('#remove', (t) => {
+        const map = createMap();
+        t.equal(map.getContainer().childNodes.length, 2);
+        map.remove();
+        t.equal(map.getContainer().childNodes.length, 0);
         t.end();
     });
 
-    t.test('#addControl', function(t) {
-        var map = createMap();
-        var control = {
-            addTo: function(_) {
+    t.test('#addControl', (t) => {
+        const map = createMap();
+        const control = {
+            onAdd: function(_) {
                 t.equal(map, _, 'addTo() called with map');
                 t.end();
+                return window.document.createElement('div');
             }
         };
         map.addControl(control);
     });
 
-    t.test('#addClass', function(t) {
-        var map = createMap();
+    t.test('#removeControl', (t) => {
+        const map = createMap();
+        const control = {
+            onAdd: function() {
+                return window.document.createElement('div');
+            },
+            onRemove: function(_) {
+                t.equal(map, _, 'onRemove() called with map');
+                t.end();
+            }
+        };
+        map.addControl(control);
+        map.removeControl(control);
+    });
+
+    t.test('#addClass', (t) => {
+        const map = createMap();
         map.addClass('night');
         t.ok(map.hasClass('night'));
         t.end();
     });
 
-    t.test('#removeClass', function(t) {
-        var map = createMap();
+    t.test('#removeClass', (t) => {
+        const map = createMap();
         map.addClass('night');
         map.removeClass('night');
         t.ok(!map.hasClass('night'));
         t.end();
     });
 
-    t.test('#setClasses', function(t) {
-        var map = createMap();
+    t.test('#setClasses', (t) => {
+        const map = createMap();
         map.addClass('night');
         map.setClasses([]);
         t.ok(!map.hasClass('night'));
@@ -440,72 +673,115 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#getClasses', function(t) {
-        var map = createMap();
+    t.test('#getClasses', (t) => {
+        const map = createMap();
         map.addClass('night');
         t.deepEqual(map.getClasses(), ['night']);
         t.end();
     });
 
-    t.test('#project', function(t) {
-        var map = createMap();
+    t.test('#project', (t) => {
+        const map = createMap();
         t.deepEqual(map.project([0, 0]), { x: 100, y: 100 });
         t.end();
     });
 
-    t.test('#unproject', function(t) {
-        var map = createMap();
-        t.deepEqual(map.unproject([100, 100]), { lng: 0, lat: 0 });
+    t.test('#unproject', (t) => {
+        const map = createMap();
+        t.deepEqual(fixedLngLat(map.unproject([100, 100])), { lng: 0, lat: 0 });
         t.end();
     });
 
-    t.test('#queryRenderedFeatures', function(t) {
-        var map = createMap();
-        map.setStyle({
-            "version": 8,
-            "sources": {},
-            "layers": []
+    t.test('#queryRenderedFeatures', (t) => {
+
+        t.test('if no arguments provided', (t) => {
+            createMap({}, (err, map) => {
+                t.error(err);
+                t.spy(map.style, 'queryRenderedFeatures');
+
+                const output = map.queryRenderedFeatures();
+
+                const args = map.style.queryRenderedFeatures.getCall(0).args;
+                t.ok(args[0]);
+                t.deepEqual(args[1], {});
+                t.deepEqual(output, []);
+
+                t.end();
+            });
         });
 
-        map.on('style.load', function() {
-            var opts = {};
+        t.test('if only "geometry" provided', (t) => {
+            createMap({}, (err, map) => {
+                t.error(err);
+                t.spy(map.style, 'queryRenderedFeatures');
 
-            t.test('normal coords', function(t) {
-                map.style.queryRenderedFeatures = function (coords, o, zoom, bearing) {
-                    t.deepEqual(coords, [{ column: 0.5, row: 0.5, zoom: 0 }]);
-                    t.equal(o, opts);
-                    t.equal(bearing, map.transform.angle);
-                    t.equal(zoom, map.getZoom());
-                    t.end();
-                };
+                const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)));
 
-                map.queryRenderedFeatures(map.project(new LngLat(0, 0)), opts);
+                const args = map.style.queryRenderedFeatures.getCall(0).args;
+                t.deepEqual(args[0].map(c => fixedCoord(c)), [{ column: 0.5, row: 0.5, zoom: 0 }]); // query geometry
+                t.deepEqual(args[1], {}); // params
+                t.deepEqual(args[2], 0); // bearing
+                t.deepEqual(args[3], 0); // zoom
+                t.deepEqual(output, []);
+
+                t.end();
             });
-
-            t.test('does not wrap coords', function(t) {
-                map.style.queryRenderedFeatures = function (coords, o, zoom, bearing) {
-                    // avoid floating point issues
-                    t.equal(parseFloat(coords[0].column.toFixed(4)), 1.5);
-                    t.equal(coords[0].row, 0.5);
-                    t.equal(coords[0].zoom, 0);
-
-                    t.equal(o, opts);
-                    t.equal(bearing, map.transform.angle);
-                    t.equal(zoom, map.getZoom());
-
-                    t.end();
-                };
-
-                map.queryRenderedFeatures(map.project(new LngLat(360, 0)), opts);
-            });
-
-            t.end();
         });
+
+        t.test('if only "params" provided', (t) => {
+            createMap({}, (err, map) => {
+                t.error(err);
+                t.spy(map.style, 'queryRenderedFeatures');
+
+                const output = map.queryRenderedFeatures({filter: ['all']});
+
+                const args = map.style.queryRenderedFeatures.getCall(0).args;
+                t.ok(args[0]);
+                t.deepEqual(args[1], {filter: ['all']});
+                t.deepEqual(output, []);
+
+                t.end();
+            });
+        });
+
+        t.test('if both "geometry" and "params" provided', (t) => {
+            createMap({}, (err, map) => {
+                t.error(err);
+                t.spy(map.style, 'queryRenderedFeatures');
+
+                const output = map.queryRenderedFeatures({filter: ['all']});
+
+                const args = map.style.queryRenderedFeatures.getCall(0).args;
+                t.ok(args[0]);
+                t.deepEqual(args[1], {filter: ['all']});
+                t.deepEqual(output, []);
+
+                t.end();
+            });
+        });
+
+        t.test('if "geometry" with unwrapped coords provided', (t) => {
+            createMap({}, (err, map) => {
+                t.error(err);
+                t.spy(map.style, 'queryRenderedFeatures');
+
+                map.queryRenderedFeatures(map.project(new LngLat(360, 0)));
+
+                const coords = map.style.queryRenderedFeatures.getCall(0).args[0].map(c => fixedCoord(c));
+                t.equal(coords[0].column, 1.5);
+                t.equal(coords[0].row, 0.5);
+                t.equal(coords[0].zoom, 0);
+
+                t.end();
+            });
+        });
+
+        t.end();
     });
 
-    t.test('#setLayoutProperty', function (t) {
-        t.test('sets property', function (t) {
-            var map = createMap({
+    t.test('#setLayoutProperty', (t) => {
+        t.test('sets property', (t) => {
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {
@@ -528,10 +804,10 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.style.dispatcher.broadcast = function(key, value) {
-                    t.equal(key, 'update layers');
-                    t.deepEqual(value.map(function(layer) { return layer.id; }), ['symbol']);
+                    t.equal(key, 'updateLayers');
+                    t.deepEqual(value.layers.map((layer) => { return layer.id; }), ['symbol']);
                 };
 
                 map.setLayoutProperty('symbol', 'text-transform', 'lowercase');
@@ -541,48 +817,8 @@ test('Map', function(t) {
             });
         });
 
-        t.test('sets property on parent layer', function (t) {
-            var map = createMap({
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": {
-                            "type": "geojson",
-                            "data": {
-                                "type": "FeatureCollection",
-                                "features": []
-                            }
-                        }
-                    },
-                    "layers": [{
-                        "id": "symbol",
-                        "type": "symbol",
-                        "source": "geojson",
-                        "layout": {
-                            "text-transform": "uppercase"
-                        }
-                    }, {
-                        "id": "symbol-ref",
-                        "ref": "symbol"
-                    }]
-                }
-            });
-
-            map.on('style.load', function () {
-                map.style.dispatcher.broadcast = function(key, value) {
-                    t.equal(key, 'update layers');
-                    t.deepEqual(value.map(function(layer) { return layer.id; }), ['symbol']);
-                };
-
-                map.setLayoutProperty('symbol-ref', 'text-transform', 'lowercase');
-                map.style.update();
-                t.deepEqual(map.getLayoutProperty('symbol', 'text-transform'), 'lowercase');
-                t.end();
-            });
-        });
-
-        t.test('throw before loaded', function (t) {
-            var map = createMap({
+        t.test('throw before loaded', (t) => {
+            const map = createMap({
                 style: {
                     version: 8,
                     sources: {},
@@ -590,16 +826,34 @@ test('Map', function(t) {
                 }
             });
 
-            t.throws(function () {
+            t.throws(() => {
                 map.setLayoutProperty('symbol', 'text-transform', 'lowercase');
             }, Error, /load/i);
 
             t.end();
         });
 
-        t.test('fires a style.change event', function (t) {
+        t.test('fires an error if layer not found', (t) => {
+            const map = createMap({
+                style: {
+                    version: 8,
+                    sources: {},
+                    layers: []
+                }
+            });
+
+            map.on('style.load', () => {
+                map.style.on('error', ({ error }) => {
+                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
+                    t.end();
+                });
+                map.setLayoutProperty('non-existant', 'text-transform', 'lowercase');
+            });
+        });
+
+        t.test('fires a data event', (t) => {
             // background layers do not have a source
-            var map = createMap({
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {},
@@ -613,19 +867,20 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
-                map.once('style.change', function (e) {
-                    t.ok(e, 'change event');
-                    t.end();
+            map.once('style.load', () => {
+                map.once('data', (e) => {
+                    if (e.dataType === 'style') {
+                        t.end();
+                    }
                 });
 
                 map.setLayoutProperty('background', 'visibility', 'visible');
             });
         });
 
-        t.test('sets visibility on background layer', function (t) {
+        t.test('sets visibility on background layer', (t) => {
             // background layers do not have a source
-            var map = createMap({
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {},
@@ -639,21 +894,21 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.setLayoutProperty('background', 'visibility', 'visible');
                 t.deepEqual(map.getLayoutProperty('background', 'visibility'), 'visible');
                 t.end();
             });
         });
 
-        t.test('sets visibility on raster layer', function (t) {
-            var map = createMap({
+        t.test('sets visibility on raster layer', (t) => {
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {
                         "mapbox://mapbox.satellite": {
                             "type": "raster",
-                            "tiles": ["local://tiles/{z}-{x}-{y}.png"]
+                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
                         }
                     },
                     "layers": [{
@@ -667,18 +922,18 @@ test('Map', function(t) {
                 }
             });
 
-            // We're faking tiles
-            map.off('tile.error', map.onError);
+            // Suppress errors because we're not loading tiles from a real URL.
+            map.on('error', () => {});
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.setLayoutProperty('satellite', 'visibility', 'visible');
                 t.deepEqual(map.getLayoutProperty('satellite', 'visibility'), 'visible');
                 t.end();
             });
         });
 
-        t.test('sets visibility on video layer', function (t) {
-            var map = createMap({
+        t.test('sets visibility on video layer', (t) => {
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {
@@ -704,15 +959,15 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.setLayoutProperty('shore', 'visibility', 'visible');
                 t.deepEqual(map.getLayoutProperty('shore', 'visibility'), 'visible');
                 t.end();
             });
         });
 
-        t.test('sets visibility on image layer', function (t) {
-            var map = createMap({
+        t.test('sets visibility on image layer', (t) => {
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {
@@ -738,7 +993,7 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.setLayoutProperty('image', 'visibility', 'visible');
                 t.deepEqual(map.getLayoutProperty('image', 'visibility'), 'visible');
                 t.end();
@@ -748,9 +1003,9 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#setPaintProperty', function (t) {
-        t.test('sets property', function (t) {
-            var map = createMap({
+    t.test('#setPaintProperty', (t) => {
+        t.test('sets property', (t) => {
+            const map = createMap({
                 style: {
                     "version": 8,
                     "sources": {},
@@ -761,15 +1016,15 @@ test('Map', function(t) {
                 }
             });
 
-            map.on('style.load', function () {
+            map.on('style.load', () => {
                 map.setPaintProperty('background', 'background-color', 'red');
                 t.deepEqual(map.getPaintProperty('background', 'background-color'), 'red');
                 t.end();
             });
         });
 
-        t.test('throw before loaded', function (t) {
-            var map = createMap({
+        t.test('throw before loaded', (t) => {
+            const map = createMap({
                 style: {
                     version: 8,
                     sources: {},
@@ -777,36 +1032,127 @@ test('Map', function(t) {
                 }
             });
 
-            t.throws(function () {
+            t.throws(() => {
                 map.setPaintProperty('background', 'background-color', 'red');
             }, Error, /load/i);
 
             t.end();
         });
 
-        t.end();
-    });
-
-    t.test('#onError', function (t) {
-        t.test('logs errors to console by default', function (t) {
-            var error = console.error;
-
-            console.error = function (e) {
-                console.error = error;
-                t.deepEqual(e.message, 'version: expected one of [8], 7 found');
-                t.end();
-            };
-
-            createMap({
+        t.test('fires an error if layer not found', (t) => {
+            const map = createMap({
                 style: {
-                    version: 7,
+                    version: 8,
                     sources: {},
                     layers: []
                 }
             });
+
+            map.on('style.load', () => {
+                map.style.on('error', ({ error }) => {
+                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
+                    t.end();
+                });
+                map.setPaintProperty('non-existant', 'background-color', 'red');
+            });
         });
 
         t.end();
+    });
+
+    t.test('error event', (t) => {
+        t.test('logs errors to console when it has NO listeners', (t) => {
+            const map = createMap({ style: { version: 8, sources: {}, layers: [] } });
+
+            t.spy(map, 'fire');
+            t.stub(console, 'error', (error) => {
+                if (error.message === 'version: expected one of [8], 7 found') {
+                    t.notOk(map.fire.calledWith('error'));
+                    console.error.restore();
+                    map.fire.restore();
+                    t.end();
+                } else {
+                    console.log(error);
+                }
+            });
+
+            map.setStyle({ version: 7, sources: {}, layers: [] });
+        });
+
+        t.test('calls listeners', (t) => {
+            const map = createMap({ style: { version: 8, sources: {}, layers: [] } });
+
+            t.spy(console, 'error');
+            map.on('error', (event) => {
+                t.equal(event.error.message, 'version: expected one of [8], 7 found');
+                t.notOk(console.error.calledWith('version: expected one of [8], 7 found'));
+                console.error.restore();
+                t.end();
+            });
+
+            map.setStyle({ version: 7, sources: {}, layers: [] });
+        });
+
+        t.end();
+    });
+
+    t.test('render stabilizes', (t) => {
+        const style = createStyle();
+        style.sources.mapbox = {
+            type: 'vector',
+            minzoom: 1,
+            maxzoom: 10,
+            tiles: ['http://example.com/{z}/{x}/{y}.png']
+        };
+        style.layers.push({
+            id: 'layerId',
+            type: 'circle',
+            source: 'mapbox',
+            'source-layer': 'sourceLayer'
+        });
+
+        let timer;
+        const map = createMap({ style: style });
+        map.on('render', () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                map.off('render');
+                map.on('render', t.fail);
+                t.notOk(map._frameId, 'no rerender scheduled');
+                t.end();
+            }, 100);
+        });
+    });
+
+    t.test('#removeLayer restores Map#loaded() to true', (t) => {
+        const map = createMap({
+            style: util.extend(createStyle(), {
+                sources: {
+                    mapbox: {
+                        type: 'vector',
+                        minzoom: 1,
+                        maxzoom: 10,
+                        tiles: ['http://example.com/{z}/{x}/{y}.png']
+                    }
+                },
+                layers: [{
+                    id: 'layerId',
+                    type: 'circle',
+                    source: 'mapbox',
+                    'source-layer': 'sourceLayer'
+                }]
+            })
+        });
+
+        map.once('render', () => {
+            map.removeLayer('layerId');
+            map.on('render', () => {
+                if (map.loaded()) {
+                    map.remove();
+                    t.end();
+                }
+            });
+        });
     });
 
     t.end();

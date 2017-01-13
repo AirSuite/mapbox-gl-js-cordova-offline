@@ -1,70 +1,106 @@
 'use strict';
 
-var test = require('tap').test;
-var fs = require('fs');
-var path = require('path');
-var Protobuf = require('pbf');
-var VectorTile = require('vector-tile').VectorTile;
-var SymbolBucket = require('../../../js/data/bucket/symbol_bucket');
-var Collision = require('../../../js/symbol/collision_tile');
-var CollisionBoxArray = require('../../../js/symbol/collision_box');
-var GlyphAtlas = require('../../../js/symbol/glyph_atlas');
-var StyleLayer = require('../../../js/style/style_layer');
+const test = require('mapbox-gl-js-test').test;
+const fs = require('fs');
+const path = require('path');
+const Protobuf = require('pbf');
+const VectorTile = require('vector-tile').VectorTile;
+const SymbolBucket = require('../../../js/data/bucket/symbol_bucket');
+const Collision = require('../../../js/symbol/collision_tile');
+const CollisionBoxArray = require('../../../js/symbol/collision_box');
+const SymbolInstancesArray = require('../../../js/symbol/symbol_instances');
+const SymbolQuadsArray = require('../../../js/symbol/symbol_quads');
+const GlyphAtlas = require('../../../js/symbol/glyph_atlas');
+const StyleLayer = require('../../../js/style/style_layer');
+const util = require('../../../js/util/util');
+const featureFilter = require('feature-filter');
 
 // Load a point feature from fixture tile.
-var vt = new VectorTile(new Protobuf(new Uint8Array(fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf')))));
-var feature = vt.layers.place_label.feature(10);
-var glyphs = JSON.parse(fs.readFileSync(path.join(__dirname, '/../../fixtures/fontstack-glyphs.json')));
+const vt = new VectorTile(new Protobuf(fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'))));
+const feature = vt.layers.place_label.feature(10);
+const glyphs = JSON.parse(fs.readFileSync(path.join(__dirname, '/../../fixtures/fontstack-glyphs.json')));
 
-test('SymbolBucket', function(t) {
-    /*eslint new-cap: 0*/
-    var buffers = {};
-    var collisionBoxArray = new CollisionBoxArray();
-    var collision = new Collision(0, 0, collisionBoxArray);
-    var atlas = new GlyphAtlas(1024, 1024);
-    for (var id in glyphs) {
-        glyphs[id].bitmap = true;
-        glyphs[id].rect = atlas.addGlyph(id, 'Test', glyphs[id], 3);
-    }
+/*eslint new-cap: 0*/
+const collisionBoxArray = new CollisionBoxArray();
+const symbolQuadsArray = new SymbolQuadsArray();
+const symbolInstancesArray = new SymbolInstancesArray();
+const collision = new Collision(0, 0, collisionBoxArray);
+const atlas = new GlyphAtlas();
+for (const id in glyphs) {
+    glyphs[id].bitmap = true;
+    glyphs[id].rect = atlas.addGlyph(id, 'Test', glyphs[id], 3);
+}
 
-    var stacks = { 'Test': glyphs };
+const stacks = { 'Test': glyphs };
 
-    function bucketSetup() {
-        var layer = new StyleLayer({
-            id: 'test',
-            type: 'symbol',
-            layout: { 'text-font': ['Test'] }
-        });
+function bucketSetup() {
+    const layer = new StyleLayer({
+        id: 'test',
+        type: 'symbol',
+        layout: { 'text-font': ['Test'], 'text-field': 'abcde' },
+        filter: featureFilter()
+    });
 
-        var bucket = new SymbolBucket({
-            buffers: buffers,
-            overscaling: 1,
-            zoom: 0,
-            collisionBoxArray: collisionBoxArray,
-            layer: layer,
-            childLayers: [layer],
-            tileExtent: 4096
-        });
-        bucket.createArrays();
-        bucket.textFeatures = ['abcde'];
-        bucket.features = [feature];
-        return bucket;
-    }
+    return new SymbolBucket({
+        overscaling: 1,
+        zoom: 0,
+        collisionBoxArray: collisionBoxArray,
+        symbolInstancesArray: symbolInstancesArray,
+        symbolQuadsArray: symbolQuadsArray,
+        layers: [layer]
+    });
+}
 
-    var bucketA = bucketSetup();
-    var bucketB = bucketSetup();
+test('SymbolBucket', (t) => {
+    const bucketA = bucketSetup();
+    const bucketB = bucketSetup();
+    const options = {iconDependencies: {}, glyphDependencies: {}};
 
     // add feature from bucket A
-    var a = collision.grid.keys.length;
-    t.equal(bucketA.populateBuffers(collision, stacks), undefined);
-    var b = collision.grid.keys.length;
+    const a = collision.grid.keys.length;
+    bucketA.populate([feature], options);
+    bucketA.prepare(stacks, {});
+    bucketA.place(collision);
+
+    const b = collision.grid.keys.length;
     t.notEqual(a, b, 'places feature');
 
     // add same feature from bucket B
-    var a2 = collision.grid.keys.length;
-    t.equal(bucketB.populateBuffers(collision, stacks), undefined);
-    var b2 = collision.grid.keys.length;
+    const a2 = collision.grid.keys.length;
+    bucketB.populate([feature], options);
+    bucketB.prepare(stacks, {});
+    bucketB.place(collision);
+    const b2 = collision.grid.keys.length;
     t.equal(a2, b2, 'detects collision and does not place feature');
+    t.end();
+});
+
+
+test('SymbolBucket integer overflow', (t) => {
+    t.stub(util, 'warnOnce');
+    t.stub(SymbolBucket, 'MAX_QUADS', 5);
+
+    const bucket = bucketSetup();
+    const options = {iconDependencies: {}, glyphDependencies: {}};
+
+    bucket.populate([feature], options);
+    bucket.prepare(stacks, {});
+    bucket.place(collision);
+
+    t.ok(util.warnOnce.calledTwice);
+    t.ok(util.warnOnce.getCall(0).calledWithMatch(/Too many (symbols|glyphs) being rendered in a tile./));
+    t.ok(util.warnOnce.getCall(1).calledWithMatch(/Too many (symbols|glyphs) being rendered in a tile./));
+    t.end();
+});
+
+test('SymbolBucket redo placement', (t) => {
+    const bucket = bucketSetup();
+    const options = {iconDependencies: {}, glyphDependencies: {}};
+
+    bucket.populate([feature], options);
+    bucket.prepare(stacks, {});
+    bucket.place(collision);
+    bucket.place(collision);
 
     t.end();
 });

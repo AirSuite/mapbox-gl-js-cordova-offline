@@ -1,66 +1,67 @@
 'use strict';
 
-var DOM = require('../../util/dom'),
-    browser = require('../../util/browser'),
-    util = require('../../util/util');
+const DOM = require('../../util/dom');
+const util = require('../../util/util');
+const browser = require('../../util/browser');
+const window = require('../../util/window');
 
-module.exports = ScrollZoomHandler;
-
-
-var ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '',
+const ua = window.navigator.userAgent.toLowerCase(),
     firefox = ua.indexOf('firefox') !== -1,
     safari = ua.indexOf('safari') !== -1 && ua.indexOf('chrom') === -1;
 
-
 /**
- * The `ScrollZoomHandler` allows a user to zoom the map by scrolling.
- * @class ScrollZoomHandler
+ * The `ScrollZoomHandler` allows the user to zoom the map by scrolling.
+ *
+ * @param {Map} map The Mapbox GL JS map to add the handler to.
  */
-function ScrollZoomHandler(map) {
-    this._map = map;
-    this._el = map.getCanvasContainer();
+class ScrollZoomHandler {
+    constructor(map) {
+        this._map = map;
+        this._el = map.getCanvasContainer();
 
-    util.bindHandlers(this);
-}
-
-ScrollZoomHandler.prototype = {
-
-    _enabled: false,
+        util.bindAll([
+            '_onWheel',
+            '_onTimeout'
+        ], this);
+    }
 
     /**
-     * Returns the current enabled/disabled state of the "scroll to zoom" interaction.
-     * @returns {boolean} enabled state
+     * Returns a Boolean indicating whether the "scroll to zoom" interaction is enabled.
+     *
+     * @returns {boolean} `true` if the "scroll to zoom" interaction is enabled.
      */
-    isEnabled: function () {
-        return this._enabled;
-    },
+    isEnabled() {
+        return !!this._enabled;
+    }
 
     /**
-     * Enable the "scroll to zoom" interaction.
+     * Enables the "scroll to zoom" interaction.
+     *
      * @example
      *   map.scrollZoom.enable();
      */
-    enable: function () {
+    enable() {
         if (this.isEnabled()) return;
         this._el.addEventListener('wheel', this._onWheel, false);
         this._el.addEventListener('mousewheel', this._onWheel, false);
         this._enabled = true;
-    },
+    }
 
     /**
-     * Disable the "scroll to zoom" interaction.
+     * Disables the "scroll to zoom" interaction.
+     *
      * @example
      *   map.scrollZoom.disable();
      */
-    disable: function () {
+    disable() {
         if (!this.isEnabled()) return;
         this._el.removeEventListener('wheel', this._onWheel);
         this._el.removeEventListener('mousewheel', this._onWheel);
         this._enabled = false;
-    },
+    }
 
-    _onWheel: function (e) {
-        var value;
+    _onWheel(e) {
+        let value;
 
         if (e.type === 'wheel') {
             value = e.deltaY;
@@ -73,7 +74,7 @@ ScrollZoomHandler.prototype = {
             if (safari) value = value / 3;
         }
 
-        var now = browser.now(),
+        const now = browser.now(),
             timeDelta = now - (this._time || 0);
 
         this._pos = DOM.mousePos(this._el, e);
@@ -82,8 +83,6 @@ ScrollZoomHandler.prototype = {
         if (value !== 0 && (value % 4.000244140625) === 0) {
             // This one is definitely a mouse wheel event.
             this._type = 'wheel';
-            // Normalize this value to match trackpad.
-            value = Math.floor(value / 4);
 
         } else if (value !== 0 && Math.abs(value) < 4) {
             // This one is definitely a trackpad event because it is so small.
@@ -118,59 +117,62 @@ ScrollZoomHandler.prototype = {
         if (this._type) this._zoom(-value, e);
 
         e.preventDefault();
-    },
+    }
 
-    _onTimeout: function () {
+    _onTimeout() {
         this._type = 'wheel';
         this._zoom(-this._lastValue);
-    },
+    }
 
-    _zoom: function (delta, e) {
+    _zoom(delta, e) {
         if (delta === 0) return;
-        var map = this._map;
+        const map = this._map;
 
         // Scale by sigmoid of scroll wheel delta.
-        var scale = 2 / (1 + Math.exp(-Math.abs(delta / 100)));
+        let scale = 2 / (1 + Math.exp(-Math.abs(delta / 100)));
         if (delta < 0 && scale !== 0) scale = 1 / scale;
 
-        var fromScale = map.ease ? map.ease.to : map.transform.scale,
+        const fromScale = map.ease ? map.ease.to : map.transform.scale,
             targetZoom = map.transform.scaleZoom(fromScale * scale);
 
         map.zoomTo(targetZoom, {
-            duration: 0,
+            duration: this._type === 'wheel' ? 200 : 0,
             around: map.unproject(this._pos),
-            delayEndEvents: 200
+            delayEndEvents: 200,
+            smoothEasing: true
         }, { originalEvent: e });
     }
-};
+}
 
+module.exports = ScrollZoomHandler;
 
 /**
- * Zoom start event. This event is emitted just before the map begins a transition from one
- * zoom level to another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ * Fired just before the map begins a transition from one zoom level to another,
+ * as the result of either user interaction or methods such as [Map#flyTo](#Map#flyTo).
  *
  * @event zoomstart
  * @memberof Map
  * @instance
- * @property {EventData} data Original event data, if fired interactively
+ * @property {MapMouseEvent | MapTouchEvent} data
  */
 
 /**
- * Zoom event. This event is emitted repeatedly during animated transitions from one zoom level to
- * another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ * Fired repeatedly during an animated transition from one zoom level to another,
+ * as the result of either user interaction or methods such as [Map#flyTo](#Map#flyTo).
  *
  * @event zoom
  * @memberof Map
  * @instance
- * @property {EventData} data Original event data, if fired interactively
+ * @property {MapMouseEvent | MapTouchEvent} data
+ * @see [Update a choropleth layer by zoom level](https://www.mapbox.com/mapbox-gl-js/example/updating-choropleth/)
  */
 
 /**
- * Zoom end event. This event is emitted just after the map completes a transition from one
- * zoom level to another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ * Fired just after the map completes a transition from one zoom level to another,
+ * as the result of either user interaction or methods such as [Map#flyTo](#Map#flyTo).
  *
  * @event zoomend
  * @memberof Map
  * @instance
- * @property {EventData} data Original event data, if fired interactively
+ * @property {MapMouseEvent | MapTouchEvent} data
  */

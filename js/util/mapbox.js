@@ -1,79 +1,117 @@
 'use strict';
+// @flow
 
-var config = require('./config');
-var browser = require('./browser');
+const config = require('./config');
+const browser = require('./browser');
 
-function normalizeURL(url, pathPrefix, accessToken) {
+const help = 'See https://www.mapbox.com/developers/api/#access-tokens';
+
+type UrlObject = {|
+    protocol: string,
+    authority: string,
+    path: string,
+    params: Array<string>
+|};
+
+function makeAPIURL(urlObject: UrlObject, accessToken): string {
+    const apiUrlObject = parseUrl(config.API_URL);
+    urlObject.protocol = apiUrlObject.protocol;
+    urlObject.authority = apiUrlObject.authority;
+
+    if (!config.REQUIRE_ACCESS_TOKEN) return formatUrl(urlObject);
+
     accessToken = accessToken || config.ACCESS_TOKEN;
+    if (!accessToken)
+        throw new Error(`An API access token is required to use Mapbox GL. ${help}`);
+    if (accessToken[0] === 's')
+        throw new Error(`Use a public access token (pk.*) with Mapbox GL, not a secret access token (sk.*). ${help}`);
 
-    if (!accessToken && config.REQUIRE_ACCESS_TOKEN) {
-        throw new Error('An API access token is required to use Mapbox GL. ' +
-            'See https://www.mapbox.com/developers/api/#access-tokens');
-    }
-
-    url = url.replace(/^mapbox:\/\//, config.API_URL + pathPrefix);
-    url += url.indexOf('?') !== -1 ? '&access_token=' : '?access_token=';
-
-    if (config.REQUIRE_ACCESS_TOKEN) {
-        if (accessToken[0] === 's') {
-            throw new Error('Use a public access token (pk.*) with Mapbox GL JS, not a secret access token (sk.*). ' +
-                'See https://www.mapbox.com/developers/api/#access-tokens');
-        }
-
-        url += accessToken;
-    }
-
-    return url;
+    urlObject.params.push(`access_token=${accessToken}`);
+    return formatUrl(urlObject);
 }
 
-module.exports.normalizeStyleURL = function(url, accessToken) {
-    if (!url.match(/^mapbox:\/\/styles\//))
-        return url;
+function isMapboxURL(url: string) {
+    return url.indexOf('mapbox:') === 0;
+}
 
-    var split = url.split('/');
-    var user = split[3];
-    var style = split[4];
-    var draft = split[5] ? '/draft' : '';
-    return normalizeURL('mapbox://' + user + '/' + style + draft, '/styles/v1/', accessToken);
+exports.isMapboxURL = isMapboxURL;
+
+exports.normalizeStyleURL = function(url: string, accessToken: string): string {
+    if (!isMapboxURL(url)) return url;
+    const urlObject = parseUrl(url);
+    urlObject.path = `/styles/v1${urlObject.path}`;
+    return makeAPIURL(urlObject, accessToken);
 };
 
-module.exports.normalizeSourceURL = function(url, accessToken) {
-    if (!url.match(/^mapbox:\/\//))
-        return url;
+exports.normalizeGlyphsURL = function(url: string, accessToken: string): string {
+    if (!isMapboxURL(url)) return url;
+    const urlObject = parseUrl(url);
+    urlObject.path = `/fonts/v1${urlObject.path}`;
+    return makeAPIURL(urlObject, accessToken);
+};
 
+exports.normalizeSourceURL = function(url: string, accessToken: string): string {
+    if (!isMapboxURL(url)) return url;
+    const urlObject = parseUrl(url);
+    urlObject.path = `/v4/${urlObject.authority}.json`;
     // TileJSON requests need a secure flag appended to their URLs so
     // that the server knows to send SSL-ified resource references.
-    return normalizeURL(url + '.json', '/v4/', accessToken) + '&secure';
+    urlObject.params.push('secure');
+    return makeAPIURL(urlObject, accessToken);
 };
 
-module.exports.normalizeGlyphsURL = function(url, accessToken) {
-    if (!url.match(/^mapbox:\/\//))
-        return url;
-
-    var user = url.split('/')[3];
-    return normalizeURL('mapbox://' + user + '/{fontstack}/{range}.pbf', '/fonts/v1/', accessToken);
+exports.normalizeSpriteURL = function(url: string, format: string, extension: string, accessToken: string): string {
+    const urlObject = parseUrl(url);
+    if (!isMapboxURL(url)) {
+        urlObject.path += `${format}${extension}`;
+        return formatUrl(urlObject);
+    }
+    urlObject.path = `/styles/v1${urlObject.path}/sprite${format}${extension}`;
+    return makeAPIURL(urlObject, accessToken);
 };
 
-module.exports.normalizeSpriteURL = function(url, format, ext, accessToken) {
-    if (!url.match(/^mapbox:\/\/sprites\//))
-        return url + format + ext;
+const imageExtensionRe = /(\.(png|jpg)\d*)(?=$)/;
 
-    var split = url.split('/');
-    var user = split[3];
-    var style = split[4];
-    var draft = split[5] ? '/draft' : '';
-    return normalizeURL('mapbox://' + user + '/' + style + draft + '/sprite' + format + ext, '/styles/v1/', accessToken);
-};
+exports.normalizeTileURL = function(tileURL: string, sourceURL?: ?string, tileSize?: ?number): string {
+    if (!sourceURL || !isMapboxURL(sourceURL)) return tileURL;
 
-module.exports.normalizeTileURL = function(url, sourceUrl, tileSize) {
-    if (!sourceUrl || !sourceUrl.match(/^mapbox:\/\//))
-        return url;
+    const urlObject = parseUrl(tileURL);
 
     // The v4 mapbox tile API supports 512x512 image tiles only when @2x
     // is appended to the tile URL. If `tileSize: 512` is specified for
-    // a Mapbox raster source force the @2x suffix even if a non hidpi
-    // device.
-    url = url.replace(/([?&]access_token=)tk\.[^&]+/, '$1' + config.ACCESS_TOKEN);
-    var extension = browser.supportsWebp ? 'webp' : '$1';
-    return url.replace(/\.((?:png|jpg)\d*)(?=$|\?)/, browser.devicePixelRatio >= 2 || tileSize === 512 ? '@2x.' + extension : '.' + extension);
+    // a Mapbox raster source force the @2x suffix even if a non hidpi device.
+    const suffix = browser.devicePixelRatio >= 2 || tileSize === 512 ? '@2x' : '';
+    const extension = browser.supportsWebp ? '.webp' : '$1';
+    urlObject.path = urlObject.path.replace(imageExtensionRe, `${suffix}${extension}`);
+
+    replaceTempAccessToken(urlObject.params);
+    return formatUrl(urlObject);
 };
+
+function replaceTempAccessToken(params: Array<string>) {
+    for (let i = 0; i < params.length; i++) {
+        if (params[i].indexOf('access_token=tk.') === 0) {
+            params[i] = `access_token=${config.ACCESS_TOKEN || ''}`;
+        }
+    }
+}
+
+const urlRe = /^(\w+):\/\/([^/?]+)(\/[^?]+)?\??(.+)?/;
+
+function parseUrl(url: string): UrlObject {
+    const parts = url.match(urlRe);
+    if (!parts) {
+        throw new Error('Unable to parse URL object');
+    }
+    return {
+        protocol: parts[1],
+        authority: parts[2],
+        path: parts[3] || '/',
+        params: parts[4] ? parts[4].split('&') : []
+    };
+}
+
+function formatUrl(obj: UrlObject): string {
+    const params = obj.params.length ? `?${obj.params.join('&')}` : '';
+    return `${obj.protocol}://${obj.authority}${obj.path}${params}`;
+}

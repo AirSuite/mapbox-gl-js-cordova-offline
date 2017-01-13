@@ -1,19 +1,19 @@
 'use strict';
 
-var test = require('tap').test;
-var Wrapper = require('../../../js/source/geojson_wrapper');
+const test = require('mapbox-gl-js-test').test;
+const Wrapper = require('../../../js/source/geojson_wrapper');
 
-test('geojsonwrapper', function(t) {
+test('geojsonwrapper', (t) => {
 
-    t.test('linestring', function(t) {
-        var features = [{
+    t.test('linestring', (t) => {
+        const features = [{
             type: 2,
             geometry: [[[0, 0], [10, 10]]],
             tags: { hello: 'world' }
         }];
 
-        var wrap = new Wrapper(features);
-        var feature = wrap.feature(0);
+        const wrap = new Wrapper(features);
+        const feature = wrap.feature(0);
 
         t.ok(feature, 'gets a feature');
         t.deepEqual(feature.bbox(), [0, 0, 10, 10], 'bbox');
@@ -23,15 +23,15 @@ test('geojsonwrapper', function(t) {
         t.end();
     });
 
-    t.test('point', function(t) {
-        var features = [{
+    t.test('point', (t) => {
+        const features = [{
             type: 1,
             geometry: [[0, 1]],
             tags: {}
         }];
 
-        var wrap = new Wrapper(features);
-        var feature = wrap.feature(0);
+        const wrap = new Wrapper(features);
+        const feature = wrap.feature(0);
         t.deepEqual(feature.bbox(), [0, 1, 0, 1], 'bbox');
         t.end();
     });

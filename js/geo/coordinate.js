@@ -1,6 +1,5 @@
 'use strict';
-
-module.exports = Coordinate;
+// @flow
 
 /**
  * A coordinate is a column, row, zoom combination, often used
@@ -11,13 +10,15 @@ module.exports = Coordinate;
  * @param {number} zoom
  * @private
  */
-function Coordinate(column, row, zoom) {
-    this.column = column;
-    this.row = row;
-    this.zoom = zoom;
-}
-
-Coordinate.prototype = {
+class Coordinate {
+    column: number;
+    row: number;
+    zoom: number;
+    constructor(column: number, row: number, zoom: number) {
+        this.column = column;
+        this.row = row;
+        this.zoom = zoom;
+    }
 
     /**
      * Create a clone of this coordinate that can be mutated without
@@ -31,9 +32,9 @@ Coordinate.prototype = {
      * // not modify it.
      * c2.zoom = 2;
      */
-    clone: function() {
+    clone() {
         return new Coordinate(this.column, this.row, this.zoom);
-    },
+    }
 
     /**
      * Zoom this coordinate to a given zoom level. This returns a new
@@ -47,7 +48,7 @@ Coordinate.prototype = {
      * var c2 = coord.zoomTo(1);
      * c2 // equals new Coordinate(0, 0, 1);
      */
-    zoomTo: function(zoom) { return this.clone()._zoomTo(zoom); },
+    zoomTo(zoom: number) { return this.clone()._zoomTo(zoom); }
 
     /**
      * Subtract the column and row values of this coordinate from those
@@ -58,20 +59,22 @@ Coordinate.prototype = {
      * @returns {Coordinate} result
      * @private
      */
-    sub: function(c) { return this.clone()._sub(c); },
+    sub(c: Coordinate) { return this.clone()._sub(c); }
 
-    _zoomTo: function(zoom) {
-        var scale = Math.pow(2, zoom - this.zoom);
+    _zoomTo(zoom: number) {
+        const scale = Math.pow(2, zoom - this.zoom);
         this.column *= scale;
         this.row *= scale;
         this.zoom = zoom;
         return this;
-    },
+    }
 
-    _sub: function(c) {
+    _sub(c: Coordinate) {
         c = c.zoomTo(this.zoom);
         this.column -= c.column;
         this.row -= c.row;
         return this;
     }
-};
+}
+
+module.exports = Coordinate;

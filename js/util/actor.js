@@ -1,7 +1,5 @@
 'use strict';
 
-module.exports = Actor;
-
 /**
  * An implementation of the [Actor design pattern](http://en.wikipedia.org/wiki/Actor_model)
  * that maintains the relationship between asynchronous tasks and the objects
@@ -10,54 +8,81 @@ module.exports = Actor;
  *
  * @param {WebWorker} target
  * @param {WebWorker} parent
+ * @param {string|number} mapId A unique identifier for the Map instance using this Actor.
  * @private
  */
-function Actor(target, parent) {
-    this.target = target;
-    this.parent = parent;
-    this.callbacks = {};
-    this.callbackID = 0;
-    this.receive = this.receive.bind(this);
-    this.target.addEventListener('message', this.receive, false);
-}
+class Actor {
+    constructor(target, parent, mapId) {
+        this.target = target;
+        this.parent = parent;
+        this.mapId = mapId;
+        this.callbacks = {};
+        this.callbackID = 0;
+        this.receive = this.receive.bind(this);
+        this.target.addEventListener('message', this.receive, false);
+    }
 
-Actor.prototype.receive = function(message) {
-    var data = message.data,
-        callback;
+    /**
+     * Sends a message from a main-thread map to a Worker or from a Worker back to
+     * a main-thread map instance.
+     *
+     * @param {string} type The name of the target method to invoke or '[source-type].name' for a method on a WorkerSource.
+     * @param {Object} data
+     * @param {Function} [callback]
+     * @param {Array} [buffers] A list of buffers to "transfer" (see https://developer.mozilla.org/en-US/docs/Web/API/Transferable)
+     * @param {string} [targetMapId] A particular mapId to which to send this message.
+     * @private
+     */
+    send(type, data, callback, buffers, targetMapId) {
+        const id = callback ? `${this.mapId}:${this.callbackID++}` : null;
+        if (callback) this.callbacks[id] = callback;
+        this.target.postMessage({
+            targetMapId: targetMapId,
+            sourceMapId: this.mapId,
+            type: type,
+            id: String(id),
+            data: data
+        }, buffers);
+    }
 
-    if (data.type === '<response>') {
-        callback = this.callbacks[data.id];
-        delete this.callbacks[data.id];
-        callback(data.error || null, data.data);
-    } else if (typeof data.id !== 'undefined') {
-        var id = data.id;
-        this.parent[data.type](data.data, function(err, data, buffers) {
-            this.postMessage({
+    receive(message) {
+        const data = message.data,
+            id = data.id;
+        let callback;
+
+        if (data.targetMapId && this.mapId !== data.targetMapId)
+            return;
+
+        const done = (err, data, buffers) => {
+            this.target.postMessage({
+                sourceMapId: this.mapId,
                 type: '<response>',
                 id: String(id),
                 error: err ? String(err) : null,
                 data: data
             }, buffers);
-        }.bind(this));
-    } else {
-        this.parent[data.type](data.data);
+        };
+
+        if (data.type === '<response>') {
+            callback = this.callbacks[data.id];
+            delete this.callbacks[data.id];
+            if (callback) callback(data.error || null, data.data);
+        } else if (typeof data.id !== 'undefined' && this.parent[data.type]) {
+            // data.type == 'loadTile', 'removeTile', etc.
+            this.parent[data.type](data.sourceMapId, data.data, done);
+        } else if (typeof data.id !== 'undefined' && this.parent.getWorkerSource) {
+            // data.type == sourcetype.method
+            const keys = data.type.split('.');
+            const workerSource = this.parent.getWorkerSource(data.sourceMapId, keys[0]);
+            workerSource[keys[1]](data.data, done);
+        } else {
+            this.parent[data.type](data.data);
+        }
     }
-};
 
-Actor.prototype.send = function(type, data, callback, buffers) {
-    var id = null;
-    if (callback) this.callbacks[id = this.callbackID++] = callback;
-    this.postMessage({ type: type, id: String(id), data: data }, buffers);
-};
+    remove() {
+        this.target.removeEventListener('message', this.receive, false);
+    }
+}
 
-/**
- * Wrapped postMessage API that abstracts around IE's lack of
- * `transferList` support.
- *
- * @param {Object} message
- * @param {Object} transferList
- * @private
- */
-Actor.prototype.postMessage = function(message, transferList) {
-    this.target.postMessage(message, transferList);
-};
+module.exports = Actor;

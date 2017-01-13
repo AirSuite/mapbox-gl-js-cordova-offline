@@ -1,32 +1,44 @@
 'use strict';
 
-var test = require('tap').test;
-var st = require('st');
-var http = require('http');
-var path = require('path');
-var VectorTileSource = require('../../../js/source/vector_tile_source');
+const test = require('mapbox-gl-js-test').test;
+const VectorTileSource = require('../../../js/source/vector_tile_source');
+const TileCoord = require('../../../js/source/tile_coord');
+const window = require('../../../js/util/window');
+const Evented = require('../../../js/util/evented');
 
-var server = http.createServer(st({path: path.join(__dirname, '/../../fixtures')}));
-
-test('VectorTileSource', function(t) {
-    t.test('before', function(t) {
-        server.listen(2900, t.end);
+function createSource(options) {
+    const source = new VectorTileSource('id', options, { send: function() {} }, options.eventedParent);
+    source.onAdd({
+        transform: { angle: 0, pitch: 0, showCollisionBoxes: false }
     });
 
-    t.test('can be constructed from TileJSON', function(t) {
-        var source = new VectorTileSource({
+    source.on('error', (e) => {
+        throw e.error;
+    });
+
+    return source;
+}
+
+test('VectorTileSource', (t) => {
+    t.beforeEach((callback) => {
+        window.useFakeXMLHttpRequest();
+        callback();
+    });
+
+    t.afterEach((callback) => {
+        window.restore();
+        callback();
+    });
+
+    t.test('can be constructed from TileJSON', (t) => {
+        const source = createSource({
             minzoom: 1,
             maxzoom: 10,
             attribution: "Mapbox",
             tiles: ["http://example.com/{z}/{x}/{y}.png"]
         });
 
-        source.on('error', function(e) {
-            t.error(e.error);
-        });
-
-        source.on('load', function() {
-            t.ok(source.loaded());
+        source.on('source.load', () => {
             t.deepEqual(source.tiles, ["http://example.com/{z}/{x}/{y}.png"]);
             t.deepEqual(source.minzoom, 1);
             t.deepEqual(source.maxzoom, 10);
@@ -35,52 +47,50 @@ test('VectorTileSource', function(t) {
         });
     });
 
-    t.test('can be constructed from a TileJSON URL', function(t) {
-        var source = new VectorTileSource({
-            url: "http://localhost:2900/source.json"
-        });
+    t.test('can be constructed from a TileJSON URL', (t) => {
+        window.server.respondWith('/source.json', JSON.stringify(require('../../fixtures/source')));
 
-        source.on('error', function(e) {
-            t.error(e.error);
-        });
+        const source = createSource({ url: "/source.json" });
 
-        source.on('load', function() {
-            t.ok(source.loaded());
+        source.on('source.load', () => {
             t.deepEqual(source.tiles, ["http://example.com/{z}/{x}/{y}.png"]);
             t.deepEqual(source.minzoom, 1);
             t.deepEqual(source.maxzoom, 10);
             t.deepEqual(source.attribution, "Mapbox");
             t.end();
         });
+
+        window.server.respond();
     });
 
-    t.test('ignores reload before loaded', function(t) {
-        var source = new VectorTileSource({
+    t.test('fires "data" event', (t) => {
+        window.server.respondWith('/source.json', JSON.stringify(require('../../fixtures/source')));
+        const source = createSource({ url: "/source.json" });
+        source.on('data', t.end);
+        window.server.respond();
+    });
+
+    t.test('fires "dataloading" event', (t) => {
+        window.server.respondWith('/source.json', JSON.stringify(require('../../fixtures/source')));
+        const evented = new Evented();
+        evented.on('dataloading', t.end);
+        createSource({ url: "/source.json", eventedParent: evented });
+        window.server.respond();
+    });
+
+    t.test('serialize URL', (t) => {
+        const source = createSource({
             url: "http://localhost:2900/source.json"
         });
-
-        t.doesNotThrow(function() {
-            source.reload();
-        }, null, 'reload ignored gracefully');
-
-        source.on('load', function() {
-            t.end();
-        });
-    });
-
-    t.test('serialize', function(t) {
-        var source = new VectorTileSource({
-            url: "http://example.com"
-        });
         t.deepEqual(source.serialize(), {
             type: 'vector',
-            url: "http://example.com"
+            url: "http://localhost:2900/source.json"
         });
         t.end();
     });
 
-    t.test('serialize TileJSON', function(t) {
-        var source = new VectorTileSource({
+    t.test('serialize TileJSON', (t) => {
+        const source = createSource({
             minzoom: 1,
             maxzoom: 10,
             attribution: "Mapbox",
@@ -96,8 +106,58 @@ test('VectorTileSource', function(t) {
         t.end();
     });
 
-    t.test('after', function(t) {
-        server.close(t.end);
+    function testScheme(scheme, expectedURL) {
+        t.test(`scheme "${scheme}"`, (t) => {
+            const source = createSource({
+                minzoom: 1,
+                maxzoom: 10,
+                attribution: "Mapbox",
+                tiles: ["http://example.com/{z}/{x}/{y}.png"],
+                scheme: scheme
+            });
+
+            source.dispatcher.send = function(type, params) {
+                t.equal(type, 'loadTile');
+                t.equal(expectedURL, params.url);
+                t.end();
+            };
+
+            source.on('source.load', () => {
+                source.loadTile({coord: new TileCoord(10, 5, 5, 0)}, () => {});
+            });
+        });
+    }
+
+    testScheme('xyz', 'http://example.com/10/5/5.png');
+    testScheme('tms', 'http://example.com/10/5/1018.png');
+
+    t.test('reloads a loading tile properly', (t) => {
+        const source = createSource({
+            tiles: ["http://example.com/{z}/{x}/{y}.png"]
+        });
+        const events = [];
+        source.dispatcher.send = function(type, params, cb) {
+            events.push(type);
+            setTimeout(cb, 0);
+            return 1;
+        };
+
+        source.on('source.load', () => {
+            const tile = {
+                coord: new TileCoord(10, 5, 5, 0),
+                state: 'loading',
+                loadVectorData: function () {
+                    this.state = 'loaded';
+                    events.push('tileLoaded');
+                }
+            };
+            source.loadTile(tile, () => {});
+            t.equal(tile.state, 'loading');
+            source.loadTile(tile, () => {
+                t.same(events, ['loadTile', 'tileLoaded', 'reloadTile', 'tileLoaded']);
+                t.end();
+            });
+        });
     });
 
     t.end();

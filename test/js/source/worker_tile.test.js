@@ -1,19 +1,14 @@
 'use strict';
 
-var test = require('tap').test;
-var WorkerTile = require('../../../js/source/worker_tile');
-var Wrapper = require('../../../js/source/geojson_wrapper');
-var TileCoord = require('../../../js/source/tile_coord');
-var StyleLayer = require('../../../js/style/style_layer');
+const test = require('mapbox-gl-js-test').test;
+const WorkerTile = require('../../../js/source/worker_tile');
+const Wrapper = require('../../../js/source/geojson_wrapper');
+const TileCoord = require('../../../js/source/tile_coord');
+const StyleLayerIndex = require('../../../js/style/style_layer_index');
+const util = require('../../../js/util/util');
 
-test('basic', function(t) {
-    var features = [{
-        type: 1,
-        geometry: [0, 0],
-        tags: {}
-    }];
-
-    var tile = new WorkerTile({
+function createWorkerTile() {
+    return new WorkerTile({
         uid: '',
         zoom: 0,
         maxZoom: 20,
@@ -22,49 +17,85 @@ test('basic', function(t) {
         coord: new TileCoord(1, 1, 1),
         overscaling: 1
     });
+}
 
-    t.test('basic worker tile', function(t) {
-        var layerFamilies = {
-            test: [new StyleLayer({
-                id: 'test',
-                source: 'source',
-                type: 'circle',
-                layout: {},
-                compare: function () { return true; }
-            })]
-        };
+function createWrapper() {
+    return new Wrapper([{
+        type: 1,
+        geometry: [0, 0],
+        tags: {}
+    }]);
+}
 
-        tile.parse(new Wrapper(features), layerFamilies, {}, null, function(err, result) {
-            t.equal(err, null);
-            t.ok(result.buckets[0]);
-            t.end();
-        });
+test('WorkerTile#parse', (t) => {
+    const layerIndex = new StyleLayerIndex([{
+        id: 'test',
+        source: 'source',
+        type: 'circle'
+    }]);
+
+    const tile = createWorkerTile();
+    tile.parse(createWrapper(), layerIndex, {}, (err, result) => {
+        t.ifError(err);
+        t.ok(result.buckets[0]);
+        t.end();
     });
+});
 
-    t.test('hidden layers', function(t) {
-        var layerFamilies = {
-            'test': [new StyleLayer({
-                id: 'test',
-                source: 'source',
-                type: 'circle',
-                layout: {},
-                compare: function () { return true; }
-            })],
-            'test-hidden': [new StyleLayer({
-                id: 'test-hidden',
-                source: 'source',
-                type: 'fill',
-                layout: { visibility: 'none' },
-                compare: function () { return true; }
-            })]
-        };
+test('WorkerTile#parse skips hidden layers', (t) => {
+    const layerIndex = new StyleLayerIndex([{
+        id: 'test-hidden',
+        source: 'source',
+        type: 'fill',
+        layout: { visibility: 'none' }
+    }]);
 
-        tile.parse(new Wrapper(features), layerFamilies, {}, null, function(err, result) {
-            t.equal(err, null);
-            t.equal(Object.keys(result.buckets[0].elementGroups).length, 1, 'element groups exclude hidden layer');
-            t.end();
-        });
+    const tile = createWorkerTile();
+    tile.parse(createWrapper(), layerIndex, {}, (err, result) => {
+        t.ifError(err);
+        t.equal(result.buckets.length, 0);
+        t.end();
     });
+});
 
-    t.end();
+test('WorkerTile#parse skips layers without a corresponding source layer', (t) => {
+    const layerIndex = new StyleLayerIndex([{
+        id: 'test',
+        source: 'source',
+        'source-layer': 'nonesuch',
+        type: 'fill'
+    }]);
+
+    const tile = createWorkerTile();
+    tile.parse({layers: {}}, layerIndex, {}, (err, result) => {
+        t.ifError(err);
+        t.equal(result.buckets.length, 0);
+        t.end();
+    });
+});
+
+test('WorkerTile#parse warns once when encountering a v1 vector tile layer', (t) => {
+    const layerIndex = new StyleLayerIndex([{
+        id: 'test',
+        source: 'source',
+        'source-layer': 'test',
+        type: 'fill'
+    }]);
+
+    const data = {
+        layers: {
+            test: {
+                version: 1
+            }
+        }
+    };
+
+    t.stub(util, 'warnOnce');
+
+    const tile = createWorkerTile();
+    tile.parse(data, layerIndex, {}, (err) => {
+        t.ifError(err);
+        t.ok(util.warnOnce.calledWithMatch(/does not use vector tile spec v2/));
+        t.end();
+    });
 });
