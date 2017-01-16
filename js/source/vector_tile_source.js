@@ -101,7 +101,8 @@ class VectorTileSource extends Evented {
                         }
                         var tileDataInflated = Pako.inflate(tileDataTypedArray);
                         params.tileData = tileDataInflated;
-                        tile.workerID = this.dispatcher.send('load tile', params, this._tileLoaded.bind(this, tile));
+                        console.log("Tile Fetched");
+                        tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
                     }.bind(this), function(tx, e) {
                         console.log('Database Error: ' + e.message);
                     });
