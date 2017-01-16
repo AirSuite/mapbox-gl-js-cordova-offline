@@ -73,17 +73,31 @@ class VectorTileWorkerSource {
                 this.loaded[source][uid] = workerTile;
             }
         }else{
+          const source = params.source,
+              uid = params.uid;
+
+          if (!this.loading[source])
+              this.loading[source] = {};
+
+          const workerTile = this.loading[source][uid] = new WorkerTile(params);
             var tileData = params.tileData;
             delete params.tileData;
 
             var source = params.source,
                 uid = params.uid;
+            const vectorTile = new vt.VectorTile(new Protobuf(tileData));
+            vectorTile.rawData = tileData;
+            workerTile.vectorTile = vectorTile;
+            workerTile.parse(vectorTile, this.layerIndex, this.actor, (err, result, transferrables) => {
+                if (err) return callback(err);
 
-            var tile = new WorkerTile(params);
-            tile.data = new vt.VectorTile(new Protobuf(tileData));
-            tile.parse(tile.data, this.layers, this.actor, callback);
+                // Not transferring rawTileData because the worker needs to retain its copy.
+                callback(null,
+                    util.extend({rawTileData: vectorTile.rawData}, result),
+                    transferrables);
+            });
             this.loaded[source] = this.loaded[source] || {};
-            this.loaded[source][uid] = tile;
+            this.loaded[source][uid] = workerTile;
         }
     }
 
