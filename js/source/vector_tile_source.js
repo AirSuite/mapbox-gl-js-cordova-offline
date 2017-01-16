@@ -75,10 +75,11 @@ class VectorTileSource extends Evented {
             if (ONLINE){
                 tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
             }else{
+                console.log(params.url);
                 var url = params.url.split('/'),
-                z = url[0],
-                x = url[1],
-                y = url[2];
+                z = url[5],
+                x = url[6],
+                y = url[7];
                 y = (1 << z) - 1 - y;
 
                 if (!this.db) {
