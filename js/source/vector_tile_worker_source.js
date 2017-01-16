@@ -42,33 +42,48 @@ class VectorTileWorkerSource {
      * @param {boolean} params.showCollisionBoxes
      */
     loadTile(params, callback) {
-        const source = params.source,
-            uid = params.uid;
+        var ONLINE = false;
+        if (ONLINE){
+            const source = params.source,
+                uid = params.uid;
 
-        if (!this.loading[source])
-            this.loading[source] = {};
+            if (!this.loading[source])
+                this.loading[source] = {};
 
-        const workerTile = this.loading[source][uid] = new WorkerTile(params);
-        workerTile.abort = this.loadVectorData(params, done.bind(this));
+            const workerTile = this.loading[source][uid] = new WorkerTile(params);
+            workerTile.abort = this.loadVectorData(params, done.bind(this));
 
-        function done(err, vectorTile) {
-            delete this.loading[source][uid];
+            function done(err, vectorTile) {
+                delete this.loading[source][uid];
 
-            if (err) return callback(err);
-            if (!vectorTile) return callback(null, null);
-
-            workerTile.vectorTile = vectorTile;
-            workerTile.parse(vectorTile, this.layerIndex, this.actor, (err, result, transferrables) => {
                 if (err) return callback(err);
+                if (!vectorTile) return callback(null, null);
 
-                // Not transferring rawTileData because the worker needs to retain its copy.
-                callback(null,
-                    util.extend({rawTileData: vectorTile.rawData}, result),
-                    transferrables);
-            });
+                workerTile.vectorTile = vectorTile;
+                workerTile.parse(vectorTile, this.layerIndex, this.actor, (err, result, transferrables) => {
+                    if (err) return callback(err);
 
+                    // Not transferring rawTileData because the worker needs to retain its copy.
+                    callback(null,
+                        util.extend({rawTileData: vectorTile.rawData}, result),
+                        transferrables);
+                });
+
+                this.loaded[source] = this.loaded[source] || {};
+                this.loaded[source][uid] = workerTile;
+            }
+        }else{
+            var tileData = params.tileData;
+            delete params.tileData;
+
+            var source = params.source,
+                uid = params.uid;
+
+            var tile = new WorkerTile(params);
+            tile.data = new vt.VectorTile(new Protobuf(tileData));
+            tile.parse(tile.data, this.layers, this.actor, callback);
             this.loaded[source] = this.loaded[source] || {};
-            this.loaded[source][uid] = workerTile;
+            this.loaded[source][uid] = tile;
         }
     }
 
