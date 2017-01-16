@@ -71,14 +71,9 @@ class VectorTileSource extends Evented {
         };
 
         if (!tile.workerID) {
-            tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
-        } else if (tile.state === 'loading') {
-            // schedule tile reloading after it has been loaded
-            tile.reloadCallback = callback;
-        } else {
             var ONLINE = false;
             if (ONLINE){
-                this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
+                tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
             }else{
                 var url = params.url.split('/'),
                 z = url[0],
@@ -111,6 +106,11 @@ class VectorTileSource extends Evented {
                     });
                 }.bind(this));
             }
+        } else if (tile.state === 'loading') {
+            // schedule tile reloading after it has been loaded
+            tile.reloadCallback = callback;
+        } else {
+            this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
         }
 
         function done(err, data) {
