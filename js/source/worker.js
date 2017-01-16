@@ -42,23 +42,8 @@ class Worker {
     }
 
     loadTile(mapId, params, callback) {
-        var ONLINE = false;
-        if (ONLINE){
-            assert(params.type);
-            this.getWorkerSource(mapId, params.type).loadTile(params, callback);
-        }else{
-            var tileData = params.tileData;
-            delete params.tileData;
-
-            var source = params.source,
-                uid = params.uid;
-
-            var tile = new WorkerTile(params);
-            tile.data = new vt.VectorTile(new Protobuf(tileData));
-            tile.parse(tile.data, this.layers, this.actor, callback);
-            this.loaded[source] = this.loaded[source] || {};
-            this.loaded[source][uid] = tile;
-        }
+        assert(params.type);
+        this.getWorkerSource(mapId, params.type).loadTile(params, callback);
     }
 
     reloadTile(mapId, params, callback) {
