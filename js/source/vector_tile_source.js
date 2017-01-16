@@ -4,6 +4,7 @@ const Evented = require('../util/evented');
 const util = require('../util/util');
 const loadTileJSON = require('./load_tilejson');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
+const Pako = require('pako');
 
 class VectorTileSource extends Evented {
 
@@ -75,7 +76,41 @@ class VectorTileSource extends Evented {
             // schedule tile reloading after it has been loaded
             tile.reloadCallback = callback;
         } else {
-            this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
+            var ONLINE = false;
+            if (ONLINE){
+                this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
+            }else{
+                var url = params.url.split('/'),
+                z = url[0],
+                x = url[1],
+                y = url[2];
+                y = (1 << z) - 1 - y;
+
+                if (!this.db) {
+                    this.db = window.sqlitePlugin.openDatabase({
+                        name: params.source + '.mbtiles',
+                        location: 2,
+                        createFromLocation: 1
+                    });
+                }
+
+                this.db.transaction(function(tx) {
+                    tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                        var tileData = res.rows.item(0).tile_data,
+                            tileDataDecoded = window.atob(tileData),
+                            tileDataDecodedLength = tileDataDecoded.length,
+                            tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                        for (var i = 0; i < tileDataDecodedLength; ++i) {
+                            tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                        }
+                        var tileDataInflated = Pako.inflate(tileDataTypedArray);
+                        params.tileData = tileDataInflated;
+                        tile.workerID = this.dispatcher.send('load tile', params, this._tileLoaded.bind(this, tile));
+                    }.bind(this), function(tx, e) {
+                        console.log('Database Error: ' + e.message);
+                    });
+                }.bind(this));
+            }
         }
 
         function done(err, data) {
