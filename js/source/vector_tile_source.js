@@ -77,20 +77,22 @@ class VectorTileSource extends Evented {
             }else{
                 console.log(params.url);
                 var url = params.url.split('/'),
-                z = url[5],
-                x = url[6],
-                y = url[7];
+                z = url[0],
+                x = url[1],
+                y = url[2];
                 y = (1 << z) - 1 - y;
 
                 if (!this.db) {
                     this.db = window.sqlitePlugin.openDatabase({
                         name: params.source + '.mbtiles',
                         location: 2,
-                        createFromLocation: 1
+                        createFromLocation: 1,
+                        androidDatabaseImplementation: 2
                     });
                 }
 
                 this.db.transaction(function(tx) {
+                    console.log("Creating New Transaction");
                     tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
                         var tileData = res.rows.item(0).tile_data,
                             tileDataDecoded = window.atob(tileData),
