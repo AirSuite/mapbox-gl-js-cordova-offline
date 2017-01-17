@@ -67,12 +67,11 @@ class VectorTileSource extends Evented {
             overscaling: overscaling,
             angle: this.map.transform.angle,
             pitch: this.map.transform.pitch,
-            showCollisionBoxes: this.map.showCollisionBoxes
+            showCollisionBoxes: this.map.showCollisionBoxes,
+            mbtiles: this._options.mbtiles
         };
-
         if (!tile.workerID) {
-            var ONLINE = false;
-            if (ONLINE){
+            if (!params.mbtiles){
                 tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
             }else{
                 console.log(params.url);
@@ -81,17 +80,17 @@ class VectorTileSource extends Evented {
                 x = url[1],
                 y = url[2];
                 y = (1 << z) - 1 - y;
-
-                if (!this.db) {
-                    this.db = window.sqlitePlugin.openDatabase({
-                        name: params.source + '.mbtiles',
+                var database = params.source;
+                if (window.openDatabases[database] === undefined) {
+                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                        name: database + '.mbtiles',
                         location: 2,
                         createFromLocation: 1,
                         androidDatabaseImplementation: 2
                     });
                 }
 
-                this.db.transaction(function(tx) {
+                window.openDatabases[database].transaction(function(tx) {
                     console.log("Creating New Transaction");
                     tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
                         var tileData = res.rows.item(0).tile_data,

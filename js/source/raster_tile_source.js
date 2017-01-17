@@ -52,18 +52,17 @@ class RasterTileSource extends Evented {
 
     loadTile(tile, callback) {
         const url = normalizeURL(tile.coord.url(this.tiles, null, this.scheme), this.url, this.tileSize);
-        var ONLINE = false;
-        if (ONLINE){
+        if (!this.options.mbtiles){
           tile.request = ajax.getImage(url, done.bind(this));
         }else{
           var Rurl = url.split('/'),
-          Rz = Rurl[0],
-          Rx = Rurl[1],
-          Ry = Rurl[2];
-          Ry = (1 << Rz) - 1 - Ry;
+          z = Rurl[0],
+          x = Rurl[1],
+          y = Rurl[2];
+          y = (1 << z) - 1 - y;
           var database = this.id;
-          if (!this.db) {
-              this.db = window.sqlitePlugin.openDatabase({
+          if (window.openDatabases[database] === undefined) {
+              window.openDatabases[database] = window.sqlitePlugin.openDatabase({
                   name: database + '.mbtiles',
                   location: 2,
                   createFromLocation: 1,
@@ -71,9 +70,9 @@ class RasterTileSource extends Evented {
               });
           }
 
-          this.db.transaction(function(tx) {
-              console.log("zoom:"+Rz+" column:"+Rx+" row:"+Ry)
-              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [Rz, Rx, Ry], function(tx, res) {
+          window.openDatabases[database].transaction(function(tx) {
+              //console.log("zoom:"+Rz+" column:"+Rx+" row:"+Ry)
+              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
                   var tileData = res.rows.item(0).tile_data;
                   tile.request = ajax.getmbtileImage(tileData, done.bind(this));

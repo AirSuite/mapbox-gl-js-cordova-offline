@@ -42,51 +42,24 @@ class VectorTileWorkerSource {
      * @param {boolean} params.showCollisionBoxes
      */
     loadTile(params, callback) {
-        var ONLINE = false;
-        if (ONLINE){
-            const source = params.source,
-                uid = params.uid;
+        const source = params.source,
+            uid = params.uid;
 
-            if (!this.loading[source])
-                this.loading[source] = {};
+        if (!this.loading[source])
+            this.loading[source] = {};
+        const workerTile = this.loading[source][uid] = new WorkerTile(params);
 
-            const workerTile = this.loading[source][uid] = new WorkerTile(params);
+        if (!params.mbtiles){
             workerTile.abort = this.loadVectorData(params, done.bind(this));
-
-            function done(err, vectorTile) {
-                delete this.loading[source][uid];
-
-                if (err) return callback(err);
-                if (!vectorTile) return callback(null, null);
-
-                workerTile.vectorTile = vectorTile;
-                workerTile.parse(vectorTile, this.layerIndex, this.actor, (err, result, transferrables) => {
-                    if (err) return callback(err);
-
-                    // Not transferring rawTileData because the worker needs to retain its copy.
-                    callback(null,
-                        util.extend({rawTileData: vectorTile.rawData}, result),
-                        transferrables);
-                });
-
-                this.loaded[source] = this.loaded[source] || {};
-                this.loaded[source][uid] = workerTile;
-            }
         }else{
-          const source = params.source,
-              uid = params.uid;
+            workerTile.abort = this.loadmbtileVectorData(params, done.bind(this));
+        }
+        function done(err, vectorTile) {
+            delete this.loading[source][uid];
 
-          if (!this.loading[source])
-              this.loading[source] = {};
+            if (err) return callback(err);
+            if (!vectorTile) return callback(null, null);
 
-          const workerTile = this.loading[source][uid] = new WorkerTile(params);
-            var tileData = params.tileData;
-            delete params.tileData;
-
-            var source = params.source,
-                uid = params.uid;
-            const vectorTile = new vt.VectorTile(new Protobuf(tileData));
-            vectorTile.rawData = tileData;
             workerTile.vectorTile = vectorTile;
             workerTile.parse(vectorTile, this.layerIndex, this.actor, (err, result, transferrables) => {
                 if (err) return callback(err);
@@ -96,6 +69,7 @@ class VectorTileWorkerSource {
                     util.extend({rawTileData: vectorTile.rawData}, result),
                     transferrables);
             });
+
             this.loaded[source] = this.loaded[source] || {};
             this.loaded[source][uid] = workerTile;
         }
@@ -198,6 +172,13 @@ class VectorTileWorkerSource {
             vectorTile.rawData = arrayBuffer;
             callback(err, vectorTile);
         }
+    }
+
+    loadmbtileVectorData(params, callback) {
+        const arrayBuffer = params.tileData;
+        const vectorTile = new vt.VectorTile(new Protobuf(arrayBuffer));
+        vectorTile.rawData = arrayBuffer;
+        callback(null, vectorTile);
     }
 
     redoPlacement(params, callback) {
