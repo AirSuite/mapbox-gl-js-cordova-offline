@@ -71,7 +71,6 @@ class RasterTileSource extends Evented {
           }
 
           window.openDatabases[database].transaction(function(tx) {
-              //console.log("zoom:"+Rz+" column:"+Rx+" row:"+Ry)
               tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
                   var tileData = res.rows.item(0).tile_data;
