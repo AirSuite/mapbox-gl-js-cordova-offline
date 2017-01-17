@@ -74,7 +74,6 @@ class VectorTileSource extends Evented {
             if (!params.mbtiles){
                 tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
             }else{
-                console.log(params.url);
                 var url = params.url.split('/'),
                 z = url[0],
                 x = url[1],
@@ -91,7 +90,6 @@ class VectorTileSource extends Evented {
                 }
 
                 window.openDatabases[database].transaction(function(tx) {
-                    console.log("Creating New Transaction");
                     tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
                         var tileData = res.rows.item(0).tile_data,
                             tileDataDecoded = window.atob(tileData),
@@ -102,7 +100,6 @@ class VectorTileSource extends Evented {
                         }
                         var tileDataInflated = Pako.inflate(tileDataTypedArray);
                         params.tileData = tileDataInflated;
-                        console.log("Tile Fetched");
                         tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
                     }.bind(this), function(tx, e) {
                         console.log('Database Error: ' + e.message);
