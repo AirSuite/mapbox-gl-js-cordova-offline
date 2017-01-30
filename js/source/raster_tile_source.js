@@ -14,6 +14,7 @@ class RasterTileSource extends Evented {
         this.dispatcher = dispatcher;
         this.setEventedParent(eventedParent);
 
+        this.type = 'raster';
         this.minzoom = 0;
         this.maxzoom = 22;
         this.roundZoom = true;
@@ -93,6 +94,10 @@ class RasterTileSource extends Evented {
                 this.state = 'errored';
                 return callback(err);
             }
+
+            tile.setExpiryData(img);
+            delete img.cacheControl;
+            delete img.expires;
 
             const gl = this.map.painter.gl;
             tile.texture = this.map.painter.getTileTexture(img.width);

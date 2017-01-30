@@ -23,6 +23,7 @@ const MapboxGLFunction = require('mapbox-gl-function');
 const getWorkerPool = require('../global_worker_pool');
 const deref = require('mapbox-gl-style-spec/lib/deref');
 const diff = require('mapbox-gl-style-spec/lib/diff');
+const rtlTextPlugin = require('../source/rtl_text_plugin');
 
 const supportedDiffOperations = util.pick(diff.operations, [
     'addLayer',
@@ -75,6 +76,14 @@ class Style extends Evented {
 
         this.setEventedParent(map);
         this.fire('dataloading', {dataType: 'style'});
+
+        const self = this;
+        rtlTextPlugin.registerForPluginAvailability((pluginBlobURL) => {
+            self.dispatcher.broadcast('loadRTLTextPlugin', pluginBlobURL, rtlTextPlugin.errorCallback);
+            for (const id in self.sourceCaches) {
+                self.sourceCaches[id].reload(); // Should be a no-op if the plugin loads before any tiles load
+            }
+        });
 
         const stylesheetLoaded = (err, stylesheet) => {
             if (err) {
@@ -368,7 +377,7 @@ class Style extends Evented {
             throw new Error(`The type property must be defined, but the only the following properties were given: ${Object.keys(source)}.`);
         }
 
-        const builtIns = ['vector', 'raster', 'geojson', 'video', 'image'];
+        const builtIns = ['vector', 'raster', 'geojson', 'video', 'image', 'canvas'];
         const shouldValidate = builtIns.indexOf(source.type) >= 0;
         if (shouldValidate && this._validate(validateStyle.source, `sources.${id}`, source, null, options)) return;
 
@@ -446,13 +455,15 @@ class Style extends Evented {
 
         if (this._removedLayers[id] && layer.source) {
             // If, in the current batch, we have already removed this layer
-            // and we are now re-adding it, then we need to clear (rather
-            // than just reload) the underyling source's tiles.
-            // Otherwise, tiles marked 'reloading' will have buffers that are
-            // set up for the _previous_ version of this layer, confusing
+            // and we are now re-adding it with a different `type`, then we
+            // need to clear (rather than just reload) the underyling source's
+            // tiles.  Otherwise, tiles marked 'reloading' will have buckets /
+            // buffers that are set up for the _previous_ version of this
+            // layer, causing, e.g.:
             // https://github.com/mapbox/mapbox-gl-js/issues/3633
+            const removed = this._removedLayers[id];
             delete this._removedLayers[id];
-            this._updatedSources[layer.source] = 'clear';
+            this._updatedSources[layer.source] = removed.type !== layer.type ? 'clear' : 'reload';
         }
         this._updateLayer(layer);
 
@@ -527,7 +538,7 @@ class Style extends Evented {
         }
 
         this._changed = true;
-        this._removedLayers[id] = true;
+        this._removedLayers[id] = layer;
         delete this._layers[id];
         delete this._updatedLayers[id];
         delete this._updatedPaintProps[id];
