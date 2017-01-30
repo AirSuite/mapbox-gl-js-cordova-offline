@@ -48,6 +48,8 @@ class SourceCache extends Evented {
 
         this._tiles = {};
         this._cache = new Cache(0, this.unloadTile.bind(this));
+        this._timers = {};
+        this._cacheTimers = {};
 
         this._isIdRenderable = this._isIdRenderable.bind(this);
     }
@@ -133,21 +135,25 @@ class SourceCache extends Evented {
     reload() {
         this._cache.reset();
         for (const i in this._tiles) {
-            const tile = this._tiles[i];
-
-            // The difference between "loading" tiles and "reloading" tiles is
-            // that "reloading" tiles are "renderable". Therefore, a "loading"
-            // tile cannot become a "reloading" tile without first becoming
-            // a "loaded" tile.
-            if (tile.state !== 'loading') {
-                tile.state = 'reloading';
-            }
-
-            this.loadTile(this._tiles[i], this._tileLoaded.bind(this, this._tiles[i]));
+            this.reloadTile(i, 'reloading');
         }
     }
 
-    _tileLoaded(tile, err) {
+    reloadTile(id, state) {
+        const tile = this._tiles[id];
+
+        // The difference between "loading" tiles and "reloading" or "expired"
+        // tiles is that "reloading"/"expired" tiles are "renderable".
+        // Therefore, a "loading" tile cannot become a "reloading" tile without
+        // first becoming a "loaded" tile.
+        if (tile.state !== 'loading') {
+            tile.state = state;
+        }
+
+        this.loadTile(tile, this._tileLoaded.bind(this, tile, id));
+    }
+
+    _tileLoaded(tile, id, err) {
         if (err) {
             tile.state = 'errored';
             this._source.fire('error', {tile: tile, error: err});
@@ -156,9 +162,10 @@ class SourceCache extends Evented {
 
         tile.sourceCache = this;
         tile.timeAdded = new Date().getTime();
+        this._setTileReloadTimer(id, tile);
         this._source.fire('data', {tile: tile, coord: tile.coord, dataType: 'tile'});
 
-        // HACK this is nescessary to fix https://github.com/mapbox/mapbox-gl-js/issues/2986
+        // HACK this is necessary to fix https://github.com/mapbox/mapbox-gl-js/issues/2986
         if (this.map) this.map.painter.tileExtentVAO.vao = null;
     }
 
@@ -341,19 +348,26 @@ class SourceCache extends Evented {
 
         const parentsForFading = {};
 
-        const ids = Object.keys(retain);
-        for (let k = 0; k < ids.length; k++) {
-            const id = ids[k];
-            coord = TileCoord.fromID(id);
-            tile = this._tiles[id];
-            if (tile && tile.fadeEndTime >= Date.now()) {
-                // This tile is still fading in. Find tiles to cross-fade with it.
-                if (this.findLoadedChildren(coord, maxCoveringZoom, retain)) {
-                    retain[id] = true;
-                }
-                parentTile = this.findLoadedParent(coord, minCoveringZoom, parentsForFading);
-                if (parentTile) {
-                    this.addTile(parentTile.coord);
+        if (isRasterType(this._source.type)) {
+            const ids = Object.keys(retain);
+            for (let k = 0; k < ids.length; k++) {
+                const id = ids[k];
+                coord = TileCoord.fromID(id);
+                tile = this._tiles[id];
+                if (!tile) continue;
+
+                // If the drawRasterTile has never seen this tile, then
+                // tile.fadeEndTime may be unset.  In that case, or if
+                // fadeEndTime is in the future, then this tile is still
+                // fading in. Find tiles to cross-fade with it.
+                if (typeof tile.fadeEndTime === 'undefined' || tile.fadeEndTime >= Date.now()) {
+                    if (this.findLoadedChildren(coord, maxCoveringZoom, retain)) {
+                        retain[id] = true;
+                    }
+                    parentTile = this.findLoadedParent(coord, minCoveringZoom, parentsForFading);
+                    if (parentTile) {
+                        this.addTile(parentTile.coord);
+                    }
                 }
             }
         }
@@ -396,6 +410,11 @@ class SourceCache extends Evented {
             tile = this._cache.get(wrapped.id);
             if (tile) {
                 tile.redoPlacement(this._source);
+                if (this._cacheTimers[wrapped.id]) {
+                    clearTimeout(this._cacheTimers[wrapped.id]);
+                    this._cacheTimers[wrapped.id] = undefined;
+                    this._setTileReloadTimer(wrapped.id, tile);
+                }
             }
         }
 
@@ -403,7 +422,7 @@ class SourceCache extends Evented {
             const zoom = coord.z;
             const overscaling = zoom > this._source.maxzoom ? Math.pow(2, zoom - this._source.maxzoom) : 1;
             tile = new Tile(wrapped, this._source.tileSize * overscaling, this._source.maxzoom);
-            this.loadTile(tile, this._tileLoaded.bind(this, tile));
+            this.loadTile(tile, this._tileLoaded.bind(this, tile, coord.id));
         }
 
         tile.uses++;
@@ -411,6 +430,26 @@ class SourceCache extends Evented {
         this._source.fire('dataloading', {tile: tile, coord: tile.coord, dataType: 'tile'});
 
         return tile;
+    }
+
+    _setTileReloadTimer(id, tile) {
+        const tileExpires = tile.getExpiry();
+        if (tileExpires) {
+            this._timers[id] = setTimeout(() => {
+                this.reloadTile(id, 'expired');
+                this._timers[id] = undefined;
+            }, tileExpires - new Date().getTime());
+        }
+    }
+
+    _setCacheInvalidationTimer(id, tile) {
+        const tileExpires = tile.getExpiry();
+        if (tileExpires) {
+            this._cacheTimers[id] = setTimeout(() => {
+                this._cache.remove(id);
+                this._cacheTimers[id] = undefined;
+            }, tileExpires - new Date().getTime());
+        }
     }
 
     /**
@@ -426,13 +465,19 @@ class SourceCache extends Evented {
 
         tile.uses--;
         delete this._tiles[id];
+        if (this._timers[id]) {
+            clearTimeout(this._timers[id]);
+            this._timers[id] = undefined;
+        }
         this._source.fire('data', { tile: tile, coord: tile.coord, dataType: 'tile' });
 
         if (tile.uses > 0)
             return;
 
         if (tile.hasData()) {
-            this._cache.add(tile.coord.wrapped().id, tile);
+            const wrappedId = tile.coord.wrapped().id;
+            this._cache.add(wrappedId, tile);
+            this._setCacheInvalidationTimer(wrappedId, tile);
         } else {
             tile.aborted = true;
             this.abortTile(tile);
@@ -552,6 +597,10 @@ function coordinateToTilePoint(tileCoord, sourceMaxZoom, coord) {
 
 function compareKeyZoom(a, b) {
     return (a % 32) - (b % 32);
+}
+
+function isRasterType(type) {
+    return type === 'raster' || type === 'image' || type === 'video';
 }
 
 module.exports = SourceCache;

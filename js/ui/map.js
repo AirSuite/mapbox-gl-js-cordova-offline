@@ -19,6 +19,7 @@ const LngLat = require('../geo/lng_lat');
 const LngLatBounds = require('../geo/lng_lat_bounds');
 const Point = require('point-geometry');
 const AttributionControl = require('./control/attribution_control');
+const LogoControl = require('./control/logo_control');
 const isSupported = require('mapbox-gl-supported');
 
 const defaultMinZoom = 0;
@@ -99,17 +100,18 @@ const defaultOptions = {
  *   in an HTML element's `class` attribute. To learn more about Mapbox style classes, read about
  *   [Layers](https://www.mapbox.com/mapbox-gl-style-spec/#layers) in the style specification.
  * @param {boolean} [options.attributionControl=true] If `true`, an [AttributionControl](#AttributionControl) will be added to the map.
+ * @param {boolean} [options.logoPosition='bottom-left'] Position of the Mapbox wordmark on the map. Valid options are ['top-left','top-right', 'bottom-left', 'bottom-right'].
  * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`, map creation will fail if the performance of Mapbox
  *   GL JS would be dramatically worse than expected (i.e. a software renderer would be used).
  * @param {boolean} [options.preserveDrawingBuffer=false] If `true`, the map's canvas can be exported to a PNG using `map.getCanvas().toDataURL()`. This is `false` by default as a performance optimization.
  * @param {LngLatBoundsLike} [options.maxBounds] If set, the map will be constrained to the given bounds.
- * @param {boolean} [options.scrollZoom=true] If `true`, the "scroll to zoom" interaction is enabled (see [`ScrollZoomHandler`](#ScrollZoomHandler)).
+ * @param {boolean|Object} [options.scrollZoom=true] If `true`, the "scroll to zoom" interaction is enabled. An `Object` value is passed as options to [`ScrollZoomHandler#enable`](#ScrollZoomHandler#enable).
  * @param {boolean} [options.boxZoom=true] If `true`, the "box zoom" interaction is enabled (see [`BoxZoomHandler`](#BoxZoomHandler)).
  * @param {boolean} [options.dragRotate=true] If `true`, the "drag to rotate" interaction is enabled (see [`DragRotateHandler`](#DragRotateHandler)).
  * @param {boolean} [options.dragPan=true] If `true`, the "drag to pan" interaction is enabled (see [`DragPanHandler`](#DragPanHandler)).
  * @param {boolean} [options.keyboard=true] If `true`, keyboard shortcuts are enabled (see [`KeyboardHandler`](#KeyboardHandler)).
  * @param {boolean} [options.doubleClickZoom=true] If `true`, the "double click to zoom" interaction is enabled (see [`DoubleClickZoomHandler`](#DoubleClickZoomHandler)).
- * @param {boolean} [options.touchZoomRotate=true] If `true`, the "pinch to rotate and zoom" interaction is enabled (see [`TouchZoomRotateHandler`](#TouchZoomRotateHandler)).
+ * @param {boolean|Object} [options.touchZoomRotate=true] If `true`, the "pinch to rotate and zoom" interaction is enabled. An `Object` value is passed as options to [`TouchZoomRotateHandler#enable`](#TouchZoomRotateHandler#enable).
  * @param {boolean} [options.trackResize=true]  If `true`, the map will automatically resize when the browser window resizes.
  * @param {LngLatLike} [options.center=[0, 0]] The inital geographical centerpoint of the map. If `center` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `[0, 0]`.
  * @param {number} [options.zoom=0] The initial zoom level of the map. If `zoom` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `0`.
@@ -200,6 +202,7 @@ class Map extends Camera {
         if (options.style) this.setStyle(options.style);
 
         if (options.attributionControl) this.addControl(new AttributionControl());
+        this.addControl(new LogoControl(), options.logoPosition);
 
         this.on('style.load', function() {
             if (this.transform.unmodified) {
@@ -256,12 +259,15 @@ class Map extends Camera {
      * in an HTML element's `class` attribute. To learn more about Mapbox style classes, read about
      * [Layers](https://www.mapbox.com/mapbox-gl-style-spec/#layers) in the style specification.
      *
+     * **Note:** Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.
+     *
      * @param {string} klass The style class to add.
      * @param {StyleOptions} [options]
      * @fires change
      * @returns {Map} `this`
      */
     addClass(klass, options) {
+        util.warnOnce('Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.');
         if (this._classes.indexOf(klass) >= 0 || klass === '') return this;
         this._classes.push(klass);
         this._classOptions = options;
@@ -273,12 +279,15 @@ class Map extends Camera {
     /**
      * Removes a Mapbox style class from the map.
      *
+     * **Note:** Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.
+     *
      * @param {string} klass The style class to remove.
      * @param {StyleOptions} [options]
      * @fires change
      * @returns {Map} `this`
      */
     removeClass(klass, options) {
+        util.warnOnce('Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.');
         const i = this._classes.indexOf(klass);
         if (i < 0 || klass === '') return this;
         this._classes.splice(i, 1);
@@ -291,12 +300,15 @@ class Map extends Camera {
     /**
      * Replaces the map's existing Mapbox style classes with a new array of classes.
      *
+     * **Note:** Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.
+     *
      * @param {Array<string>} klasses The style classes to set.
      * @param {StyleOptions} [options]
      * @fires change
      * @returns {Map} `this`
      */
     setClasses(klasses, options) {
+        util.warnOnce('Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.');
         const uniqueClasses = {};
         for (let i = 0; i < klasses.length; i++) {
             if (klasses[i] !== '') uniqueClasses[klasses[i]] = true;
@@ -312,19 +324,25 @@ class Map extends Camera {
      * Returns a Boolean indicating whether the map has the
      * specified Mapbox style class.
      *
+     * **Note:** Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.
+     *
      * @param {string} klass The style class to test.
      * @returns {boolean} `true` if the map has the specified style class.
      */
     hasClass(klass) {
+        util.warnOnce('Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.');
         return this._classes.indexOf(klass) >= 0;
     }
 
     /**
      * Returns the map's Mapbox style classes.
      *
+     * **Note:** Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.
+     *
      * @returns {Array<string>} The map's style classes.
      */
     getClasses() {
+        util.warnOnce('Style classes are deprecated and will be removed in an upcoming release of Mapbox GL JS.');
         return this._classes;
     }
 
@@ -345,6 +363,15 @@ class Map extends Camera {
         this._resizeCanvas(width, height);
         this.transform.resize(width, height);
         this.painter.resize(width, height);
+
+        const gl = this.painter.gl;
+        const maxSize = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) / 2;
+        if (this._canvas.width > maxSize || this._canvas.height > maxSize) {
+            util.warnOnce(
+                `Map is larger than maximum size supported by this system ` +
+                `(${maxSize}px by ${maxSize}px).`
+            );
+        }
 
         return this
             .fire('movestart')
@@ -734,6 +761,23 @@ class Map extends Camera {
     }
 
     /**
+     * Returns a Boolean indicating whether the source is loaded.
+     *
+     * @param {string} id The ID of the source to be checked.
+     * @returns {boolean} A Boolean indicating whether the source is loaded.
+     */
+    isSourceLoaded(id) {
+        const source = this.style && this.style.sourceCaches[id];
+        if (source === undefined) {
+            this.fire('error', {
+                error: new Error(`There is no source with ID '${id}'`)
+            });
+            return;
+        }
+        return source.loaded();
+    }
+
+    /**
      * Adds a [custom source type](#Custom Sources), making it available for use with
      * {@link Map#addSource}.
      * @private
@@ -741,7 +785,7 @@ class Map extends Camera {
      * @param {Function} SourceType A {@link Source} constructor.
      * @param {Function} callback Called when the source type is ready or with an error argument if there is an error.
      */
-    addSourceType (name, SourceType, callback) {
+    addSourceType(name, SourceType, callback) {
         return this.style.addSourceType(name, SourceType, callback);
     }
 
@@ -842,7 +886,7 @@ class Map extends Camera {
      * @example
      * map.setFilter('my-layer', ['==', 'name', 'USA']);
      * @see [Filter features within map view](https://www.mapbox.com/mapbox-gl-js/example/filter-features-within-map-view/)
-     * @see [Highlight features under the mouse pointer](calendar.google.com/calendar/render#main_7)
+     * @see [Highlight features containing similar data](https://www.mapbox.com/mapbox-gl-js/example/query-similar-features/)
      * @see [Create a timeline animation](https://www.mapbox.com/mapbox-gl-js/example/timeline-animation/)
      */
     setFilter(layer, filter) {
@@ -1058,13 +1102,6 @@ class Map extends Camera {
         if (!gl) {
             this.fire('error', { error: new Error('Failed to initialize WebGL') });
             return;
-        }
-
-        const MAX_RENDERBUFFER_SIZE = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) / 2;
-        if (this._canvas.width > MAX_RENDERBUFFER_SIZE ||
-            this._canvas.height > MAX_RENDERBUFFER_SIZE) {
-            throw new Error(`Map canvas (${this._canvas.width}x${this._canvas.height}) ` +
-            `is larger than half of gl.MAX_RENDERBUFFER_SIZE (${MAX_RENDERBUFFER_SIZE})`);
         }
 
         this.painter = new Painter(gl, this.transform);

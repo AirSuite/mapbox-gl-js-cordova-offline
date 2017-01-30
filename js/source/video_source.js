@@ -36,9 +36,11 @@ const ImageSource = require('./image_source');
  * @see [Add a video](https://www.mapbox.com/mapbox-gl-js/example/video-on-a-map/)
  */
 class VideoSource extends ImageSource {
+
     constructor(id, options, dispatcher, eventedParent) {
         super(id, options, dispatcher, eventedParent);
         this.roundZoom = true;
+        this.type = 'video';
         this.options = options;
     }
 
@@ -102,7 +104,7 @@ class VideoSource extends ImageSource {
      *   They do not have to represent a rectangle.
      * @returns {VideoSource} this
      */
-    // setCoordiates inherited from ImageSource
+    // setCoordinates inherited from ImageSource
 
     prepare() {
         if (!this.tile || this.video.readyState < 2) return; // not enough data for current position
