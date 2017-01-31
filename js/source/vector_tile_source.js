@@ -66,7 +66,8 @@ class VectorTileSource extends Evented {
             overscaling: overscaling,
             angle: this.map.transform.angle,
             pitch: this.map.transform.pitch,
-            showCollisionBoxes: this.map.showCollisionBoxes
+            showCollisionBoxes: this.map.showCollisionBoxes,
+            mbtiles: this._options.mbtiles
         };
 
         if (!tile.workerID || tile.state === 'expired') {
