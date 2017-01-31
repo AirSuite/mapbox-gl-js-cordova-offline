@@ -4,6 +4,7 @@ const Evented = require('../util/evented');
 const util = require('../util/util');
 const loadTileJSON = require('./load_tilejson');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
+const Pako = require('pako');
 
 class VectorTileSource extends Evented {
 
