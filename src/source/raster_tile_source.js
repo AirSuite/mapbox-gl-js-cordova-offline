@@ -53,8 +53,34 @@ class RasterTileSource extends Evented {
 
     loadTile(tile, callback) {
         const url = normalizeURL(tile.coord.url(this.tiles, null, this.scheme), this.url, this.tileSize);
+        if (!this.options.mbtiles){
+          tile.request = ajax.getImage(url, done.bind(this));
+        }else{
+          var Rurl = url.split('/'),
+          z = Rurl[0],
+          x = Rurl[1],
+          y = Rurl[2];
+          y = (1 << z) - 1 - y;
+          var database = this.id;
+          if (window.openDatabases[database] === undefined) {
+              window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                  name: database + '.mbtiles',
+                  location: 2,
+                  createFromLocation: 1,
+                  androidDatabaseImplementation: 2
+              });
+          }
 
-        tile.request = ajax.getImage(url, done.bind(this));
+          window.openDatabases[database].transaction(function(tx) {
+              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+
+                  var tileData = res.rows.item(0).tile_data;
+                  tile.request = ajax.getmbtileImage(tileData, done.bind(this));
+              }.bind(this), function(tx, e) {
+                  console.log('Database Error: ' + e.message);
+              });
+          }.bind(this));
+        }
 
         function done(err, img) {
             delete tile.request;

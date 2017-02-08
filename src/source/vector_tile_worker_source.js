@@ -47,10 +47,13 @@ class VectorTileWorkerSource {
 
         if (!this.loading[source])
             this.loading[source] = {};
-
         const workerTile = this.loading[source][uid] = new WorkerTile(params);
-        workerTile.abort = this.loadVectorData(params, done.bind(this));
 
+        if (!params.mbtiles){
+            workerTile.abort = this.loadVectorData(params, done.bind(this));
+        }else{
+            workerTile.abort = this.loadmbtileVectorData(params, done.bind(this));
+        }
         function done(err, vectorTile) {
             delete this.loading[source][uid];
 
@@ -175,6 +178,13 @@ class VectorTileWorkerSource {
             vectorTile.expires = response.expires;
             callback(err, vectorTile);
         }
+    }
+
+    loadmbtileVectorData(params, callback) {
+        const arrayBuffer = params.tileData;
+        const vectorTile = new vt.VectorTile(new Protobuf(arrayBuffer));
+        vectorTile.rawData = arrayBuffer;
+        callback(null, vectorTile);
     }
 
     redoPlacement(params, callback) {

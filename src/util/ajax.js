@@ -77,6 +77,18 @@ exports.getImage = function(url, callback) {
     });
 };
 
+exports.getmbtileImage = function(imgData, callback) {
+        const img = new window.Image();
+        const URL = window.URL || window.webkitURL;
+        img.onload = () => {
+            callback(null, img);
+            URL.revokeObjectURL(img.src);
+        };
+        //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
+        if (imgData == undefined) img.src = transparentPngUrl;
+        else img.src = 'data:image/png;base64,'+imgData;
+};
+
 exports.getVideo = function(urls, callback) {
     const video = window.document.createElement('video');
     video.onloadstart = function() {
