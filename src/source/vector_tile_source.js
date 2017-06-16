@@ -4,11 +4,8 @@ const Evented = require('../util/evented');
 const util = require('../util/util');
 const loadTileJSON = require('./load_tilejson');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
-<<<<<<< HEAD:js/source/vector_tile_source.js
 const Pako = require('pako');
-=======
 const TileBounds = require('./tile_bounds');
->>>>>>> 24938a6e6767c880c709ee6ffb2d3ffbaad838cf:src/source/vector_tile_source.js
 
 class VectorTileSource extends Evented {
 
@@ -88,14 +85,10 @@ class VectorTileSource extends Evented {
             overscaling: overscaling,
             angle: this.map.transform.angle,
             pitch: this.map.transform.pitch,
-<<<<<<< HEAD:js/source/vector_tile_source.js
-            showCollisionBoxes: this.map.showCollisionBoxes,
-            mbtiles: this._options.mbtiles
-=======
             cameraToCenterDistance: this.map.transform.cameraToCenterDistance,
             cameraToTileDistance: this.map.transform.cameraToTileDistance(tile),
-            showCollisionBoxes: this.map.showCollisionBoxes
->>>>>>> 24938a6e6767c880c709ee6ffb2d3ffbaad838cf:src/source/vector_tile_source.js
+            showCollisionBoxes: this.map.showCollisionBoxes,
+            mbtiles: this._options.mbtiles
         };
 
         if (!tile.workerID || tile.state === 'expired') {
