@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const queue = require('d3-queue').queue;
 const colors = require('colors/safe');
-const handlebars = require('handlebars');
+const template = require('lodash').template;
 
 module.exports = function (directory, implementation, options, run) {
     const q = queue(1);
@@ -39,9 +39,17 @@ module.exports = function (directory, implementation, options, run) {
             if (!shouldRunTest(group, test))
                 return;
 
-            if (!fs.lstatSync(path.join(directory, group, test)).isDirectory() ||
-                !fs.lstatSync(path.join(directory, group, test, 'style.json')).isFile())
+            if (!fs.lstatSync(path.join(directory, group, test)).isDirectory())
+                // Skip files in this folder.
                 return;
+
+            try {
+                if (!fs.lstatSync(path.join(directory, group, test, 'style.json')).isFile())
+                    return;
+            } catch (err) {
+                console.log(colors.blue(`* omitting ${group} ${test} due to missing style`));
+                return;
+            }
 
             const style = require(path.join(directory, group, test, 'style.json'));
 
@@ -157,9 +165,9 @@ module.exports = function (directory, implementation, options, run) {
                 failedCount, (100 * failedCount / totalCount).toFixed(1));
         }
 
-        const template = handlebars.compile(fs.readFileSync(path.join(directory, 'results.html.tmpl'), 'utf8'));
+        const resultsTemplate = template(fs.readFileSync(path.join(directory, 'results.html.tmpl'), 'utf8'));
         const p = path.join(directory, 'index.html');
-        fs.writeFileSync(p, template({results: results}));
+        fs.writeFileSync(p, resultsTemplate({results: results}));
         console.log(`Results at: ${p}`);
 
         process.exit(failedCount === 0 ? 0 : 1);
