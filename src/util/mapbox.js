@@ -101,7 +101,14 @@ const urlRe = /^(\w+):\/\/([^/?]*)(\/[^?]+)?\??(.+)?/;
 function parseUrl(url: string): UrlObject {
     const parts = url.match(urlRe);
     if (!parts) {
-        throw new Error('Unable to parse URL object');
+        //throw new Error('Unable to parse URL object');
+        //Allow relative urls for offline mbtile styles etc.
+        return {
+            protocol: "none",
+            authority: "",
+            path: url,
+            params: []
+        };
     }
     return {
         protocol: parts[1],
