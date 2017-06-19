@@ -120,5 +120,6 @@ function parseUrl(url: string): UrlObject {
 
 function formatUrl(obj: UrlObject): string {
     const params = obj.params.length ? `?${obj.params.join('&')}` : '';
-    return `${obj.protocol}://${obj.authority}${obj.path}${params}`;
+    if (obj.protocol == "none") return `${obj.authority}${obj.path}${params}`;
+    else return `${obj.protocol}://${obj.authority}${obj.path}${params}`;
 }
