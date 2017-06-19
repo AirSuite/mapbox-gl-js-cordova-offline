@@ -101,7 +101,14 @@ const urlRe = /^(\w+):\/\/([^/?]*)(\/[^?]+)?\??(.+)?/;
 function parseUrl(url: string): UrlObject {
     const parts = url.match(urlRe);
     if (!parts) {
-        throw new Error('Unable to parse URL object');
+        //throw new Error('Unable to parse URL object');
+        //Allow relative urls for offline mbtile styles etc.
+        return {
+            protocol: "none",
+            authority: "",
+            path: url,
+            params: []
+        };
     }
     return {
         protocol: parts[1],
@@ -113,5 +120,6 @@ function parseUrl(url: string): UrlObject {
 
 function formatUrl(obj: UrlObject): string {
     const params = obj.params.length ? `?${obj.params.join('&')}` : '';
-    return `${obj.protocol}://${obj.authority}${obj.path}${params}`;
+    if (obj.protocol == "none") return `${obj.authority}${obj.path}${params}`;
+    else return `${obj.protocol}://${obj.authority}${obj.path}${params}`;
 }
