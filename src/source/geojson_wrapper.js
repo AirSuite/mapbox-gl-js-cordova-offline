@@ -1,12 +1,33 @@
-'use strict';
+// @flow
 
-const Point = require('point-geometry');
-const VectorTileFeature = require('vector-tile').VectorTileFeature;
+const Point = require('@mapbox/point-geometry');
+const toGeoJSON = require('@mapbox/vector-tile').VectorTileFeature.prototype.toGeoJSON;
 const EXTENT = require('../data/extent');
 
-class FeatureWrapper {
+// The feature type used by geojson-vt and supercluster. Should be extracted to
+// global type and used in module definitions for those two modules.
+type Feature = {
+    type: 1,
+    id: mixed,
+    tags: {[string]: string | number | boolean},
+    geometry: Array<[number, number]>,
+} | {
+    type: 2 | 3,
+    id: mixed,
+    tags: {[string]: string | number | boolean},
+    geometry: Array<Array<[number, number]>>,
+}
 
-    constructor(feature) {
+class FeatureWrapper implements VectorTileFeature {
+    extent: number;
+    type: 1 | 2 | 3;
+    id: number;
+    properties: {[string]: string | number | boolean};
+
+    geometry: Array<Array<Point>>;
+    rawGeometry: Array<Array<[number, number]>>;
+
+    constructor(feature: Feature) {
         this.type = feature.type;
         if (feature.type === 1) {
             this.rawGeometry = [];
@@ -70,22 +91,28 @@ class FeatureWrapper {
         return [x1, y1, x2, y2];
     }
 
-    toGeoJSON() {
-        VectorTileFeature.prototype.toGeoJSON.call(this);
+    toGeoJSON(x: number, y: number, z: number) {
+        return toGeoJSON.call(this, x, y, z);
     }
 }
 
-// conform to vectortile api
-class GeoJSONWrapper {
+class GeoJSONWrapper implements VectorTile, VectorTileLayer {
+    layers: {[string]: VectorTileLayer};
+    name: string;
+    extent: number;
+    length: number;
+    _features: Array<Feature>;
 
-    constructor(features) {
-        this.features = features;
-        this.length = features.length;
+    constructor(features: Array<Feature>) {
+        this.layers = { '_geojsonTileLayer': this };
+        this.name = '_geojsonTileLayer';
         this.extent = EXTENT;
+        this.length = features.length;
+        this._features = features;
     }
 
-    feature(i) {
-        return new FeatureWrapper(this.features[i]);
+    feature(i: number): VectorTileFeature {
+        return new FeatureWrapper(this._features[i]);
     }
 }
 

@@ -53,6 +53,16 @@ function compare(path1, path2, diffPath, callback) {
  * @param {Array<string>} [options.tests] - array of test names to run; tests not in the
  * array will be skipped. Test names can be the name of a group, or the name of a group and the name
  * of an individual test, separated by a slash.
+ * @param {Object<string>} [options.ignores] - map of test names to disable. A key is the relative
+ * path to a test directory, e.g. `"render-tests/background-color/default"`. A value is a string
+ * that by convention links to an issue that explains why the test is currently disabled. By default,
+ * disabled tests will be run, but not fail the test run if the result does not match the expected
+ * result. If the value begins with "skip", the test will not be run at all -- use this for tests
+ * that would crash the test harness entirely if they were run.
+ * @param {Object<boolean>} [options.shuffle] - Boolean representing whether
+ * or not to shuffle the render tests sequence.
+ * @param {Object<boolean>} [options.recycleMap] - Boolean representing whether
+ * or not to recycle the Map object when running the tests.
  * @param {renderFn} render - a function that performs the rendering
  * @returns {undefined} terminates the process when testing is complete
  */
@@ -126,6 +136,8 @@ exports.run = function (implementation, options, render) {
  * @param {number} options.width - render this wide
  * @param {number} options.height - render this high
  * @param {number} options.pixelRatio - render with this pixel ratio
+ * @param {boolean} options.shuffle - shuffle tests sequence
+ * @param {boolean} options.recycleMap - trigger map object recycling
  * @param {renderCallback} callback - callback to call with the results of rendering
  */
 

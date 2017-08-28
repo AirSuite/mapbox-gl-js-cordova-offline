@@ -1,4 +1,8 @@
-'use strict';
+// @flow
+
+import type CollisionBoxArray from './collision_box';
+import type Point from '@mapbox/point-geometry';
+import type Anchor from './anchor';
 
 /**
  * A CollisionFeature represents the area of the tile covered by a single label.
@@ -9,19 +13,30 @@
  * @private
  */
 class CollisionFeature {
+    boxStartIndex: number;
+    boxEndIndex: number;
+
     /**
      * Create a CollisionFeature, adding its collision box data to the given collisionBoxArray in the process.
      *
-     * @param {Array<Point>} line The geometry the label is placed on.
-     * @param {Anchor} anchor The point along the line around which the label is anchored.
-     * @param {VectorTileFeature} feature The VectorTileFeature that this CollisionFeature was created for.
-     * @param {Array<string>} layerIDs The IDs of the layers that this CollisionFeature is a part of.
-     * @param {Object} shaped The text or icon shaping results.
-     * @param {number} boxScale A magic number used to convert from glyph metrics units to geometry units.
-     * @param {number} padding The amount of padding to add around the label edges.
-     * @param {boolean} alignLine Whether the label is aligned with the line or the viewport.
+     * @param line The geometry the label is placed on.
+     * @param anchor The point along the line around which the label is anchored.
+     * @param shaped The text or icon shaping results.
+     * @param boxScale A magic number used to convert from glyph metrics units to geometry units.
+     * @param padding The amount of padding to add around the label edges.
+     * @param alignLine Whether the label is aligned with the line or the viewport.
      */
-    constructor(collisionBoxArray, line, anchor, featureIndex, sourceLayerIndex, bucketIndex, shaped, boxScale, padding, alignLine, straight) {
+    constructor(collisionBoxArray: CollisionBoxArray,
+                line: Array<Point>,
+                anchor: Anchor,
+                featureIndex: number,
+                sourceLayerIndex: number,
+                bucketIndex: number,
+                shaped: Object,
+                boxScale: number,
+                padding: number,
+                alignLine: boolean,
+                straight: boolean) {
         const y1 = shaped.top * boxScale - padding;
         const y2 = shaped.bottom * boxScale + padding;
         const x1 = shaped.left * boxScale - padding;
@@ -40,18 +55,18 @@ class CollisionFeature {
 
                 if (straight) {
                     // used for icon labels that are aligned with the line, but don't curve along it
-                    const vector = line[anchor.segment + 1].sub(line[anchor.segment])._unit()._mult(length);
+                    const vector = line[anchor.segment + 1].sub(line[(anchor.segment: any)])._unit()._mult(length);
                     const straightLine = [anchor.sub(vector), anchor.add(vector)];
                     this._addLineCollisionBoxes(collisionBoxArray, straightLine, anchor, 0, length, height, featureIndex, sourceLayerIndex, bucketIndex);
                 } else {
                     // used for text labels that curve along a line
-                    this._addLineCollisionBoxes(collisionBoxArray, line, anchor, anchor.segment, length, height, featureIndex, sourceLayerIndex, bucketIndex);
+                    this._addLineCollisionBoxes(collisionBoxArray, line, anchor, (anchor.segment: any), length, height, featureIndex, sourceLayerIndex, bucketIndex);
                 }
             }
 
         } else {
             collisionBoxArray.emplaceBack(anchor.x, anchor.y, 0, 0, x1, y1, x2, y2, Infinity, Infinity, featureIndex, sourceLayerIndex, bucketIndex,
-                    0, 0, 0, 0, 0);
+                0, 0, 0, 0, 0);
         }
 
         this.boxEndIndex = collisionBoxArray.length;
@@ -60,16 +75,20 @@ class CollisionFeature {
     /**
      * Create a set of CollisionBox objects for a line.
      *
-     * @param {Array<Point>} line
-     * @param {Anchor} anchor
-     * @param {number} labelLength The length of the label in geometry units.
-     * @param {Anchor} anchor The point along the line around which the label is anchored.
-     * @param {VectorTileFeature} feature The VectorTileFeature that this CollisionFeature was created for.
-     * @param {number} boxSize The size of the collision boxes that will be created.
-     *
+     * @param labelLength The length of the label in geometry units.
+     * @param anchor The point along the line around which the label is anchored.
+     * @param boxSize The size of the collision boxes that will be created.
      * @private
      */
-    _addLineCollisionBoxes(collisionBoxArray, line, anchor, segment, labelLength, boxSize, featureIndex, sourceLayerIndex, bucketIndex) {
+    _addLineCollisionBoxes(collisionBoxArray: CollisionBoxArray,
+                           line: Array<Point>,
+                           anchor: Anchor,
+                           segment: number,
+                           labelLength: number,
+                           boxSize: number,
+                           featureIndex: number,
+                           sourceLayerIndex: number,
+                           bucketIndex: number) {
         const step = boxSize / 2;
         const nBoxes = Math.floor(labelLength / step);
         // We calculate line collision boxes out to 300% of what would normally be our
@@ -169,10 +188,10 @@ class CollisionFeature {
             }
 
             collisionBoxArray.emplaceBack(boxAnchorPoint.x, boxAnchorPoint.y,
-                    boxAnchorPoint.x - anchor.x, boxAnchorPoint.y - anchor.y,
-                    -boxSize / 2, -boxSize / 2, boxSize / 2, boxSize / 2, maxScale, maxScale,
-                    featureIndex, sourceLayerIndex, bucketIndex,
-                    0, 0, 0, 0, 0);
+                boxAnchorPoint.x - anchor.x, boxAnchorPoint.y - anchor.y,
+                -boxSize / 2, -boxSize / 2, boxSize / 2, boxSize / 2, maxScale, maxScale,
+                featureIndex, sourceLayerIndex, bucketIndex,
+                0, 0, 0, 0, 0);
         }
     }
 }

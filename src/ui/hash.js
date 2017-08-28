@@ -1,7 +1,9 @@
-'use strict';
+// @flow
 
 const util = require('../util/util');
 const window = require('../util/window');
+
+import type Map from './map';
 
 /*
  * Adds the map's position to its page's location hash.
@@ -10,6 +12,8 @@ const window = require('../util/window');
  * @returns {Hash} `this`
  */
 class Hash {
+    _map: Map;
+
     constructor() {
         util.bindAll([
             '_onHashChange',
@@ -23,7 +27,7 @@ class Hash {
      * @param {Object} map
      * @returns {Hash} `this`
      */
-    addTo(map) {
+    addTo(map: Map) {
         this._map = map;
         window.addEventListener('hashchange', this._onHashChange, false);
         this._map.on('moveend', this._updateHash);
@@ -42,7 +46,7 @@ class Hash {
         return this;
     }
 
-    getHashString(mapFeedback) {
+    getHashString(mapFeedback?: boolean) {
         const center = this._map.getCenter(),
             zoom = Math.round(this._map.getZoom() * 100) / 100,
             precision = Math.max(0, Math.ceil(Math.log(zoom) / Math.LN2)),

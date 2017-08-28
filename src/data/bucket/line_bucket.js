@@ -1,10 +1,22 @@
-'use strict';
+// @flow
 
-const Bucket = require('../bucket');
-const createElementArrayType = require('../element_array_type');
+const {SegmentVector} = require('../segment');
+const VertexBuffer = require('../../gl/vertex_buffer');
+const IndexBuffer = require('../../gl/index_buffer');
+const {ProgramConfigurationSet} = require('../program_configuration');
+const createVertexArrayType = require('../vertex_array_type');
+const {TriangleIndexArray} = require('../index_array_type');
 const loadGeometry = require('../load_geometry');
 const EXTENT = require('../extent');
-const VectorTileFeature = require('vector-tile').VectorTileFeature;
+const vectorTileFeatureTypes = require('@mapbox/vector-tile').VectorTileFeature.types;
+const {packUint8ToFloat} = require('../../shaders/encode_attribute');
+
+import type {Bucket, IndexedFeature, PopulateParameters, SerializedBucket} from '../bucket';
+import type {ProgramInterface} from '../program_configuration';
+import type StyleLayer from '../../style/style_layer';
+import type Point from '@mapbox/point-geometry';
+import type {Segment} from '../segment';
+import type {StructArray} from '../../util/struct_array';
 
 // NOTE ON EXTRUDE SCALE:
 // scale the extrusion vector so that the normal length is this value.
@@ -41,24 +53,27 @@ const MAX_LINE_DISTANCE = Math.pow(2, LINE_DISTANCE_BUFFER_BITS - 1) / LINE_DIST
 
 const lineInterface = {
     layoutAttributes: [
-        {name: 'a_pos',  components: 2, type: 'Int16'},
+        {name: 'a_pos_normal', components: 3, type: 'Int16'},
         {name: 'a_data', components: 4, type: 'Uint8'}
     ],
     paintAttributes: [
-        {property: 'line-color', type: 'Uint8'},
-        {property: 'line-blur', multiplier: 10, type: 'Uint8'},
-        {property: 'line-opacity', multiplier: 10, type: 'Uint8'},
-        {property: 'line-gap-width', multiplier: 10, type: 'Uint8', name: 'a_gapwidth'},
-        {property: 'line-offset', multiplier: 1, type: 'Int8'},
+        {property: 'line-color'},
+        {property: 'line-blur'},
+        {property: 'line-opacity'},
+        {property: 'line-gap-width', name: 'gapwidth'},
+        {property: 'line-offset'},
+        {property: 'line-width'},
+        {property: 'line-width', name: 'floorwidth', useIntegerZoom: true},
     ],
-    elementArrayType: createElementArrayType()
+    indexArrayType: TriangleIndexArray
 };
 
-function addLineVertex(layoutVertexBuffer, point, extrude, tx, ty, dir, linesofar) {
+function addLineVertex(layoutVertexBuffer, point: Point, extrude: Point, round: boolean, up: boolean, dir: number, linesofar: number) {
     layoutVertexBuffer.emplaceBack(
-        // a_pos
-        (point.x << 1) | tx,
-        (point.y << 1) | ty,
+        // a_pos_normal
+        point.x,
+        point.y,
+        packUint8ToFloat(round ? 1 : 0, up ? 1 : 0),
         // a_data
         // add 128 to store a byte in an unsigned byte
         Math.round(EXTRUDE_SCALE * extrude.x) + 128,
@@ -72,17 +87,87 @@ function addLineVertex(layoutVertexBuffer, point, extrude, tx, ty, dir, linesofa
         (linesofar * LINE_DISTANCE_SCALE) >> 6);
 }
 
+const LayoutVertexArrayType = createVertexArrayType(lineInterface.layoutAttributes);
+
 /**
  * @private
  */
-class LineBucket extends Bucket {
-    constructor(options) {
-        super(options, lineInterface);
+class LineBucket implements Bucket {
+    static programInterface: ProgramInterface;
+
+    distance: number;
+    e1: number;
+    e2: number;
+    e3: number;
+
+    index: number;
+    zoom: number;
+    overscaling: number;
+    layers: Array<StyleLayer>;
+
+    layoutVertexArray: StructArray;
+    layoutVertexBuffer: VertexBuffer;
+
+    indexArray: StructArray;
+    indexBuffer: IndexBuffer;
+
+    programConfigurations: ProgramConfigurationSet;
+    segments: SegmentVector;
+    uploaded: boolean;
+
+    constructor(options: any) {
+        this.zoom = options.zoom;
+        this.overscaling = options.overscaling;
+        this.layers = options.layers;
+        this.index = options.index;
+
+        this.layoutVertexArray = new LayoutVertexArrayType(options.layoutVertexArray);
+        this.indexArray = new TriangleIndexArray(options.indexArray);
+        this.programConfigurations = new ProgramConfigurationSet(lineInterface, options.layers, options.zoom, options.programConfigurations);
+        this.segments = new SegmentVector(options.segments);
     }
 
-    addFeature(feature) {
+    populate(features: Array<IndexedFeature>, options: PopulateParameters) {
+        for (const {feature, index, sourceLayerIndex} of features) {
+            if (this.layers[0].filter(feature)) {
+                this.addFeature(feature);
+                options.featureIndex.insert(feature, index, sourceLayerIndex, this.index);
+            }
+        }
+    }
+
+    isEmpty() {
+        return this.layoutVertexArray.length === 0;
+    }
+
+    serialize(transferables?: Array<Transferable>): SerializedBucket {
+        return {
+            zoom: this.zoom,
+            layerIds: this.layers.map((l) => l.id),
+            layoutVertexArray: this.layoutVertexArray.serialize(transferables),
+            indexArray: this.indexArray.serialize(transferables),
+            programConfigurations: this.programConfigurations.serialize(transferables),
+            segments: this.segments.get(),
+        };
+    }
+
+    upload(gl: WebGLRenderingContext) {
+        this.layoutVertexBuffer = new VertexBuffer(gl, this.layoutVertexArray);
+        this.indexBuffer = new IndexBuffer(gl, this.indexArray);
+        this.programConfigurations.upload(gl);
+    }
+
+    destroy() {
+        if (!this.layoutVertexBuffer) return;
+        this.layoutVertexBuffer.destroy();
+        this.indexBuffer.destroy();
+        this.programConfigurations.destroy();
+        this.segments.destroy();
+    }
+
+    addFeature(feature: VectorTileFeature) {
         const layout = this.layers[0].layout;
-        const join = layout['line-join'];
+        const join = this.layers[0].getLayoutValue('line-join', {zoom: this.zoom}, feature.properties);
         const cap = layout['line-cap'];
         const miterLimit = layout['line-miter-limit'];
         const roundLimit = layout['line-round-limit'];
@@ -92,9 +177,9 @@ class LineBucket extends Bucket {
         }
     }
 
-    addLine(vertices, feature, join, cap, miterLimit, roundLimit) {
+    addLine(vertices: Array<Point>, feature: VectorTileFeature, join: string, cap: string, miterLimit: number, roundLimit: number) {
         const featureProperties = feature.properties;
-        const isPolygon = VectorTileFeature.types[feature.type] === 'Polygon';
+        const isPolygon = vectorTileFeatureTypes[feature.type] === 'Polygon';
 
         // If the line has duplicate vertices at the ends, adjust start/length to remove them.
         let len = vertices.length;
@@ -114,17 +199,22 @@ class LineBucket extends Bucket {
         const sharpCornerOffset = SHARP_CORNER_OFFSET * (EXTENT / (512 * this.overscaling));
 
         const firstVertex = vertices[first];
-        const arrays = this.arrays;
 
         // we could be more precise, but it would only save a negligible amount of space
-        const segment = arrays.prepareSegment(len * 10);
+        const segment = this.segments.prepareSegment(len * 10, this.layoutVertexArray, this.indexArray);
 
         this.distance = 0;
 
         const beginCap = cap,
             endCap = isPolygon ? 'butt' : cap;
         let startOfLine = true;
-        let currentVertex, prevVertex, nextVertex, prevNormal, nextNormal, offsetA, offsetB;
+        let currentVertex;
+        let prevVertex = ((undefined: any): Point);
+        let nextVertex = ((undefined: any): Point);
+        let prevNormal = ((undefined: any): Point);
+        let nextNormal = ((undefined: any): Point);
+        let offsetA;
+        let offsetB;
 
         // the last three vertices added
         this.e1 = this.e2 = this.e3 = -1;
@@ -351,7 +441,7 @@ class LineBucket extends Bucket {
             startOfLine = false;
         }
 
-        arrays.populatePaintArrays(featureProperties);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, featureProperties);
     }
 
     /**
@@ -364,19 +454,23 @@ class LineBucket extends Bucket {
      * @param {boolean} round whether this is a round cap
      * @private
      */
-    addCurrentVertex(currentVertex, distance, normal, endLeft, endRight, round, segment) {
-        const tx = round ? 1 : 0;
+    addCurrentVertex(currentVertex: Point,
+                     distance: number,
+                     normal: Point,
+                     endLeft: number,
+                     endRight: number,
+                     round: boolean,
+                     segment: Segment) {
         let extrude;
-        const arrays = this.arrays;
-        const layoutVertexArray = arrays.layoutVertexArray;
-        const elementArray = arrays.elementArray;
+        const layoutVertexArray = this.layoutVertexArray;
+        const indexArray = this.indexArray;
 
         extrude = normal.clone();
         if (endLeft) extrude._sub(normal.perp()._mult(endLeft));
-        addLineVertex(layoutVertexArray, currentVertex, extrude, tx, 0, endLeft, distance);
+        addLineVertex(layoutVertexArray, currentVertex, extrude, round, false, endLeft, distance);
         this.e3 = segment.vertexLength++;
         if (this.e1 >= 0 && this.e2 >= 0) {
-            elementArray.emplaceBack(this.e1, this.e2, this.e3);
+            indexArray.emplaceBack(this.e1, this.e2, this.e3);
             segment.primitiveLength++;
         }
         this.e1 = this.e2;
@@ -384,10 +478,10 @@ class LineBucket extends Bucket {
 
         extrude = normal.mult(-1);
         if (endRight) extrude._sub(normal.perp()._mult(endRight));
-        addLineVertex(layoutVertexArray, currentVertex, extrude, tx, 1, -endRight, distance);
+        addLineVertex(layoutVertexArray, currentVertex, extrude, round, true, -endRight, distance);
         this.e3 = segment.vertexLength++;
         if (this.e1 >= 0 && this.e2 >= 0) {
-            elementArray.emplaceBack(this.e1, this.e2, this.e3);
+            indexArray.emplaceBack(this.e1, this.e2, this.e3);
             segment.primitiveLength++;
         }
         this.e1 = this.e2;
@@ -407,23 +501,25 @@ class LineBucket extends Bucket {
      * Add a single new vertex and a triangle using two previous vertices.
      * This adds a pie slice triangle near a join to simulate round joins
      *
-     * @param {Object} currentVertex the line vertex to add buffer vertices for
-     * @param {number} distance the distance from the beggining of the line to the vertex
-     * @param {Object} extrude the offset of the new vertex from the currentVertex
-     * @param {boolean} whether the line is turning left or right at this angle
+     * @param currentVertex the line vertex to add buffer vertices for
+     * @param distance the distance from the beggining of the line to the vertex
+     * @param extrude the offset of the new vertex from the currentVertex
+     * @param lineTurnsLeft whether the line is turning left or right at this angle
      * @private
      */
-    addPieSliceVertex(currentVertex, distance, extrude, lineTurnsLeft, segment) {
-        const ty = lineTurnsLeft ? 1 : 0;
+    addPieSliceVertex(currentVertex: Point,
+                      distance: number,
+                      extrude: Point,
+                      lineTurnsLeft: boolean,
+                      segment: Segment) {
         extrude = extrude.mult(lineTurnsLeft ? -1 : 1);
-        const arrays = this.arrays;
-        const layoutVertexArray = arrays.layoutVertexArray;
-        const elementArray = arrays.elementArray;
+        const layoutVertexArray = this.layoutVertexArray;
+        const indexArray = this.indexArray;
 
-        addLineVertex(layoutVertexArray, currentVertex, extrude, 0, ty, 0, distance);
+        addLineVertex(layoutVertexArray, currentVertex, extrude, false, lineTurnsLeft, 0, distance);
         this.e3 = segment.vertexLength++;
         if (this.e1 >= 0 && this.e2 >= 0) {
-            elementArray.emplaceBack(this.e1, this.e2, this.e3);
+            indexArray.emplaceBack(this.e1, this.e2, this.e3);
             segment.primitiveLength++;
         }
 

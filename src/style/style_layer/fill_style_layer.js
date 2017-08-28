@@ -1,11 +1,17 @@
-'use strict';
+// @flow
 
 const StyleLayer = require('../style_layer');
 const FillBucket = require('../../data/bucket/fill_bucket');
+const {multiPolygonIntersectsMultiPolygon} = require('../../util/intersection_tests');
+const {translateDistance, translate} = require('../query_utils');
+
+import type {GlobalProperties, FeatureProperties} from '../style_layer';
+import type {BucketParameters} from '../../data/bucket';
+import type Point from '@mapbox/point-geometry';
 
 class FillStyleLayer extends StyleLayer {
 
-    getPaintValue(name, globalProperties, featureProperties) {
+    getPaintValue(name: string, globalProperties?: GlobalProperties, featureProperties?: FeatureProperties) {
         if (name === 'fill-outline-color') {
             // Special-case handling of undefined fill-outline-color values
             if (this.getPaintProperty('fill-outline-color') === undefined) {
@@ -32,7 +38,7 @@ class FillStyleLayer extends StyleLayer {
         return super.getPaintValue(name, globalProperties, featureProperties);
     }
 
-    getPaintValueStopZoomLevels(name) {
+    getPaintValueStopZoomLevels(name: string) {
         if (name === 'fill-outline-color' && this.getPaintProperty('fill-outline-color') === undefined) {
             return super.getPaintValueStopZoomLevels('fill-color');
         } else {
@@ -40,7 +46,7 @@ class FillStyleLayer extends StyleLayer {
         }
     }
 
-    getPaintInterpolationT(name, globalProperties) {
+    getPaintInterpolationT(name: string, globalProperties: GlobalProperties) {
         if (name === 'fill-outline-color' && this.getPaintProperty('fill-outline-color') === undefined) {
             return super.getPaintInterpolationT('fill-color', globalProperties);
         } else {
@@ -48,7 +54,7 @@ class FillStyleLayer extends StyleLayer {
         }
     }
 
-    isPaintValueFeatureConstant(name) {
+    isPaintValueFeatureConstant(name: string) {
         if (name === 'fill-outline-color' && this.getPaintProperty('fill-outline-color') === undefined) {
             return super.isPaintValueFeatureConstant('fill-color');
         } else {
@@ -56,7 +62,7 @@ class FillStyleLayer extends StyleLayer {
         }
     }
 
-    isPaintValueZoomConstant(name) {
+    isPaintValueZoomConstant(name: string) {
         if (name === 'fill-outline-color' && this.getPaintProperty('fill-outline-color') === undefined) {
             return super.isPaintValueZoomConstant('fill-color');
         } else {
@@ -64,8 +70,25 @@ class FillStyleLayer extends StyleLayer {
         }
     }
 
-    createBucket(options) {
-        return new FillBucket(options);
+    createBucket(parameters: BucketParameters) {
+        return new FillBucket(parameters);
+    }
+
+    queryRadius(): number {
+        return translateDistance(this.paint['fill-translate']);
+    }
+
+    queryIntersectsFeature(queryGeometry: Array<Array<Point>>,
+                           feature: VectorTileFeature,
+                           geometry: Array<Array<Point>>,
+                           zoom: number,
+                           bearing: number,
+                           pixelsToTileUnits: number): boolean {
+        const translatedPolygon = translate(queryGeometry,
+            this.getPaintValue('fill-translate', {zoom}, feature.properties),
+            this.getPaintValue('fill-translate-anchor', {zoom}, feature.properties),
+            bearing, pixelsToTileUnits);
+        return multiPolygonIntersectsMultiPolygon(translatedPolygon, geometry);
     }
 }
 

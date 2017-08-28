@@ -1,4 +1,3 @@
-'use strict';
 
 const colorSpaces = require('./color_spaces');
 const parseColor = require('../util/parse_color');
@@ -213,7 +212,7 @@ function evaluateExponentialFunction(parameters, propertySpec, input) {
 function evaluateIdentityFunction(parameters, propertySpec, input) {
     if (propertySpec.type === 'color') {
         input = parseColor(input);
-    } else if (getType(input) !== propertySpec.type) {
+    } else if (getType(input) !== propertySpec.type && (propertySpec.type !== 'enum' || !propertySpec.values[input])) {
         input = undefined;
     }
     return coalesce(input, parameters.default, propertySpec.default);
@@ -293,7 +292,9 @@ function interpolationFactor(input, base, lowerValue, upperValue) {
     const difference = upperValue - lowerValue;
     const progress = input - lowerValue;
 
-    if (base === 1) {
+    if (difference === 0) {
+        return 0;
+    } else if (base === 1) {
         return progress / difference;
     } else {
         return (Math.pow(base, progress) - 1) / (Math.pow(base, difference) - 1);
