@@ -159,7 +159,7 @@ class RasterTileSource extends Evented implements Source {
 
                 callback(null);
             }
-        });
+        }
     }
 
     abortTile(tile: Tile) {

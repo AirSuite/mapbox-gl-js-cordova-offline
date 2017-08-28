@@ -69,7 +69,7 @@ loadVectorData(params, callback) {
     }
 }
 */
-loadmbtileVectorData(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
+function loadmbtileVectorData(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
     const arrayBuffer = params.tileData;
     callback(null, {
         vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
@@ -150,7 +150,7 @@ class VectorTileWorkerSource implements WorkerSource {
 
             this.loaded[source] = this.loaded[source] || {};
             this.loaded[source][uid] = workerTile;
-        });
+        }
     }
 
     /**

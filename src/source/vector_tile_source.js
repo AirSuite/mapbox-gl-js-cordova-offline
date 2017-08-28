@@ -118,7 +118,7 @@ class VectorTileSource extends Evented implements Source {
           if (!params.mbtiles){
               tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
           }else{
-              var url = params.url.split('/'),
+              let url = params.url.split('/'),
               z = url[0],
               x = url[1],
               y = url[2];
