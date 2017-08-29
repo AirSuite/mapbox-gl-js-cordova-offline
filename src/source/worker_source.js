@@ -12,6 +12,7 @@ import type {RequestParameters} from '../util/ajax';
 export type TileParameters = {
     source: string,
     uid: string,
+    mbtiles: boolean,
 };
 
 export type PlacementConfig = {
