@@ -120,13 +120,13 @@ class VectorTileWorkerSource implements WorkerSource {
         if (!this.loading[source])
             this.loading[source] = {};
         const workerTile = this.loading[source][uid] = new WorkerTile(params);
-
+        if (params.mbtiles == undefined) params.mbtiles = false;
         if (!params.mbtiles){
             workerTile.abort = this.loadVectorData(params, done.bind(this));
         }else{
             workerTile.abort = this.loadmbtileVectorData(params, done.bind(this));
         }
-        function done(err, vectorTile) {
+        function done(err, response) {
             delete this.loading[source][uid];
 
             if (err || !response) {

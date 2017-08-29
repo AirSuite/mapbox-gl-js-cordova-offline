@@ -113,7 +113,7 @@ class VectorTileSource extends Evented implements Source {
             showCollisionBoxes: this.map.showCollisionBoxes,
             mbtiles: this._options.mbtiles
         };
-
+        if (params.mbtiles == undefined) params.mbtiles = false;
         if (!tile.workerID || tile.state === 'expired') {
           if (!params.mbtiles){
               tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));

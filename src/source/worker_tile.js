@@ -51,6 +51,7 @@ class WorkerTile {
         this.cameraToCenterDistance = params.cameraToCenterDistance;
         this.cameraToTileDistance = params.cameraToTileDistance;
         this.showCollisionBoxes = params.showCollisionBoxes;
+        this.mbtiles = params.mbtiles || false;
     }
 
     parse(data: VectorTile, layerIndex: StyleLayerIndex, actor: Actor, callback: WorkerTileCallback) {
