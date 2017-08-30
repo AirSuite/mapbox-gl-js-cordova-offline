@@ -94,7 +94,7 @@ class RasterTileSource extends Evented implements Source {
         if (!this._options.mbtiles){
           tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
         }else{
-          var Rurl = url.split('/'),
+          let Rurl = url.split('/'),
           z = Rurl[0],
           x = Rurl[1],
           y = Rurl[2];

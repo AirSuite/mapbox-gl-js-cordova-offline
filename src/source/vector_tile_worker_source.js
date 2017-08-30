@@ -69,7 +69,7 @@ loadVectorData(params, callback) {
     }
 }
 */
-function loadmbtileVectorData(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
+function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
     const arrayBuffer = params.tileData;
     callback(null, {
         vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
@@ -104,6 +104,7 @@ class VectorTileWorkerSource implements WorkerSource {
         this.actor = actor;
         this.layerIndex = layerIndex;
         this.loadVectorData = loadVectorData || loadVectorTile;
+        this.loadVectorMbtileData = loadVectorMbtile;
         this.loading = {};
         this.loaded = {};
     }
@@ -124,7 +125,7 @@ class VectorTileWorkerSource implements WorkerSource {
         if (!params.mbtiles){
             workerTile.abort = this.loadVectorData(params, done.bind(this));
         }else{
-            workerTile.abort = this.loadmbtileVectorData(params, done.bind(this));
+            workerTile.abort = this.loadVectorMbtileData(params, done.bind(this));
         }
         function done(err, response) {
             delete this.loading[source][uid];
