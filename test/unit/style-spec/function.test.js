@@ -56,9 +56,9 @@ test('binary search', (t) => {
             type: 'number',
             function: 'interpolated'
         });
-        // Nan because the interpolation will fail when given to stops with the same value.
-        // This is however more desirable than looping forever.
-        t.equal(isNaN(f(17)), true);
+
+        t.equal(f(17), 11);
+
         t.end();
     });
     t.end();
@@ -968,6 +968,57 @@ test('identity function', (t) => {
         });
 
         t.equal(f(0, {foo: 0}), 'default');
+
+        t.end();
+    });
+
+    t.test('valid enum', (t) => {
+        const f = createFunction({
+            property: 'foo',
+            type: 'identity'
+        }, {
+            type: 'enum',
+            values: {
+                bar: {}
+            },
+            default: 'def'
+        });
+
+        t.equal(f(0, {foo: 'bar'}), 'bar');
+
+        t.end();
+    });
+
+    t.test('invalid enum, spec default', (t) => {
+        const f = createFunction({
+            property: 'foo',
+            type: 'identity'
+        }, {
+            type: 'enum',
+            values: {
+                bar: {}
+            },
+            default: 'def'
+        });
+
+        t.equal(f(0, {foo: 'baz'}), 'def');
+
+        t.end();
+    });
+
+    t.test('invalid type for enum, spec default', (t) => {
+        const f = createFunction({
+            property: 'foo',
+            type: 'identity'
+        }, {
+            type: 'enum',
+            values: {
+                bar: {}
+            },
+            default: 'def'
+        });
+
+        t.equal(f(0, {foo: 3}), 'def');
 
         t.end();
     });

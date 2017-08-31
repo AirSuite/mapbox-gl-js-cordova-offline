@@ -1,10 +1,14 @@
-'use strict';
+// @flow
 
 const pattern = require('./pattern');
 
+import type Painter from './painter';
+import type SourceCache from '../source/source_cache';
+import type StyleLayer from '../style/style_layer';
+
 module.exports = drawBackground;
 
-function drawBackground(painter, sourceCache, layer) {
+function drawBackground(painter: Painter, sourceCache: SourceCache, layer: StyleLayer) {
     const gl = painter.gl;
     const transform = painter.transform;
     const tileSize = transform.tileSize;
@@ -27,11 +31,11 @@ function drawBackground(painter, sourceCache, layer) {
         painter.tileExtentPatternVAO.bind(gl, program, painter.tileExtentBuffer);
     } else {
         program = painter.useProgram('fill', painter.basicFillProgramConfiguration);
-        gl.uniform4fv(program.u_color, color);
+        gl.uniform4fv(program.uniforms.u_color, color);
         painter.tileExtentVAO.bind(gl, program, painter.tileExtentBuffer);
     }
 
-    gl.uniform1f(program.u_opacity, opacity);
+    gl.uniform1f(program.uniforms.u_opacity, opacity);
 
     const coords = transform.coveringTiles({tileSize});
 
@@ -39,7 +43,7 @@ function drawBackground(painter, sourceCache, layer) {
         if (image) {
             pattern.setTile({coord, tileSize}, painter, program);
         }
-        gl.uniformMatrix4fv(program.u_matrix, false, painter.transform.calculatePosMatrix(coord));
+        gl.uniformMatrix4fv(program.uniforms.u_matrix, false, painter.transform.calculatePosMatrix(coord));
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, painter.tileExtentBuffer.length);
     }
 }

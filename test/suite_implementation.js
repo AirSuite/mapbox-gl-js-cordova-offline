@@ -1,12 +1,12 @@
 'use strict';
 
 const ajax =  require('../src/util/ajax');
-const sinon = require('sinon');
 const request = require('request');
 const PNG = require('pngjs').PNG;
 const Map = require('../src/ui/map');
 const window = require('../src/util/window');
 const browser = require('../src/util/browser');
+const util = require('../src/util/util');
 const rtlTextPlugin = require('../src/source/rtl_text_plugin');
 const rtlText = require('@mapbox/mapbox-gl-rtl-text');
 const fs = require('fs');
@@ -53,8 +53,9 @@ module.exports = function(style, options, _callback) {
             options.operations = [["wait"]];
         }
         applyOperations(map, options.operations, () => {
-            const w = options.width * window.devicePixelRatio;
-            const h = options.height * window.devicePixelRatio;
+            const viewport = gl.getParameter(gl.VIEWPORT);
+            const w = viewport[2];
+            const h = viewport[3];
 
             const pixels = new Uint8Array(w * h * 4);
             gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
@@ -107,8 +108,8 @@ function applyOperations(map, operations, callback) {
 
     } else if (operation[0] === 'addImage') {
         const img = PNG.sync.read(fs.readFileSync(path.join(__dirname, './integration', operation[2])));
-        const pixelRatio = operation.length > 3 ? operation[3] : 1;
-        map.addImage(operation[1], img.data, {height: img.height, width: img.width, pixelRatio: pixelRatio});
+        const options = util.extend({}, {height: img.height, width: img.width, pixelRatio: 1}, operation.length > 3 ? operation[3] : {});
+        map.addImage(operation[1], img.data, options);
         applyOperations(map, operations.slice(1), callback);
 
     } else {
@@ -125,7 +126,7 @@ function cached(data, callback) {
     });
 }
 
-sinon.stub(ajax, 'getJSON').callsFake((url, callback) => {
+ajax.getJSON = function({ url }, callback) {
     if (cache[url]) return cached(cache[url], callback);
     return request(url, (error, response, body) => {
         if (!error && response.statusCode >= 200 && response.statusCode < 300) {
@@ -141,11 +142,11 @@ sinon.stub(ajax, 'getJSON').callsFake((url, callback) => {
             callback(error || new Error(response.statusCode));
         }
     });
-});
+};
 
-sinon.stub(ajax, 'getArrayBuffer').callsFake((url, callback) => {
+ajax.getArrayBuffer = function({ url }, callback) {
     if (cache[url]) return cached(cache[url], callback);
-    return request({url: url, encoding: null}, (error, response, body) => {
+    return request({ url, encoding: null }, (error, response, body) => {
         if (!error && response.statusCode >= 200 && response.statusCode < 300) {
             cache[url] = {data: body};
             callback(null, {data: body});
@@ -153,11 +154,11 @@ sinon.stub(ajax, 'getArrayBuffer').callsFake((url, callback) => {
             callback(error || new Error(response.statusCode));
         }
     });
-});
+};
 
-sinon.stub(ajax, 'getImage').callsFake((url, callback) => {
+ajax.getImage = function({ url }, callback) {
     if (cache[url]) return cached(cache[url], callback);
-    return request({url: url, encoding: null}, (error, response, body) => {
+    return request({ url, encoding: null }, (error, response, body) => {
         if (!error && response.statusCode >= 200 && response.statusCode < 300) {
             new PNG().parse(body, (err, png) => {
                 if (err) return callback(err);
@@ -168,16 +169,16 @@ sinon.stub(ajax, 'getImage').callsFake((url, callback) => {
             callback(error || new Error(response.statusCode));
         }
     });
-});
+};
 
-sinon.stub(browser, 'getImageData').callsFake((img) => {
+browser.getImageData = function(img) {
     return new Uint8Array(img.data);
-});
+};
 
 // Hack: since node doesn't have any good video codec modules, just grab a png with
 // the first frame and fake the video API.
-sinon.stub(ajax, 'getVideo').callsFake((urls, callback) => {
-    return request({url: urls[0], encoding: null}, (error, response, body) => {
+ajax.getVideo = function(urls, callback) {
+    return request({ url: urls[0], encoding: null }, (error, response, body) => {
         if (!error && response.statusCode >= 200 && response.statusCode < 300) {
             new PNG().parse(body, (err, png) => {
                 if (err) return callback(err);
@@ -194,4 +195,4 @@ sinon.stub(ajax, 'getVideo').callsFake((urls, callback) => {
             callback(error || new Error(response.statusCode));
         }
     });
-});
+};

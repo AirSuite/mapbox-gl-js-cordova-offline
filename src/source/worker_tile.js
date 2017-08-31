@@ -1,14 +1,45 @@
-'use strict';
+// @flow
 
 const FeatureIndex = require('../data/feature_index');
 const CollisionTile = require('../symbol/collision_tile');
 const CollisionBoxArray = require('../symbol/collision_box');
 const DictionaryCoder = require('../util/dictionary_coder');
+const SymbolBucket = require('../data/bucket/symbol_bucket');
 const util = require('../util/util');
 const assert = require('assert');
 
+import type TileCoord from './tile_coord';
+import type {Bucket} from '../data/bucket';
+import type Actor from '../util/actor';
+import type StyleLayerIndex from '../style/style_layer_index';
+import type {
+    WorkerTileParameters,
+    WorkerTileCallback,
+} from '../source/worker_source';
+
 class WorkerTile {
-    constructor(params) {
+    coord: TileCoord;
+    uid: string;
+    zoom: number;
+    tileSize: number;
+    source: string;
+    overscaling: number;
+    angle: number;
+    pitch: number;
+    cameraToCenterDistance: number;
+    cameraToTileDistance: number;
+    showCollisionBoxes: boolean;
+
+    status: 'parsing' | 'done';
+    data: VectorTile;
+    collisionBoxArray: CollisionBoxArray;
+    symbolBuckets: Array<SymbolBucket>;
+
+    abort: ?() => void;
+    reloadCallback: WorkerTileCallback;
+    vectorTile: VectorTile;
+
+    constructor(params: WorkerTileParameters) {
         this.coord = params.coord;
         this.uid = params.uid;
         this.zoom = params.zoom;
@@ -20,14 +51,10 @@ class WorkerTile {
         this.cameraToCenterDistance = params.cameraToCenterDistance;
         this.cameraToTileDistance = params.cameraToTileDistance;
         this.showCollisionBoxes = params.showCollisionBoxes;
+        this.mbtiles = params.mbtiles || false;
     }
 
-    parse(data, layerIndex, actor, callback) {
-        // Normalize GeoJSON data.
-        if (!data.layers) {
-            data = { layers: { '_geojsonTileLayer': data } };
-        }
-
+    parse(data: VectorTile, layerIndex: StyleLayerIndex, actor: Actor, callback: WorkerTileCallback) {
         this.status = 'parsing';
         this.data = data;
 
@@ -35,10 +62,9 @@ class WorkerTile {
         const sourceLayerCoder = new DictionaryCoder(Object.keys(data.layers).sort());
 
         const featureIndex = new FeatureIndex(this.coord, this.overscaling);
-        featureIndex.bucketLayerIDs = {};
+        featureIndex.bucketLayerIDs = [];
 
-        const buckets = {};
-        let bucketIndex = 0;
+        const buckets: {[string]: Bucket} = {};
 
         const options = {
             featureIndex: featureIndex,
@@ -54,28 +80,22 @@ class WorkerTile {
             }
 
             if (sourceLayer.version === 1) {
-                util.warnOnce(
-                    `Vector tile source "${this.source}" layer "${
-                    sourceLayerId}" does not use vector tile spec v2 ` +
-                    `and therefore may have some rendering errors.`
-                );
+                util.warnOnce(`Vector tile source "${this.source}" layer "${sourceLayerId}" ` +
+                    `does not use vector tile spec v2 and therefore may have some rendering errors.`);
             }
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
             const features = [];
-            for (let i = 0; i < sourceLayer.length; i++) {
-                const feature = sourceLayer.feature(i);
-                feature.index = i;
-                feature.sourceLayerIndex = sourceLayerIndex;
-                features.push(feature);
+            for (let index = 0; index < sourceLayer.length; index++) {
+                const feature = sourceLayer.feature(index);
+                features.push({ feature, index, sourceLayerIndex });
             }
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
 
                 assert(layer.source === this.source);
-
-                if (layer.minzoom && this.zoom < layer.minzoom) continue;
+                if (layer.minzoom && this.zoom < Math.floor(layer.minzoom)) continue;
                 if (layer.maxzoom && this.zoom >= layer.maxzoom) continue;
                 if (layer.layout && layer.layout.visibility === 'none') continue;
 
@@ -84,7 +104,7 @@ class WorkerTile {
                 }
 
                 const bucket = buckets[layer.id] = layer.createBucket({
-                    index: bucketIndex,
+                    index: featureIndex.bucketLayerIDs.length,
                     layers: family,
                     zoom: this.zoom,
                     overscaling: this.overscaling,
@@ -92,21 +112,13 @@ class WorkerTile {
                 });
 
                 bucket.populate(features, options);
-                featureIndex.bucketLayerIDs[bucketIndex] = family.map((l) => l.id);
-
-                bucketIndex++;
+                featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }
 
 
         const done = (collisionTile) => {
             this.status = 'done';
-
-            // collect data-driven paint property statistics from each bucket
-            featureIndex.paintPropertyStatistics = {};
-            for (const id in buckets) {
-                util.extend(featureIndex.paintPropertyStatistics, buckets[id].getPaintPropertyStatistics());
-            }
 
             const transferables = [];
 
@@ -123,7 +135,8 @@ class WorkerTile {
         for (let i = layerIndex.symbolOrder.length - 1; i >= 0; i--) {
             const bucket = buckets[layerIndex.symbolOrder[i]];
             if (bucket) {
-                this.symbolBuckets.push(bucket);
+                assert(bucket instanceof SymbolBucket);
+                this.symbolBuckets.push(((bucket: any): SymbolBucket));
             }
         }
 
@@ -139,11 +152,12 @@ class WorkerTile {
             if (err) return callback(err);
             deps++;
             if (deps === 2) {
-                const collisionTile = new CollisionTile(this.angle,
-                                                        this.pitch,
-                                                        this.cameraToCenterDistance,
-                                                        this.cameraToTileDistance,
-                                                        this.collisionBoxArray);
+                const collisionTile = new CollisionTile(
+                    this.angle,
+                    this.pitch,
+                    this.cameraToCenterDistance,
+                    this.cameraToTileDistance,
+                    this.collisionBoxArray);
 
                 for (const bucket of this.symbolBuckets) {
                     recalculateLayers(bucket, this.zoom);
@@ -175,7 +189,7 @@ class WorkerTile {
         }
     }
 
-    redoPlacement(angle, pitch, cameraToCenterDistance, cameraToTileDistance, showCollisionBoxes) {
+    redoPlacement(angle: number, pitch: number, cameraToCenterDistance: number, cameraToTileDistance: number, showCollisionBoxes: boolean) {
         this.angle = angle;
         this.pitch = pitch;
         this.cameraToCenterDistance = cameraToCenterDistance;
@@ -185,11 +199,12 @@ class WorkerTile {
             return {};
         }
 
-        const collisionTile = new CollisionTile(this.angle,
-                                                this.pitch,
-                                                this.cameraToCenterDistance,
-                                                this.cameraToTileDistance,
-                                                this.collisionBoxArray);
+        const collisionTile = new CollisionTile(
+            this.angle,
+            this.pitch,
+            this.cameraToCenterDistance,
+            this.cameraToTileDistance,
+            this.collisionBoxArray);
 
         for (const bucket of this.symbolBuckets) {
             recalculateLayers(bucket, this.zoom);
@@ -208,14 +223,14 @@ class WorkerTile {
     }
 }
 
-function recalculateLayers(bucket, zoom) {
+function recalculateLayers(bucket: SymbolBucket, zoom: number) {
     // Layers are shared and may have been used by a WorkerTile with a different zoom.
     for (const layer of bucket.layers) {
         layer.recalculate(zoom);
     }
 }
 
-function serializeBuckets(buckets, transferables) {
+function serializeBuckets(buckets: $ReadOnlyArray<Bucket>, transferables: Array<Transferable>) {
     return buckets
         .filter((b) => !b.isEmpty())
         .map((b) => b.serialize(transferables));

@@ -1,14 +1,50 @@
-'use strict';
+// @flow
 
 const ShelfPack = require('@mapbox/shelf-pack');
 const browser = require('../util/browser');
 const util = require('../util/util');
-const window = require('../util/window');
+const {HTMLImageElement} = require('../util/window');
 const Evented = require('../util/evented');
 const padding = 1;
 
+import type ImageSprite from '../style/image_sprite';
+
+type Rect = {
+    x: number,
+    y: number,
+    w: number,
+    h: number
+};
+
+type Pos = {
+    x: number,
+    y: number,
+    width: number,
+    height: number
+};
+
+type Image = {
+    rect: Rect,
+    width: number,
+    height: number,
+    pixelRatio: number,
+    sdf: boolean
+};
+
+export type SpriteAtlasElement = {
+    sdf: boolean,
+    pixelRatio: number,
+    isNativePixelRatio: boolean,
+    textureRect: Rect,
+    tl: [number, number],
+    br: [number, number],
+    displaySize: [number, number]
+};
+
+export type IconMap = {[string]: ?SpriteAtlasElement};
+
 // This wants to be a class, but is sent to workers, so must be a plain JSON blob.
-function spriteAtlasElement(image) {
+function spriteAtlasElement(image): SpriteAtlasElement {
     const textureRect = {
         x: image.rect.x + padding,
         y: image.rect.y + padding,
@@ -40,15 +76,22 @@ function spriteAtlasElement(image) {
 // The SpriteAtlas class is responsible for turning a sprite and assorted
 // other images added at runtime into a texture that can be consumed by WebGL.
 class SpriteAtlas extends Evented {
+    images: {[string]: Image};
+    data: Uint32Array;
+    texture: WebGLTexture;
+    filter: number;
+    width: number;
+    height: number;
+    shelfPack: ShelfPack;
+    dirty: boolean;
+    sprite: ImageSprite;
 
-    constructor(width, height) {
+    constructor(width: number, height: number) {
         super();
         this.images = {};
-        this.data = false;
-        this.texture = 0; // WebGL ID
         this.filter = 0; // WebGL ID
-        this.width = width * browser.devicePixelRatio;
-        this.height = height * browser.devicePixelRatio;
+        this.width = Math.ceil(width * browser.devicePixelRatio);
+        this.height = Math.ceil(height * browser.devicePixelRatio);
         this.shelfPack = new ShelfPack(this.width, this.height);
         this.dirty = true;
     }
@@ -60,7 +103,7 @@ class SpriteAtlas extends Evented {
         ];
     }
 
-    allocateImage(pixelWidth, pixelHeight) {
+    allocateImage(pixelWidth: number, pixelHeight: number): ?Rect {
         const width = pixelWidth + 2 * padding;
         const height = pixelHeight + 2 * padding;
 
@@ -73,9 +116,9 @@ class SpriteAtlas extends Evented {
         return rect;
     }
 
-    addImage(name, pixels, options) {
+    addImage(name: string, pixels: HTMLImageElement | $ArrayBufferView, options: { width: number, height: number, pixelRatio?: number, sdf?: boolean }) {
         let width, height, pixelRatio;
-        if (pixels instanceof window.HTMLImageElement) {
+        if (pixels instanceof HTMLImageElement) {
             width = pixels.width;
             height = pixels.height;
             pixels = browser.getImageData(pixels);
@@ -108,7 +151,7 @@ class SpriteAtlas extends Evented {
             width,
             height,
             pixelRatio,
-            sdf: false
+            sdf: options.sdf || false
         };
 
         this.copy(pixels, width, rect, {x: 0, y: 0, width, height}, false);
@@ -116,7 +159,7 @@ class SpriteAtlas extends Evented {
         this.fire('data', {dataType: 'style'});
     }
 
-    removeImage(name) {
+    removeImage(name: string) {
         const image = this.images[name];
         delete this.images[name];
 
@@ -129,16 +172,16 @@ class SpriteAtlas extends Evented {
     }
 
     // Return metrics for an icon image.
-    getIcon(name) {
+    getIcon(name: string): ?SpriteAtlasElement {
         return this._getImage(name, false);
     }
 
     // Return metrics for repeating pattern image.
-    getPattern(name) {
+    getPattern(name: string): ?SpriteAtlasElement {
         return this._getImage(name, true);
     }
 
-    _getImage(name, wrap) {
+    _getImage(name: string, wrap: boolean): ?SpriteAtlasElement {
         if (this.images[name]) {
             return spriteAtlasElement(this.images[name]);
         }
@@ -166,7 +209,10 @@ class SpriteAtlas extends Evented {
         };
         this.images[name] = image;
 
-        if (!this.sprite.imgData) return null;
+        if (!this.sprite.imgData || !this.sprite.width) {
+            return null;
+        }
+
         const srcImg = new Uint32Array(this.sprite.imgData.buffer);
         this.copy(srcImg, this.sprite.width, rect, pos, wrap);
 
@@ -183,7 +229,7 @@ class SpriteAtlas extends Evented {
     }
 
     // Copy some portion of srcImage into `SpriteAtlas#data`
-    copy(srcImg, srcImgWidth, dstPos, srcPos, wrap) {
+    copy(srcImg: Uint32Array, srcImgWidth: number, dstPos: Rect, srcPos: Pos, wrap: boolean) {
         this.allocate();
         const dstImg = this.data;
 
@@ -206,15 +252,11 @@ class SpriteAtlas extends Evented {
         this.dirty = true;
     }
 
-    setSprite(sprite) {
-        if (sprite && this.canvas) {
-            this.canvas.width = this.width;
-            this.canvas.height = this.height;
-        }
+    setSprite(sprite: ImageSprite) {
         this.sprite = sprite;
     }
 
-    addIcons(icons, callback) {
+    addIcons(icons: Array<string>, callback: Callback<IconMap>) {
         const result = {};
         for (const icon of icons) {
             result[icon] = this.getIcon(icon);
@@ -222,14 +264,14 @@ class SpriteAtlas extends Evented {
         callback(null, result);
     }
 
-    bind(gl, linear) {
+    bind(gl: WebGLRenderingContext, linear: boolean) {
         let first = false;
         if (!this.texture) {
             this.texture = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, this.texture);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, (true: any));
             first = true;
         } else {
             gl.bindTexture(gl.TEXTURE_2D, this.texture);
