@@ -2,87 +2,91 @@
 
 const Point = require('@mapbox/point-geometry');
 const {SegmentVector} = require('../segment');
-const VertexBuffer = require('../../gl/vertex_buffer');
-const IndexBuffer = require('../../gl/index_buffer');
 const {ProgramConfigurationSet} = require('../program_configuration');
 const createVertexArrayType = require('../vertex_array_type');
 const {TriangleIndexArray, LineIndexArray} = require('../index_array_type');
-const EXTENT = require('../extent');
-const {packUint8ToFloat} = require('../../shaders/encode_attribute');
-const Anchor = require('../../symbol/anchor');
-const getAnchors = require('../../symbol/get_anchors');
-const resolveTokens = require('../../util/token');
-const {getGlyphQuads, getIconQuads} = require('../../symbol/quads');
-const {shapeText, shapeIcon, WritingMode} = require('../../symbol/shaping');
 const transformText = require('../../symbol/transform_text');
 const mergeLines = require('../../symbol/mergelines');
-const clipLine = require('../../symbol/clip_line');
-const util = require('../../util/util');
 const scriptDetection = require('../../util/script_detection');
 const loadGeometry = require('../load_geometry');
-const CollisionFeature = require('../../symbol/collision_feature');
-const findPoleOfInaccessibility = require('../../util/find_pole_of_inaccessibility');
-const classifyRings = require('../../util/classify_rings');
 const vectorTileFeatureTypes = require('@mapbox/vector-tile').VectorTileFeature.types;
 const createStructArrayType = require('../../util/struct_array');
 const verticalizePunctuation = require('../../util/verticalize_punctuation');
+const Anchor = require('../../symbol/anchor');
+const OpacityState = require('../../symbol/opacity_state');
+const {getSizeData} = require('../../symbol/symbol_size');
+const {register} = require('../../util/web_worker_transfer');
 
-import type {Bucket, BucketParameters, IndexedFeature, PopulateParameters} from '../bucket';
-import type {ProgramInterface, SerializedProgramConfiguration} from '../program_configuration';
-import type CollisionBoxArray, {CollisionBox} from '../../symbol/collision_box';
-import type CollisionTile from '../../symbol/collision_tile';
+import type {Feature as ExpressionFeature} from '../../style-spec/expression';
 import type {
-    StructArray,
-    SerializedStructArray
-} from '../../util/struct_array';
-import type StyleLayer from '../../style/style_layer';
-import type {Shaping, PositionedIcon} from '../../symbol/shaping';
+    Bucket,
+    BucketParameters,
+    IndexedFeature,
+    PopulateParameters
+} from '../bucket';
+import type {ProgramInterface, LayoutAttribute} from '../program_configuration';
+import type CollisionBoxArray, {CollisionBox} from '../../symbol/collision_box';
+import type { StructArray } from '../../util/struct_array';
+import type SymbolStyleLayer from '../../style/style_layer/symbol_style_layer';
+import type Context from '../../gl/context';
+import type IndexBuffer from '../../gl/index_buffer';
+import type VertexBuffer from '../../gl/vertex_buffer';
 import type {SymbolQuad} from '../../symbol/quads';
+import type {SizeData} from '../../symbol/symbol_size';
 
-type SymbolBucketParameters = BucketParameters & {
-    sdfIcons: boolean,
-    iconsNeedLinear: boolean,
-    fontstack: string,
-    textSizeData: any,
-    iconSizeData: any,
-    placedGlyphArray: StructArray,
-    placedIconArray: StructArray,
-    glyphOffsetArray: StructArray,
-    lineVertexArray: StructArray,
-}
+export type SingleCollisionBox = {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    anchorPointX: number;
+    anchorPointY: number;
+};
 
-type SymbolInstance = {
+export type CollisionArrays = {
+    textBox?: SingleCollisionBox;
+    iconBox?: SingleCollisionBox;
+    textCircles?: Array<number>;
+};
+
+export type SymbolInstance = {
+    key: string,
     textBoxStartIndex: number,
     textBoxEndIndex: number,
     iconBoxStartIndex: number,
     iconBoxEndIndex: number,
-    glyphQuads: Array<SymbolQuad>,
-    iconQuads: Array<SymbolQuad>,
     textOffset: [number, number],
     iconOffset: [number, number],
     anchor: Anchor,
     line: Array<Point>,
     featureIndex: number,
-    featureProperties: Object,
-    writingModes: number,
+    feature: ExpressionFeature,
     textCollisionFeature?: {boxStartIndex: number, boxEndIndex: number},
-    iconCollisionFeature?: {boxStartIndex: number, boxEndIndex: number}
+    iconCollisionFeature?: {boxStartIndex: number, boxEndIndex: number},
+    placedTextSymbolIndices: Array<number>;
+    numGlyphVertices: number;
+    numVerticalGlyphVertices: number;
+    numIconVertices: number;
+    // Populated/modified on foreground during placement
+    isDuplicate: boolean;
+    textOpacityState: OpacityState;
+    iconOpacityState: OpacityState;
+    collisionArrays?: CollisionArrays;
+    placedText?: boolean;
+    placedIcon?: boolean;
+    hidden?: boolean;
 };
 
-export type SymbolFeature = {
+export type SymbolFeature = {|
     text: string | void,
     icon: string | void,
     index: number,
     sourceLayerIndex: number,
     geometry: Array<Array<Point>>,
     properties: Object,
-    type: 'Point' | 'LineString' | 'Polygon'
-};
-
-type ShapedTextOrientations = {
-    '1'?: Shaping,
-    '2'?: Shaping
-};
+    type: 'Point' | 'LineString' | 'Polygon',
+    id?: any
+|};
 
 const PlacedSymbolArray = createStructArrayType({
     members: [
@@ -90,6 +94,7 @@ const PlacedSymbolArray = createStructArrayType({
         { type: 'Int16', name: 'anchorY' },
         { type: 'Uint16', name: 'glyphStartIndex' },
         { type: 'Uint16', name: 'numGlyphs' },
+        { type: 'Uint32', name: 'vertexStartIndex' },
         { type: 'Uint32', name: 'lineStartIndex' },
         { type: 'Uint32', name: 'lineLength' },
         { type: 'Uint16', name: 'segment' },
@@ -97,8 +102,8 @@ const PlacedSymbolArray = createStructArrayType({
         { type: 'Uint16', name: 'upperSize' },
         { type: 'Float32', name: 'lineOffsetX' },
         { type: 'Float32', name: 'lineOffsetY' },
-        { type: 'Float32', name: 'placementZoom' },
-        { type: 'Uint8', name: 'vertical' }
+        { type: 'Uint8', name: 'writingMode' },
+        { type: 'Uint8', name: 'hidden' }
     ]
 });
 
@@ -111,7 +116,8 @@ const GlyphOffsetArray = createStructArrayType({
 const LineVertexArray = createStructArrayType({
     members: [
         { type: 'Int16', name: 'x' },
-        { type: 'Int16', name: 'y' }
+        { type: 'Int16', name: 'y' },
+        { type: 'Int16', name: 'tileUnitDistanceFromAnchor' }
     ]});
 
 const layoutAttributes = [
@@ -123,11 +129,26 @@ const dynamicLayoutAttributes = [
     { name: 'a_projected_pos', components: 3, type: 'Float32' }
 ];
 
+// Opacity arrays are frequently updated but don't contain a lot of information, so we pack them
+// tight. Each Uint32 is actually four duplicate Uint8s for the four corners of a glyph
+// 7 bits are for the current opacity, and the lowest bit is the target opacity
+const placementOpacityAttributes = [
+    { name: 'a_fade_opacity', components: 1, type: 'Uint32' }
+];
+const shaderOpacityAttributes = [
+    { name: 'a_fade_opacity', components: 1, type: 'Uint8', offset: 0 }
+];
+
+const collisionAttributes = [
+    { name: 'a_placed', components: 2, type: 'Uint8' }
+];
+
 const symbolInterfaces = {
     text: {
         layoutAttributes: layoutAttributes,
         dynamicLayoutAttributes: dynamicLayoutAttributes,
         indexArrayType: TriangleIndexArray,
+        opacityAttributes: placementOpacityAttributes,
         paintAttributes: [
             {property: 'text-color', name: 'fill_color'},
             {property: 'text-halo-color', name: 'halo_color'},
@@ -140,6 +161,7 @@ const symbolInterfaces = {
         layoutAttributes: layoutAttributes,
         dynamicLayoutAttributes: dynamicLayoutAttributes,
         indexArrayType: TriangleIndexArray,
+        opacityAttributes: placementOpacityAttributes,
         paintAttributes: [
             {property: 'icon-color', name: 'fill_color'},
             {property: 'icon-halo-color', name: 'halo_color'},
@@ -152,10 +174,19 @@ const symbolInterfaces = {
         layoutAttributes: [
             {name: 'a_pos',        components: 2, type: 'Int16'},
             {name: 'a_anchor_pos', components: 2, type: 'Int16'},
-            {name: 'a_extrude',    components: 2, type: 'Int16'},
-            {name: 'a_data',       components: 2, type: 'Uint8'}
+            {name: 'a_extrude',    components: 2, type: 'Int16'}
         ],
-        indexArrayType: LineIndexArray
+        indexArrayType: LineIndexArray,
+        collisionAttributes: collisionAttributes
+    },
+    collisionCircle: { // used to render collision circles for debugging purposes
+        layoutAttributes: [
+            {name: 'a_pos',        components: 2, type: 'Int16'},
+            {name: 'a_anchor_pos', components: 2, type: 'Int16'},
+            {name: 'a_extrude',    components: 2, type: 'Int16'}
+        ],
+        collisionAttributes: collisionAttributes,
+        indexArrayType: TriangleIndexArray
     }
 };
 
@@ -175,89 +206,83 @@ function addVertex(array, anchorX, anchorY, ox, oy, tx, ty, sizeVertex) {
     );
 }
 
-function addDynamicAttributes(dynamicLayoutVertexArray, p, angle, placementZoom) {
-    const twoPi = Math.PI * 2;
-    const angleAndZoom = packUint8ToFloat(
-        ((angle + twoPi) % twoPi) / twoPi * 255,
-        placementZoom * 10);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angleAndZoom);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angleAndZoom);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angleAndZoom);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angleAndZoom);
+function addDynamicAttributes(dynamicLayoutVertexArray, p, angle) {
+    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
+    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
+    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
+    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
 }
-
-function addCollisionBoxVertex(layoutVertexArray, point, anchor, extrude, maxZoom, placementZoom) {
-    return layoutVertexArray.emplaceBack(
-        // pos
-        point.x,
-        point.y,
-        // a_anchor_pos
-        anchor.x,
-        anchor.y,
-        // extrude
-        Math.round(extrude.x),
-        Math.round(extrude.y),
-        // data
-        maxZoom * 10,
-        placementZoom * 10);
-}
-
-type SerializedSymbolBuffer = {
-    layoutVertexArray: SerializedStructArray,
-    dynamicLayoutVertexArray: SerializedStructArray,
-    indexArray: SerializedStructArray,
-    programConfigurations: {[string]: ?SerializedProgramConfiguration},
-    segments: Array<Object>,
-};
 
 class SymbolBuffers {
-    programInterface: ProgramInterface;
+    dynamicLayoutAttributes: ?Array<LayoutAttribute>;
+    opacityAttributes: ?Array<LayoutAttribute>;
+    collisionAttributes: ?Array<LayoutAttribute>;
+
     layoutVertexArray: StructArray;
     layoutVertexBuffer: VertexBuffer;
 
     indexArray: StructArray;
     indexBuffer: IndexBuffer;
 
-    programConfigurations: ProgramConfigurationSet;
+    programConfigurations: ProgramConfigurationSet<SymbolStyleLayer>;
     segments: SegmentVector;
 
     dynamicLayoutVertexArray: StructArray;
     dynamicLayoutVertexBuffer: VertexBuffer;
 
-    constructor(programInterface: ProgramInterface, layers: Array<StyleLayer>, zoom: number, arrays?: SerializedSymbolBuffer) {
-        this.programInterface = programInterface;
+    opacityVertexArray: StructArray;
+    opacityVertexBuffer: VertexBuffer;
+
+    collisionVertexArray: StructArray;
+    collisionVertexBuffer: VertexBuffer;
+
+    constructor(programInterface: ProgramInterface, layers: Array<SymbolStyleLayer>, zoom: number) {
+        this.dynamicLayoutAttributes = programInterface.dynamicLayoutAttributes;
+        this.opacityAttributes = programInterface.opacityAttributes;
+        this.collisionAttributes = programInterface.collisionAttributes;
 
         const LayoutVertexArrayType = createVertexArrayType(programInterface.layoutAttributes);
         const IndexArrayType = programInterface.indexArrayType;
 
-        this.layoutVertexArray = new LayoutVertexArrayType(arrays && arrays.layoutVertexArray);
-        this.indexArray = new IndexArrayType(arrays && arrays.indexArray);
-        this.programConfigurations = new ProgramConfigurationSet(programInterface, layers, zoom, arrays && arrays.programConfigurations);
-        this.segments = new SegmentVector(arrays && arrays.segments);
+        this.layoutVertexArray = new LayoutVertexArrayType();
+        this.indexArray = new IndexArrayType();
+        this.programConfigurations = new ProgramConfigurationSet(programInterface, layers, zoom);
+        this.segments = new SegmentVector();
 
         if (programInterface.dynamicLayoutAttributes) {
             const DynamicLayoutVertexArrayType = createVertexArrayType(programInterface.dynamicLayoutAttributes);
-            this.dynamicLayoutVertexArray = new DynamicLayoutVertexArrayType(arrays && arrays.dynamicLayoutVertexArray);
+            this.dynamicLayoutVertexArray = new DynamicLayoutVertexArrayType();
         }
+
+        if (programInterface.opacityAttributes) {
+            const OpacityVertexArrayType = createVertexArrayType(programInterface.opacityAttributes);
+            this.opacityVertexArray = new OpacityVertexArrayType();
+        }
+
+        if (programInterface.collisionAttributes) {
+            const CollisionVertexArrayType = createVertexArrayType(programInterface.collisionAttributes);
+            this.collisionVertexArray = new CollisionVertexArrayType();
+        }
+
     }
 
-    serialize(transferables?: Array<Transferable>): SerializedSymbolBuffer {
-        return {
-            layoutVertexArray: this.layoutVertexArray.serialize(transferables),
-            indexArray: this.indexArray.serialize(transferables),
-            programConfigurations: this.programConfigurations.serialize(transferables),
-            segments: this.segments.get(),
-            dynamicLayoutVertexArray: this.dynamicLayoutVertexArray && this.dynamicLayoutVertexArray.serialize(transferables),
-        };
-    }
+    upload(context: Context, dynamicIndexBuffer) {
+        this.layoutVertexBuffer = context.createVertexBuffer(this.layoutVertexArray);
+        this.indexBuffer = context.createIndexBuffer(this.indexArray, dynamicIndexBuffer);
+        this.programConfigurations.upload(context);
 
-    upload(gl: WebGLRenderingContext) {
-        this.layoutVertexBuffer = new VertexBuffer(gl, this.layoutVertexArray);
-        this.indexBuffer = new IndexBuffer(gl, this.indexArray);
-        this.programConfigurations.upload(gl);
-
-        if (this.programInterface.dynamicLayoutAttributes) {
-            this.dynamicLayoutVertexBuffer = new VertexBuffer(gl, this.dynamicLayoutVertexArray, true);
+        if (this.dynamicLayoutAttributes) {
+            this.dynamicLayoutVertexBuffer = context.createVertexBuffer(this.dynamicLayoutVertexArray, true);
+        }
+        if (this.opacityAttributes) {
+            this.opacityVertexBuffer = context.createVertexBuffer(this.opacityVertexArray, true);
+            // This is a performance hack so that we can write to opacityVertexArray with uint32s
+            // even though the shaders read uint8s
+            this.opacityVertexBuffer.itemSize = 1;
+            this.opacityVertexBuffer.attributes = shaderOpacityAttributes;
+        }
+        if (this.collisionAttributes) {
+            this.collisionVertexBuffer = context.createVertexBuffer(this.collisionVertexArray, true);
         }
     }
 
@@ -270,8 +295,16 @@ class SymbolBuffers {
         if (this.dynamicLayoutVertexBuffer) {
             this.dynamicLayoutVertexBuffer.destroy();
         }
+        if (this.opacityVertexBuffer) {
+            this.opacityVertexBuffer.destroy();
+        }
+        if (this.collisionVertexBuffer) {
+            this.collisionVertexBuffer.destroy();
+        }
     }
 }
+
+register('SymbolBuffers', SymbolBuffers);
 
 /**
  * Unlike other buckets, which simply implement #addFeature with type-specific
@@ -286,20 +319,22 @@ class SymbolBuffers {
  *
  * 2. WorkerTile asynchronously requests from the main thread all of the glyphs
  *    and icons needed (by this bucket and any others). When glyphs and icons
- *    have been received, the WorkerTile creates a CollisionTile and invokes:
+ *    have been received, the WorkerTile creates a CollisionIndex and invokes:
  *
- * 3. SymbolBucket#prepare(stacks, icons) to perform text shaping and layout,
- *    populating `this.symbolInstances` and `this.collisionBoxArray`.
+ * 3. performSymbolLayout(bucket, stacks, icons) perform texts shaping and
+ *    layout on a Symbol Bucket. This step populates:
+ *      `this.symbolInstances`: metadata on generated symbols
+ *      `this.collisionBoxArray`: collision data for use by foreground
+ *      `this.text`: SymbolBuffers for text symbols
+ *      `this.icons`: SymbolBuffers for icons
+ *      `this.collisionBox`: Debug SymbolBuffers for collision boxes
+ *      `this.collisionCircle`: Debug SymbolBuffers for collision circles
+ *    The results are sent to the foreground for rendering
  *
- * 4. SymbolBucket#place(collisionTile): taking collisions into account, decide
- *    on which labels and icons to actually draw and at which scale, populating
- *    the vertex arrays (`this.arrays.glyph`, `this.arrays.icon`) and thus
- *    completing the parsing / buffer population process.
- *
- * The reason that `prepare` and `place` are separate methods is that
- * `prepare`, being independent of pitch and orientation, only needs to happen
- * at tile load time, whereas `place` must be invoked on already-loaded tiles
- * when the pitch/orientation are changed. (See `redoPlacement`.)
+ * 4. performSymbolPlacement(bucket, collisionIndex) is run on the foreground,
+ *    and uses the CollisionIndex along with current camera settings to determine
+ *    which symbols can actually show on the map. Collided symbols are hidden
+ *    using a dynamic "OpacityVertexArray".
  *
  * @private
  */
@@ -307,74 +342,87 @@ class SymbolBucket implements Bucket {
     static programInterfaces: {
         text: ProgramInterface,
         icon: ProgramInterface,
-        collisionBox: ProgramInterface
+        collisionBox: ProgramInterface,
+        collisionCircle: ProgramInterface
     };
 
-    static MAX_INSTANCES: number;
+    static MAX_GLYPHS: number;
     static addDynamicAttributes: typeof addDynamicAttributes;
 
     collisionBoxArray: CollisionBoxArray;
     zoom: number;
     overscaling: number;
-    layers: Array<StyleLayer>;
+    layers: Array<SymbolStyleLayer>;
+    layerIds: Array<string>;
     index: number;
     sdfIcons: boolean;
     iconsNeedLinear: boolean;
-    fontstack: string;
-    textSizeData: any;
-    iconSizeData: any;
+
+    textSizeData: SizeData;
+    iconSizeData: SizeData;
+
     placedGlyphArray: StructArray;
     placedIconArray: StructArray;
     glyphOffsetArray: StructArray;
     lineVertexArray: StructArray;
     features: Array<SymbolFeature>;
     symbolInstances: Array<SymbolInstance>;
+    pixelRatio: number;
     tilePixelRatio: number;
     compareText: {[string]: Array<Point>};
+    fadeStartTime: number;
+    sortFeaturesByY: boolean;
+    sortedAngle: number;
 
     text: SymbolBuffers;
     icon: SymbolBuffers;
     collisionBox: SymbolBuffers;
     uploaded: boolean;
+    collisionCircle: SymbolBuffers;
 
-    constructor(options: SymbolBucketParameters) {
+    constructor(options: BucketParameters<SymbolStyleLayer>) {
         this.collisionBoxArray = options.collisionBoxArray;
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
+        this.layerIds = this.layers.map(layer => layer.id);
         this.index = options.index;
-        this.sdfIcons = options.sdfIcons;
-        this.iconsNeedLinear = options.iconsNeedLinear;
-        this.fontstack = options.fontstack;
+        this.pixelRatio = options.pixelRatio;
 
-        // deserializing a bucket created on a worker thread
-        if (options.text) {
-            this.text = new SymbolBuffers(symbolInterfaces.text, options.layers, options.zoom, options.text);
-            this.icon = new SymbolBuffers(symbolInterfaces.icon, options.layers, options.zoom, options.icon);
-            this.collisionBox = new SymbolBuffers(symbolInterfaces.collisionBox, options.layers, options.zoom, options.collisionBox);
+        const layer = this.layers[0];
+        const unevaluatedLayoutValues = layer._unevaluatedLayout._values;
 
-            this.textSizeData = options.textSizeData;
-            this.iconSizeData = options.iconSizeData;
+        this.textSizeData = getSizeData(this.zoom, unevaluatedLayoutValues['text-size']);
+        this.iconSizeData = getSizeData(this.zoom, unevaluatedLayoutValues['icon-size']);
 
-            this.placedGlyphArray = new PlacedSymbolArray(options.placedGlyphArray);
-            this.placedIconArray = new PlacedSymbolArray(options.placedIconArray);
-            this.glyphOffsetArray = new GlyphOffsetArray(options.glyphOffsetArray);
-            this.lineVertexArray = new LineVertexArray(options.lineVertexArray);
+        const layout = this.layers[0].layout;
+        this.sortFeaturesByY = layout.get('text-allow-overlap') || layout.get('icon-allow-overlap') ||
+            layout.get('text-ignore-placement') || layout.get('icon-ignore-placement');
+    }
 
-        } else {
-            const layer = this.layers[0];
-            this.textSizeData = getSizeData(this.zoom, layer, 'text-size');
-            this.iconSizeData = getSizeData(this.zoom, layer, 'icon-size');
-        }
+    createArrays() {
+        this.text = new SymbolBuffers(symbolInterfaces.text, this.layers, this.zoom);
+        this.icon = new SymbolBuffers(symbolInterfaces.icon, this.layers, this.zoom);
+        this.collisionBox = new SymbolBuffers(symbolInterfaces.collisionBox, this.layers, this.zoom);
+        this.collisionCircle = new SymbolBuffers(symbolInterfaces.collisionCircle, this.layers, this.zoom);
+
+        this.placedGlyphArray = new PlacedSymbolArray();
+        this.placedIconArray = new PlacedSymbolArray();
+        this.glyphOffsetArray = new GlyphOffsetArray();
+        this.lineVertexArray = new LineVertexArray();
     }
 
     populate(features: Array<IndexedFeature>, options: PopulateParameters) {
         const layer = this.layers[0];
         const layout = layer.layout;
-        const textFont = layout['text-font'];
 
-        const hasText = (!layer.isLayoutValueFeatureConstant('text-field') || layout['text-field']) && textFont;
-        const hasIcon = (!layer.isLayoutValueFeatureConstant('icon-image') || layout['icon-image']);
+        const textFont = layout.get('text-font');
+        const textField = layout.get('text-field');
+        const iconImage = layout.get('icon-image');
+        const hasText =
+            (textField.value.kind !== 'constant' || textField.value.value.length > 0) &&
+            (textFont.value.kind !== 'constant' || textFont.value.value.length > 0);
+        const hasIcon = iconImage.value.kind !== 'constant' || iconImage.value.value && iconImage.value.value.length > 0;
 
         this.features = [];
 
@@ -384,36 +432,29 @@ class SymbolBucket implements Bucket {
 
         const icons = options.iconDependencies;
         const stacks = options.glyphDependencies;
-        const stack = stacks[textFont] = stacks[textFont] || {};
         const globalProperties =  {zoom: this.zoom};
 
         for (const {feature, index, sourceLayerIndex} of features) {
-            if (!layer.filter(feature)) {
+            if (!layer._featureFilter(globalProperties, feature)) {
                 continue;
             }
 
             let text;
             if (hasText) {
-                text = layer.getLayoutValue('text-field', globalProperties, feature.properties);
-                if (layer.isLayoutValueFeatureConstant('text-field')) {
-                    text = resolveTokens(feature.properties, text);
-                }
-                text = transformText(text, layer, globalProperties, feature.properties);
+                text = layer.getValueAndResolveTokens('text-field', feature);
+                text = transformText(text, layer, feature);
             }
 
             let icon;
             if (hasIcon) {
-                icon = layer.getLayoutValue('icon-image', globalProperties, feature.properties);
-                if (layer.isLayoutValueFeatureConstant('icon-image')) {
-                    icon = resolveTokens(feature.properties, icon);
-                }
+                icon = layer.getValueAndResolveTokens('icon-image', feature);
             }
 
             if (!text && !icon) {
                 continue;
             }
 
-            this.features.push({
+            const symbolFeature: SymbolFeature = {
                 text,
                 icon,
                 index,
@@ -421,14 +462,20 @@ class SymbolBucket implements Bucket {
                 geometry: loadGeometry(feature),
                 properties: feature.properties,
                 type: vectorTileFeatureTypes[feature.type]
-            });
+            };
+            if (typeof feature.id !== 'undefined') {
+                symbolFeature.id = feature.id;
+            }
+            this.features.push(symbolFeature);
 
             if (icon) {
                 icons[icon] = true;
             }
 
             if (text) {
-                const textAlongLine = layout['text-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line';
+                const fontStack = textFont.evaluate(feature).join(',');
+                const stack = stacks[fontStack] = stacks[fontStack] || {};
+                const textAlongLine = layout.get('text-rotation-alignment') === 'map' && layout.get('symbol-placement') === 'line';
                 const allowsVerticalWritingMode = scriptDetection.allowsVerticalWritingMode(text);
                 for (let i = 0; i < text.length; i++) {
                     stack[text.charCodeAt(i)] = true;
@@ -442,419 +489,68 @@ class SymbolBucket implements Bucket {
             }
         }
 
-        if (layout['symbol-placement'] === 'line') {
+        if (layout.get('symbol-placement') === 'line') {
             // Merge adjacent lines with the same text to improve labelling.
             // It's better to place labels on one long line than on many short segments.
             this.features = mergeLines(this.features);
         }
     }
 
+
     isEmpty() {
-        return this.icon.layoutVertexArray.length === 0 &&
-            this.text.layoutVertexArray.length === 0 &&
-            this.collisionBox.layoutVertexArray.length === 0;
+        return this.symbolInstances.length === 0;
     }
 
-    serialize(transferables?: Array<Transferable>) {
-        return {
-            zoom: this.zoom,
-            layerIds: this.layers.map((l) => l.id),
-            sdfIcons: this.sdfIcons,
-            iconsNeedLinear: this.iconsNeedLinear,
-            textSizeData: this.textSizeData,
-            iconSizeData: this.iconSizeData,
-            fontstack: this.fontstack,
-            placedGlyphArray: this.placedGlyphArray.serialize(transferables),
-            placedIconArray: this.placedIconArray.serialize(transferables),
-            glyphOffsetArray: this.glyphOffsetArray.serialize(transferables),
-            lineVertexArray: this.lineVertexArray.serialize(transferables),
-            text: this.text.serialize(transferables),
-            icon: this.icon.serialize(transferables),
-            collisionBox: this.collisionBox.serialize(transferables)
-        };
-    }
-
-    upload(gl: WebGLRenderingContext) {
-        this.text.upload(gl);
-        this.icon.upload(gl);
-        this.collisionBox.upload(gl);
+    upload(context: Context) {
+        this.text.upload(context, this.sortFeaturesByY);
+        this.icon.upload(context, this.sortFeaturesByY);
+        this.collisionBox.upload(context);
+        this.collisionCircle.upload(context);
     }
 
     destroy() {
         this.text.destroy();
         this.icon.destroy();
         this.collisionBox.destroy();
+        this.collisionCircle.destroy();
     }
 
-    prepare(stacks: any, icons: any) {
-        this.symbolInstances = [];
-
-        const tileSize = 512 * this.overscaling;
-        this.tilePixelRatio = EXTENT / tileSize;
-        this.compareText = {};
-        this.iconsNeedLinear = false;
-
-        const layout = this.layers[0].layout;
-
-        const oneEm = 24;
-        const lineHeight = layout['text-line-height'] * oneEm;
-        const fontstack = this.fontstack = layout['text-font'].join(',');
-        const textAlongLine = layout['text-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line';
-
-        for (const feature of this.features) {
-
-            let shapedTextOrientations;
-            const text = feature.text;
-            if (text) {
-                const allowsVerticalWritingMode = scriptDetection.allowsVerticalWritingMode(text);
-                const textOffset = this.layers[0].getLayoutValue('text-offset', {zoom: this.zoom}, feature.properties).map((t)=> t * oneEm);
-                const spacing = this.layers[0].getLayoutValue('text-letter-spacing', {zoom: this.zoom}, feature.properties) * oneEm;
-                const spacingIfAllowed = scriptDetection.allowsLetterSpacing(text) ? spacing : 0;
-                const textAnchor = this.layers[0].getLayoutValue('text-anchor', {zoom: this.zoom}, feature.properties);
-                const textJustify = this.layers[0].getLayoutValue('text-justify', {zoom: this.zoom}, feature.properties);
-                const maxWidth = layout['symbol-placement'] !== 'line' ?
-                    this.layers[0].getLayoutValue('text-max-width', {zoom: this.zoom}, feature.properties) * oneEm :
-                    0;
-
-                shapedTextOrientations = {
-                    [WritingMode.horizontal]: shapeText(text,
-                        stacks[fontstack],
-                        maxWidth,
-                        lineHeight,
-                        textAnchor,
-                        textJustify,
-                        spacingIfAllowed,
-                        textOffset,
-                        oneEm,
-                        WritingMode.horizontal),
-                    [WritingMode.vertical]: allowsVerticalWritingMode && textAlongLine && shapeText(text,
-                        stacks[fontstack],
-                        maxWidth,
-                        lineHeight,
-                        textAnchor,
-                        textJustify,
-                        spacingIfAllowed,
-                        textOffset,
-                        oneEm,
-                        WritingMode.vertical)
-                };
-            } else {
-                shapedTextOrientations = {};
-            }
-
-            let shapedIcon;
-            if (feature.icon) {
-                const image = icons[feature.icon];
-                if (image) {
-                    shapedIcon = shapeIcon(image,
-                        this.layers[0].getLayoutValue('icon-offset', {zoom: this.zoom}, feature.properties),
-                        this.layers[0].getLayoutValue('icon-anchor', {zoom: this.zoom}, feature.properties));
-                    if (this.sdfIcons === undefined) {
-                        this.sdfIcons = image.sdf;
-                    } else if (this.sdfIcons !== image.sdf) {
-                        util.warnOnce('Style sheet warning: Cannot mix SDF and non-SDF icons in one buffer');
-                    }
-                    if (!image.isNativePixelRatio) {
-                        this.iconsNeedLinear = true;
-                    } else if (layout['icon-rotate'] !== 0 || !this.layers[0].isLayoutValueFeatureConstant('icon-rotate')) {
-                        this.iconsNeedLinear = true;
-                    }
+    addToLineVertexArray(anchor: Anchor, line: any) {
+        const lineStartIndex = this.lineVertexArray.length;
+        if (anchor.segment !== undefined) {
+            let sumForwardLength = anchor.dist(line[anchor.segment + 1]);
+            let sumBackwardLength = anchor.dist(line[anchor.segment]);
+            const vertices = {};
+            for (let i = anchor.segment + 1; i < line.length; i++) {
+                vertices[i] = { x: line[i].x, y: line[i].y, tileUnitDistanceFromAnchor: sumForwardLength };
+                if (i < line.length - 1) {
+                    sumForwardLength += line[i + 1].dist(line[i]);
                 }
             }
-
-            if (shapedTextOrientations[WritingMode.horizontal] || shapedIcon) {
-                this.addFeature(feature, shapedTextOrientations, shapedIcon);
-            }
-        }
-    }
-
-    /**
-     * Given a feature and its shaped text and icon data, add a 'symbol
-     * instance' for each _possible_ placement of the symbol feature.
-     * (SymbolBucket#place() selects which of these instances to send to the
-     * renderer based on collisions with symbols in other layers from the same
-     * source.)
-     * @private
-     */
-    addFeature(feature: SymbolFeature, shapedTextOrientations: ShapedTextOrientations, shapedIcon: PositionedIcon | void) {
-        const layoutTextSize = this.layers[0].getLayoutValue('text-size', {zoom: this.zoom + 1}, feature.properties);
-        const layoutIconSize = this.layers[0].getLayoutValue('icon-size', {zoom: this.zoom + 1}, feature.properties);
-
-        const textOffset = this.layers[0].getLayoutValue('text-offset', {zoom: this.zoom }, feature.properties);
-        const iconOffset = this.layers[0].getLayoutValue('icon-offset', {zoom: this.zoom }, feature.properties);
-
-        // To reduce the number of labels that jump around when zooming we need
-        // to use a text-size value that is the same for all zoom levels.
-        // This calculates text-size at a high zoom level so that all tiles can
-        // use the same value when calculating anchor positions.
-        let textMaxSize = this.layers[0].getLayoutValue('text-size', {zoom: 18}, feature.properties);
-        if (textMaxSize === undefined) {
-            textMaxSize = layoutTextSize;
-        }
-
-        const layout = this.layers[0].layout,
-            glyphSize = 24,
-            fontScale = layoutTextSize / glyphSize,
-            textBoxScale = this.tilePixelRatio * fontScale,
-            textMaxBoxScale = this.tilePixelRatio * textMaxSize / glyphSize,
-            iconBoxScale = this.tilePixelRatio * layoutIconSize,
-            symbolMinDistance = this.tilePixelRatio * layout['symbol-spacing'],
-            avoidEdges = layout['symbol-avoid-edges'],
-            textPadding = layout['text-padding'] * this.tilePixelRatio,
-            iconPadding = layout['icon-padding'] * this.tilePixelRatio,
-            textMaxAngle = layout['text-max-angle'] / 180 * Math.PI,
-            textAlongLine = layout['text-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line',
-            iconAlongLine = layout['icon-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line',
-            mayOverlap = layout['text-allow-overlap'] || layout['icon-allow-overlap'] ||
-                layout['text-ignore-placement'] || layout['icon-ignore-placement'],
-            symbolPlacement = layout['symbol-placement'],
-            textRepeatDistance = symbolMinDistance / 2;
-
-        const addSymbolInstance = (line, anchor) => {
-            const inside = !(anchor.x < 0 || anchor.x > EXTENT || anchor.y < 0 || anchor.y > EXTENT);
-
-            if (avoidEdges && !inside) return;
-
-            // Normally symbol layers are drawn across tile boundaries. Only symbols
-            // with their anchors within the tile boundaries are added to the buffers
-            // to prevent symbols from being drawn twice.
-            //
-            // Symbols in layers with overlap are sorted in the y direction so that
-            // symbols lower on the canvas are drawn on top of symbols near the top.
-            // To preserve this order across tile boundaries these symbols can't
-            // be drawn across tile boundaries. Instead they need to be included in
-            // the buffers for both tiles and clipped to tile boundaries at draw time.
-            const addToBuffers = inside || mayOverlap;
-            this.addSymbolInstance(anchor, line, shapedTextOrientations, shapedIcon, this.layers[0],
-                addToBuffers, this.collisionBoxArray, feature.index, feature.sourceLayerIndex, this.index,
-                textBoxScale, textPadding, textAlongLine, textOffset,
-                iconBoxScale, iconPadding, iconAlongLine, iconOffset,
-                {zoom: this.zoom}, feature.properties);
-        };
-
-        if (symbolPlacement === 'line') {
-            for (const line of clipLine(feature.geometry, 0, 0, EXTENT, EXTENT)) {
-                const anchors = getAnchors(
-                    line,
-                    symbolMinDistance,
-                    textMaxAngle,
-                    shapedTextOrientations[WritingMode.vertical] || shapedTextOrientations[WritingMode.horizontal],
-                    shapedIcon,
-                    glyphSize,
-                    textMaxBoxScale,
-                    this.overscaling,
-                    EXTENT
-                );
-                for (const anchor of anchors) {
-                    const shapedText = shapedTextOrientations[WritingMode.horizontal];
-                    if (!shapedText || !this.anchorIsTooClose(shapedText.text, textRepeatDistance, anchor)) {
-                        addSymbolInstance(line, anchor);
-                    }
+            for (let i = anchor.segment || 0; i >= 0; i--) {
+                vertices[i] = { x: line[i].x, y: line[i].y, tileUnitDistanceFromAnchor: sumBackwardLength };
+                if (i > 0) {
+                    sumBackwardLength += line[i - 1].dist(line[i]);
                 }
             }
-        } else if (feature.type === 'Polygon') {
-            for (const polygon of classifyRings(feature.geometry, 0)) {
-                // 16 here represents 2 pixels
-                const poi = findPoleOfInaccessibility(polygon, 16);
-                addSymbolInstance(polygon[0], new Anchor(poi.x, poi.y, 0));
-            }
-        } else if (feature.type === 'LineString') {
-            // https://github.com/mapbox/mapbox-gl-js/issues/3808
-            for (const line of feature.geometry) {
-                addSymbolInstance(line, new Anchor(line[0].x, line[0].y, 0));
-            }
-        } else if (feature.type === 'Point') {
-            for (const points of feature.geometry) {
-                for (const point of points) {
-                    addSymbolInstance([point], new Anchor(point.x, point.y, 0));
-                }
-            }
-        }
-    }
-
-    anchorIsTooClose(text: string, repeatDistance: number, anchor: Point) {
-        const compareText = this.compareText;
-        if (!(text in compareText)) {
-            compareText[text] = [];
-        } else {
-            const otherAnchors = compareText[text];
-            for (let k = otherAnchors.length - 1; k >= 0; k--) {
-                if (anchor.dist(otherAnchors[k]) < repeatDistance) {
-                    // If it's within repeatDistance of one anchor, stop looking
-                    return true;
-                }
-            }
-        }
-        // If anchor is not within repeatDistance of any other anchor, add to array
-        compareText[text].push(anchor);
-        return false;
-    }
-
-    place(collisionTile: CollisionTile, showCollisionBoxes: boolean) {
-        // Calculate which labels can be shown and when they can be shown and
-        // create the bufers used for rendering.
-
-        this.text = new SymbolBuffers(symbolInterfaces.text, this.layers, this.zoom);
-        this.icon = new SymbolBuffers(symbolInterfaces.icon, this.layers, this.zoom);
-        this.collisionBox = new SymbolBuffers(symbolInterfaces.collisionBox, this.layers, this.zoom);
-
-        this.placedGlyphArray = new PlacedSymbolArray();
-        this.placedIconArray = new PlacedSymbolArray();
-        this.glyphOffsetArray = new GlyphOffsetArray();
-        this.lineVertexArray = new LineVertexArray();
-
-        const layer = this.layers[0];
-        const layout = layer.layout;
-
-        // Symbols that don't show until greater than the CollisionTile's maxScale won't even be added
-        // to the buffers. Even though pan operations on a tilted map might cause the symbol to be
-        // displayable, we have to stay conservative here because the CollisionTile didn't consider
-        // this scale range.
-        const maxScale = collisionTile.maxScale;
-
-        const textAlongLine = layout['text-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line';
-        const iconAlongLine = layout['icon-rotation-alignment'] === 'map' && layout['symbol-placement'] === 'line';
-
-        const mayOverlap = layout['text-allow-overlap'] || layout['icon-allow-overlap'] ||
-            layout['text-ignore-placement'] || layout['icon-ignore-placement'];
-
-        // Sort symbols by their y position on the canvas so that the lower symbols
-        // are drawn on top of higher symbols.
-        // Don't sort symbols that won't overlap because it isn't necessary and
-        // because it causes more labels to pop in and out when rotating.
-        if (mayOverlap) {
-            const angle = collisionTile.angle;
-
-            const sin = Math.sin(angle),
-                cos = Math.cos(angle);
-
-            this.symbolInstances.sort((a, b) => {
-                const aRotated = (sin * a.anchor.x + cos * a.anchor.y) | 0;
-                const bRotated = (sin * b.anchor.x + cos * b.anchor.y) | 0;
-                return (aRotated - bRotated) || (b.featureIndex - a.featureIndex);
-            });
-        }
-
-        for (const symbolInstance of this.symbolInstances) {
-            const textCollisionFeature = {
-                boxStartIndex: symbolInstance.textBoxStartIndex,
-                boxEndIndex: symbolInstance.textBoxEndIndex
-            };
-            const iconCollisionFeature = {
-                boxStartIndex: symbolInstance.iconBoxStartIndex,
-                boxEndIndex: symbolInstance.iconBoxEndIndex
-            };
-
-            const hasText = !(symbolInstance.textBoxStartIndex === symbolInstance.textBoxEndIndex);
-            const hasIcon = !(symbolInstance.iconBoxStartIndex === symbolInstance.iconBoxEndIndex);
-
-            const iconWithoutText = layout['text-optional'] || !hasText,
-                textWithoutIcon = layout['icon-optional'] || !hasIcon;
-
-
-            // Calculate the scales at which the text and icon can be placed without collision.
-
-            let glyphScale = hasText ?
-                collisionTile.placeCollisionFeature(textCollisionFeature,
-                    layout['text-allow-overlap'], layout['symbol-avoid-edges']) :
-                collisionTile.minScale;
-
-            let iconScale = hasIcon ?
-                collisionTile.placeCollisionFeature(iconCollisionFeature,
-                    layout['icon-allow-overlap'], layout['symbol-avoid-edges']) :
-                collisionTile.minScale;
-
-
-            // Combine the scales for icons and text.
-
-            if (!iconWithoutText && !textWithoutIcon) {
-                iconScale = glyphScale = Math.max(iconScale, glyphScale);
-            } else if (!textWithoutIcon && glyphScale) {
-                glyphScale = Math.max(iconScale, glyphScale);
-            } else if (!iconWithoutText && iconScale) {
-                iconScale = Math.max(iconScale, glyphScale);
-            }
-
-
-            // Insert final placement into collision tree and add glyphs/icons to buffers
-            if (!hasText && !hasIcon) continue;
-            const line = symbolInstance.line;
-            const lineStartIndex = this.lineVertexArray.length;
             for (let i = 0; i < line.length; i++) {
-                this.lineVertexArray.emplaceBack(line[i].x, line[i].y);
+                const vertex = vertices[i];
+                this.lineVertexArray.emplaceBack(vertex.x, vertex.y, vertex.tileUnitDistanceFromAnchor);
             }
-            const lineLength = this.lineVertexArray.length - lineStartIndex;
-
-
-            if (hasText) {
-                collisionTile.insertCollisionFeature(textCollisionFeature, glyphScale, layout['text-ignore-placement']);
-                if (glyphScale <= maxScale) {
-                    const textSizeData = getSizeVertexData(layer,
-                        this.zoom,
-                        this.textSizeData.coveringZoomRange,
-                        'text-size',
-                        symbolInstance.featureProperties);
-                    this.addSymbols(
-                        this.text,
-                        symbolInstance.glyphQuads,
-                        glyphScale,
-                        textSizeData,
-                        layout['text-keep-upright'],
-                        symbolInstance.textOffset,
-                        textAlongLine,
-                        collisionTile.angle,
-                        symbolInstance.featureProperties,
-                        symbolInstance.writingModes,
-                        symbolInstance.anchor,
-                        lineStartIndex,
-                        lineLength,
-                        this.placedGlyphArray);
-                }
-            }
-
-            if (hasIcon) {
-                collisionTile.insertCollisionFeature(iconCollisionFeature, iconScale, layout['icon-ignore-placement']);
-                if (iconScale <= maxScale) {
-                    const iconSizeData = getSizeVertexData(
-                        layer,
-                        this.zoom,
-                        this.iconSizeData.coveringZoomRange,
-                        'icon-size',
-                        symbolInstance.featureProperties);
-                    this.addSymbols(
-                        this.icon,
-                        symbolInstance.iconQuads,
-                        iconScale,
-                        iconSizeData,
-                        layout['icon-keep-upright'],
-                        symbolInstance.iconOffset,
-                        iconAlongLine,
-                        collisionTile.angle,
-                        symbolInstance.featureProperties,
-                        0,
-                        symbolInstance.anchor,
-                        lineStartIndex,
-                        lineLength,
-                        this.placedIconArray
-                    );
-                }
-            }
-
         }
-
-        if (showCollisionBoxes) this.addToDebugBuffers(collisionTile);
+        return {
+            lineStartIndex: lineStartIndex,
+            lineLength: this.lineVertexArray.length - lineStartIndex
+        };
     }
 
     addSymbols(arrays: SymbolBuffers,
                quads: Array<SymbolQuad>,
-               scale: number,
                sizeVertex: any,
-               keepUpright: boolean,
                lineOffset: [number, number],
                alongLine: boolean,
-               placementAngle: number,
-               featureProperties: Object,
-               writingModes: number,
+               feature: ExpressionFeature,
+               writingMode: any,
                labelAnchor: Anchor,
                lineStartIndex: number,
                lineLength: number,
@@ -863,23 +559,11 @@ class SymbolBucket implements Bucket {
         const layoutVertexArray = arrays.layoutVertexArray;
         const dynamicLayoutVertexArray = arrays.dynamicLayoutVertexArray;
 
-        const zoom = this.zoom;
-        const placementZoom = Math.max(Math.log(scale) / Math.LN2 + zoom, 0);
-
+        const segment = arrays.segments.prepareSegment(4 * quads.length, arrays.layoutVertexArray, arrays.indexArray);
         const glyphOffsetArrayStart = this.glyphOffsetArray.length;
-
-        const labelAngle = ((labelAnchor.angle + placementAngle) + 2 * Math.PI) % (2 * Math.PI);
-        const inVerticalRange = (
-            (labelAngle > Math.PI * 1 / 4 && labelAngle <= Math.PI * 3 / 4) ||
-            (labelAngle > Math.PI * 5 / 4 && labelAngle <= Math.PI * 7 / 4));
-        const useVerticalMode = Boolean(writingModes & WritingMode.vertical) && inVerticalRange;
+        const vertexStartIndex = segment.vertexLength;
 
         for (const symbol of quads) {
-
-            if (alongLine && keepUpright) {
-                // drop incorrectly oriented glyphs
-                if ((symbol.writingMode === WritingMode.vertical) !== useVerticalMode) continue;
-            }
 
             const tl = symbol.tl,
                 tr = symbol.tr,
@@ -887,7 +571,6 @@ class SymbolBucket implements Bucket {
                 br = symbol.br,
                 tex = symbol.tex;
 
-            const segment = arrays.segments.prepareSegment(4, arrays.layoutVertexArray, arrays.indexArray);
             const index = segment.vertexLength;
 
             const y = symbol.glyphOffset[1];
@@ -896,7 +579,7 @@ class SymbolBucket implements Bucket {
             addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, bl.x, y + bl.y, tex.x, tex.y + tex.h, sizeVertex);
             addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, br.x, y + br.y, tex.x + tex.w, tex.y + tex.h, sizeVertex);
 
-            addDynamicAttributes(dynamicLayoutVertexArray, labelAnchor, 0, placementZoom);
+            addDynamicAttributes(dynamicLayoutVertexArray, labelAnchor, 0);
 
             indexArray.emplaceBack(index, index + 1, index + 2);
             indexArray.emplaceBack(index + 1, index + 2, index + 3);
@@ -908,23 +591,60 @@ class SymbolBucket implements Bucket {
         }
 
         placedSymbolArray.emplaceBack(labelAnchor.x, labelAnchor.y,
-            glyphOffsetArrayStart, this.glyphOffsetArray.length - glyphOffsetArrayStart,
+            glyphOffsetArrayStart, this.glyphOffsetArray.length - glyphOffsetArrayStart, vertexStartIndex,
             lineStartIndex, lineLength, labelAnchor.segment,
             sizeVertex ? sizeVertex[0] : 0, sizeVertex ? sizeVertex[1] : 0,
             lineOffset[0], lineOffset[1],
-            placementZoom, useVerticalMode);
+            writingMode, false);
 
-        arrays.programConfigurations.populatePaintArrays(arrays.layoutVertexArray.length, featureProperties);
+        arrays.programConfigurations.populatePaintArrays(arrays.layoutVertexArray.length, feature);
     }
 
-    addToDebugBuffers(collisionTile: CollisionTile) {
-        const arrays = this.collisionBox;
+    _addCollisionDebugVertex(layoutVertexArray: StructArray, collisionVertexArray: StructArray, point: Point, anchor: Point, extrude: Point) {
+        collisionVertexArray.emplaceBack(0, 0);
+        return layoutVertexArray.emplaceBack(
+            // pos
+            point.x,
+            point.y,
+            // a_anchor_pos
+            anchor.x,
+            anchor.y,
+            // extrude
+            Math.round(extrude.x),
+            Math.round(extrude.y));
+    }
+
+
+    addCollisionDebugVertices(x1: number, y1: number, x2: number, y2: number, arrays: SymbolBuffers, boxAnchorPoint: Point, symbolInstance: SymbolInstance, isCircle: boolean) {
+        const segment = arrays.segments.prepareSegment(4, arrays.layoutVertexArray, arrays.indexArray);
+        const index = segment.vertexLength;
+
         const layoutVertexArray = arrays.layoutVertexArray;
         const indexArray = arrays.indexArray;
+        const collisionVertexArray = arrays.collisionVertexArray;
 
-        const angle = -collisionTile.angle;
-        const yStretch = collisionTile.yStretch;
+        this._addCollisionDebugVertex(layoutVertexArray, collisionVertexArray, boxAnchorPoint, symbolInstance.anchor, new Point(x1, y1));
+        this._addCollisionDebugVertex(layoutVertexArray, collisionVertexArray, boxAnchorPoint, symbolInstance.anchor, new Point(x2, y1));
+        this._addCollisionDebugVertex(layoutVertexArray, collisionVertexArray, boxAnchorPoint, symbolInstance.anchor, new Point(x2, y2));
+        this._addCollisionDebugVertex(layoutVertexArray, collisionVertexArray, boxAnchorPoint, symbolInstance.anchor, new Point(x1, y2));
 
+        segment.vertexLength += 4;
+        if (isCircle) {
+            indexArray.emplaceBack(index, index + 1, index + 2);
+            indexArray.emplaceBack(index, index + 2, index + 3);
+
+            segment.primitiveLength += 2;
+        } else {
+            indexArray.emplaceBack(index, index + 1);
+            indexArray.emplaceBack(index + 1, index + 2);
+            indexArray.emplaceBack(index + 2, index + 3);
+            indexArray.emplaceBack(index + 3, index);
+
+            segment.primitiveLength += 4;
+        }
+    }
+
+    generateCollisionDebugBuffers() {
         for (const symbolInstance of this.symbolInstances) {
             symbolInstance.textCollisionFeature = {boxStartIndex: symbolInstance.textBoxStartIndex, boxEndIndex: symbolInstance.textBoxEndIndex};
             symbolInstance.iconCollisionFeature = {boxStartIndex: symbolInstance.iconBoxStartIndex, boxEndIndex: symbolInstance.iconBoxEndIndex};
@@ -935,230 +655,123 @@ class SymbolBucket implements Bucket {
 
                 for (let b = feature.boxStartIndex; b < feature.boxEndIndex; b++) {
                     const box: CollisionBox = (this.collisionBoxArray.get(b): any);
-                    if (collisionTile.perspectiveRatio === 1 && box.maxScale < 1) {
-                        // These boxes aren't used on unpitched maps
-                        // See CollisionTile#insertCollisionFeature
-                        continue;
-                    }
-                    const boxAnchorPoint = box.anchorPoint;
+                    const x1 = box.x1;
+                    const y1 = box.y1;
+                    const x2 = box.x2;
+                    const y2 = box.y2;
 
-                    const tl = new Point(box.x1, box.y1 * yStretch)._rotate(angle);
-                    const tr = new Point(box.x2, box.y1 * yStretch)._rotate(angle);
-                    const bl = new Point(box.x1, box.y2 * yStretch)._rotate(angle);
-                    const br = new Point(box.x2, box.y2 * yStretch)._rotate(angle);
-
-                    const maxZoom = Math.max(0, Math.min(25, this.zoom + Math.log(box.maxScale) / Math.LN2));
-                    const placementZoom = Math.max(0, Math.min(25, this.zoom + Math.log(box.placementScale) / Math.LN2));
-
-                    const segment = arrays.segments.prepareSegment(4, arrays.layoutVertexArray, arrays.indexArray);
-                    const index = segment.vertexLength;
-
-                    addCollisionBoxVertex(layoutVertexArray, boxAnchorPoint, symbolInstance.anchor, tl, maxZoom, placementZoom);
-                    addCollisionBoxVertex(layoutVertexArray, boxAnchorPoint, symbolInstance.anchor, tr, maxZoom, placementZoom);
-                    addCollisionBoxVertex(layoutVertexArray, boxAnchorPoint, symbolInstance.anchor, br, maxZoom, placementZoom);
-                    addCollisionBoxVertex(layoutVertexArray, boxAnchorPoint, symbolInstance.anchor, bl, maxZoom, placementZoom);
-
-                    indexArray.emplaceBack(index, index + 1);
-                    indexArray.emplaceBack(index + 1, index + 2);
-                    indexArray.emplaceBack(index + 2, index + 3);
-                    indexArray.emplaceBack(index + 3, index);
-
-                    segment.vertexLength += 4;
-                    segment.primitiveLength += 4;
+                    // If the radius > 0, this collision box is actually a circle
+                    // The data we add to the buffers is exactly the same, but we'll render with a different shader.
+                    const isCircle = box.radius > 0;
+                    this.addCollisionDebugVertices(x1, y1, x2, y2, isCircle ? this.collisionCircle : this.collisionBox, box.anchorPoint, symbolInstance, isCircle);
                 }
             }
         }
     }
 
-    /**
-     * Add a single label & icon placement.
-     *
-     * Note that in the case of `symbol-placement: line`, the symbol instance's
-     * array of glyph 'quads' may include multiple copies of each glyph,
-     * corresponding to the different orientations it might take at different
-     * zoom levels as the text goes around bends in the line.
-     *
-     * As such, each glyph quad includes a minzoom and maxzoom at which it
-     * should be rendered.  This zoom range is calculated based on the 'layout'
-     * {text,icon} size -- i.e. text/icon-size at `z: tile.zoom + 1`. If the
-     * size is zoom-dependent, then the zoom range is adjusted at render time
-     * to account for the difference.
-     *
-     * @private
-     */
-    addSymbolInstance(anchor: Anchor,
-                      line: Array<Point>,
-                      shapedTextOrientations: ShapedTextOrientations,
-                      shapedIcon: PositionedIcon | void,
-                      layer: StyleLayer,
-                      addToBuffers: boolean,
-                      collisionBoxArray: CollisionBoxArray,
-                      featureIndex: number,
-                      sourceLayerIndex: number,
-                      bucketIndex: number,
-                      textBoxScale: number,
-                      textPadding: number,
-                      textAlongLine: boolean,
-                      textOffset: [number, number],
-                      iconBoxScale: number,
-                      iconPadding: number,
-                      iconAlongLine: boolean,
-                      iconOffset: [number, number],
-                      globalProperties: Object,
-                      featureProperties: Object) {
+    // These flat arrays are meant to be quicker to iterate over than the source
+    // CollisionBoxArray
+    deserializeCollisionBoxes(collisionBoxArray: CollisionBoxArray, textStartIndex: number, textEndIndex: number, iconStartIndex: number, iconEndIndex: number): CollisionArrays {
+        const collisionArrays = {};
+        for (let k = textStartIndex; k < textEndIndex; k++) {
+            const box: CollisionBox = (collisionBoxArray.get(k): any);
+            if (box.radius === 0) {
+                collisionArrays.textBox = { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, anchorPointX: box.anchorPointX, anchorPointY: box.anchorPointY };
 
-        let textCollisionFeature, iconCollisionFeature;
-        let iconQuads = [];
-        let glyphQuads = [];
-        for (const writingModeString in shapedTextOrientations) {
-            const writingMode = parseInt(writingModeString, 10);
-            if (!shapedTextOrientations[writingMode]) continue;
-            glyphQuads = glyphQuads.concat(addToBuffers ?
-                getGlyphQuads(anchor, shapedTextOrientations[writingMode],
-                    layer, textAlongLine, globalProperties, featureProperties) :
-                []);
-            textCollisionFeature = new CollisionFeature(collisionBoxArray,
-                line,
-                anchor,
-                featureIndex,
-                sourceLayerIndex,
-                bucketIndex,
-                shapedTextOrientations[writingMode],
-                textBoxScale,
-                textPadding,
-                textAlongLine,
-                false);
+                break; // Only one box allowed per instance
+            } else {
+                if (!collisionArrays.textCircles) {
+                    collisionArrays.textCircles = [];
+                }
+                const used = 1; // May be updated at collision detection time
+                collisionArrays.textCircles.push(box.anchorPointX, box.anchorPointY, box.radius, box.signedDistanceFromAnchor, used);
+            }
+        }
+        for (let k = iconStartIndex; k < iconEndIndex; k++) {
+            // An icon can only have one box now, so this indexing is a bit vestigial...
+            const box: CollisionBox = (collisionBoxArray.get(k): any);
+            if (box.radius === 0) {
+                collisionArrays.iconBox = { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, anchorPointX: box.anchorPointX, anchorPointY: box.anchorPointY };
+                break; // Only one box allowed per instance
+            }
+        }
+        return collisionArrays;
+    }
+
+    sortFeatures(angle: number) {
+        if (!this.sortFeaturesByY) return;
+
+        if (this.sortedAngle === angle) return;
+        this.sortedAngle = angle;
+
+        // The current approach to sorting doesn't sort across segments so don't try.
+        // Sorting within segments separately seemed not to be worth the complexity.
+        if (this.text.segments.get().length > 1 || this.icon.segments.get().length > 1) return;
+
+        // If the symbols are allowed to overlap sort them by their vertical screen position.
+        // The index array buffer is rewritten to reference the (unchanged) vertices in the
+        // sorted order.
+
+        // To avoid sorting the actual symbolInstance array we sort an array of indexes.
+        const symbolInstanceIndexes = [];
+        for (let i = 0; i < this.symbolInstances.length; i++) {
+            symbolInstanceIndexes.push(i);
         }
 
-        const textBoxStartIndex = textCollisionFeature ? textCollisionFeature.boxStartIndex : this.collisionBoxArray.length;
-        const textBoxEndIndex = textCollisionFeature ? textCollisionFeature.boxEndIndex : this.collisionBoxArray.length;
+        const sin = Math.sin(angle),
+            cos = Math.cos(angle);
 
-        if (shapedIcon) {
-            iconQuads = addToBuffers ?
-                getIconQuads(anchor, shapedIcon, layer,
-                    iconAlongLine, shapedTextOrientations[WritingMode.horizontal],
-                    globalProperties, featureProperties) :
-                [];
-            iconCollisionFeature = new CollisionFeature(collisionBoxArray,
-                line,
-                anchor,
-                featureIndex,
-                sourceLayerIndex,
-                bucketIndex,
-                shapedIcon,
-                iconBoxScale,
-                iconPadding,
-                iconAlongLine,
-                true);
-        }
-
-        const iconBoxStartIndex = iconCollisionFeature ? iconCollisionFeature.boxStartIndex : this.collisionBoxArray.length;
-        const iconBoxEndIndex = iconCollisionFeature ? iconCollisionFeature.boxEndIndex : this.collisionBoxArray.length;
-
-        if (textBoxEndIndex > SymbolBucket.MAX_INSTANCES) {
-            util.warnOnce("Too many symbols being rendered in a tile. See https://github.com/mapbox/mapbox-gl-js/issues/2907");
-        }
-        if (iconBoxEndIndex > SymbolBucket.MAX_INSTANCES) {
-            util.warnOnce("Too many glyphs being rendered in a tile. See https://github.com/mapbox/mapbox-gl-js/issues/2907");
-        }
-
-        const writingModes = (
-            (shapedTextOrientations[WritingMode.vertical] ? WritingMode.vertical : 0) |
-            (shapedTextOrientations[WritingMode.horizontal] ? WritingMode.horizontal : 0)
-        );
-
-        this.symbolInstances.push({
-            textBoxStartIndex,
-            textBoxEndIndex,
-            iconBoxStartIndex,
-            iconBoxEndIndex,
-            glyphQuads,
-            iconQuads,
-            textOffset,
-            iconOffset,
-            anchor,
-            line,
-            featureIndex,
-            featureProperties,
-            writingModes
+        symbolInstanceIndexes.sort((aIndex, bIndex) => {
+            const a = this.symbolInstances[aIndex];
+            const b = this.symbolInstances[bIndex];
+            const aRotated = (sin * a.anchor.x + cos * a.anchor.y) | 0;
+            const bRotated = (sin * b.anchor.x + cos * b.anchor.y) | 0;
+            return (aRotated - bRotated) || (b.featureIndex - a.featureIndex);
         });
-    }
-}
 
-// For {text,icon}-size, get the bucket-level data that will be needed by
-// the painter to set symbol-size-related uniforms
-function getSizeData(tileZoom, layer, sizeProperty) {
-    const sizeData = {};
+        this.text.indexArray.clear();
+        this.icon.indexArray.clear();
 
-    sizeData.isFeatureConstant = layer.isLayoutValueFeatureConstant(sizeProperty);
-    sizeData.isZoomConstant = layer.isLayoutValueZoomConstant(sizeProperty);
+        for (const i of symbolInstanceIndexes) {
+            const symbolInstance = this.symbolInstances[i];
 
-    if (sizeData.isFeatureConstant) {
-        sizeData.layoutSize = layer.getLayoutValue(sizeProperty, {zoom: tileZoom + 1});
-    }
+            for (const placedTextSymbolIndex of symbolInstance.placedTextSymbolIndices) {
+                const placedSymbol = (this.placedGlyphArray.get(placedTextSymbolIndex): any);
 
-    // calculate covering zoom stops for zoom-dependent values
-    if (!sizeData.isZoomConstant) {
-        const levels = layer.getLayoutValueStopZoomLevels(sizeProperty);
-        let lower = 0;
-        while (lower < levels.length && levels[lower] <= tileZoom) lower++;
-        lower = Math.max(0, lower - 1);
-        let upper = lower;
-        while (upper < levels.length && levels[upper] < tileZoom + 1) upper++;
-        upper = Math.min(levels.length - 1, upper);
+                const endIndex = placedSymbol.vertexStartIndex + placedSymbol.numGlyphs * 4;
+                for (let vertexIndex = placedSymbol.vertexStartIndex; vertexIndex < endIndex; vertexIndex += 4) {
+                    this.text.indexArray.emplaceBack(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+                    this.text.indexArray.emplaceBack(vertexIndex + 1, vertexIndex + 2, vertexIndex + 3);
+                }
+            }
 
-        sizeData.coveringZoomRange = [levels[lower], levels[upper]];
-        if (layer.isLayoutValueFeatureConstant(sizeProperty)) {
-            // for camera functions, also save off the function values
-            // evaluated at the covering zoom levels
-            sizeData.coveringStopValues = [
-                layer.getLayoutValue(sizeProperty, {zoom: levels[lower]}),
-                layer.getLayoutValue(sizeProperty, {zoom: levels[upper]})
-            ];
+            const placedIcon = (this.placedIconArray.get(i): any);
+            if (placedIcon.numGlyphs) {
+                const vertexIndex = placedIcon.vertexStartIndex;
+                this.icon.indexArray.emplaceBack(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+                this.icon.indexArray.emplaceBack(vertexIndex + 1, vertexIndex + 2, vertexIndex + 3);
+            }
         }
 
-        // also store the function's base for use in calculating the
-        // interpolation factor each frame
-        sizeData.functionBase = layer.getLayoutProperty(sizeProperty).base;
-        if (typeof sizeData.functionBase === 'undefined') {
-            sizeData.functionBase = 1;
-        }
-        sizeData.functionType = layer.getLayoutProperty(sizeProperty).type ||
-            'exponential';
+        if (this.text.indexBuffer) this.text.indexBuffer.updateData(this.text.indexArray);
+        if (this.icon.indexBuffer) this.icon.indexBuffer.updateData(this.icon.indexArray);
     }
-
-    return sizeData;
 }
 
-function getSizeVertexData(layer, tileZoom, stopZoomLevels, sizeProperty, featureProperties) {
-    if (
-        layer.isLayoutValueZoomConstant(sizeProperty) &&
-        !layer.isLayoutValueFeatureConstant(sizeProperty)
-    ) {
-        // source function
-        return [
-            10 * layer.getLayoutValue(sizeProperty, ({}: any), featureProperties)
-        ];
-    } else if (
-        !layer.isLayoutValueZoomConstant(sizeProperty) &&
-        !layer.isLayoutValueFeatureConstant(sizeProperty)
-    ) {
-        // composite function
-        return [
-            10 * layer.getLayoutValue(sizeProperty, {zoom: stopZoomLevels[0]}, featureProperties),
-            10 * layer.getLayoutValue(sizeProperty, {zoom: stopZoomLevels[1]}, featureProperties)
-        ];
-    }
-    // camera function or constant
-    return null;
-}
+register('SymbolBucket', SymbolBucket, {
+    omit: ['layers', 'collisionBoxArray', 'features', 'compareText'],
+    shallow: ['symbolInstances']
+});
 
 SymbolBucket.programInterfaces = symbolInterfaces;
 
 // this constant is based on the size of StructArray indexes used in a symbol
-// bucket--namely, iconBoxEndIndex and textBoxEndIndex
+// bucket--namely, glyphOffsetArrayStart
 // eg the max valid UInt16 is 65,535
-SymbolBucket.MAX_INSTANCES = 65535;
+// See https://github.com/mapbox/mapbox-gl-js/issues/2907 for motivation
+// lineStartIndex and textBoxStartIndex could potentially be concerns
+// but we expect there to be many fewer boxes/lines than glyphs
+SymbolBucket.MAX_GLYPHS = 65535;
 
 SymbolBucket.addDynamicAttributes = addDynamicAttributes;
 

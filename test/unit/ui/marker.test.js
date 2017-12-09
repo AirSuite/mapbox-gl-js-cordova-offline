@@ -21,6 +21,12 @@ test('Marker', (t) => {
         t.end();
     });
 
+    t.test('default marker', (t) => {
+        const marker = new Marker();
+        t.ok(marker.getElement(), 'default marker is created');
+        t.end();
+    });
+
     t.test('marker is added to map', (t) => {
         const map = createMap();
         const marker = new Marker(window.document.createElement('div')).setLngLat([-77.01866, 38.888]);
@@ -72,6 +78,17 @@ test('Marker', (t) => {
         const marker = new Marker(element).setLngLat([0, 0]).addTo(map);
         marker.setPopup(new Popup());
         t.ok(marker.togglePopup() instanceof Marker);
+        t.end();
+    });
+
+    t.test('marker\'s offset can be changed', (t) => {
+        const map = createMap();
+        const marker = new Marker(window.document.createElement('div')).setLngLat([-77.01866, 38.888]).addTo(map);
+        const offset = marker.getOffset();
+        t.ok(offset.x === 0 && offset.y === 0, 'default offset');
+        t.ok(marker.setOffset([50, -75]) instanceof Marker, 'marker.setOffset() returns Marker instance');
+        const newOffset = marker.getOffset();
+        t.ok(newOffset.x === 50 &&  newOffset.y === -75, 'marker\'s offset can be updated');
         t.end();
     });
 

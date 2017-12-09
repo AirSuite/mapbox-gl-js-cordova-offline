@@ -1,13 +1,23 @@
 {
-    "parser": "espree",
-    "parserOptions": {
-        "ecmaVersion": 5
-    },
-    "env": {
-        "es6": false,
-        "browser": true
-    },
-    "globals": {
-        "Uint8Array": true
+  "parserOptions": {
+    "sourceType": "module",
+    "ecmaFeatures": {
+      "jsx": true
     }
+  },
+  "plugins": [
+    "react"
+  ],
+  "rules": {
+    "flowtype/require-valid-file-annotation": [0],
+    "new-cap": "off",
+    "react/jsx-uses-vars": [2]
+  },
+  "env": {
+    "browser": true
+  },
+  "globals": {
+    "analytics": false,
+    "MapboxPageShell": false
+  }
 }

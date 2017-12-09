@@ -1,21 +1,27 @@
 // @flow
 
 const {SegmentVector} = require('../segment');
-const VertexBuffer = require('../../gl/vertex_buffer');
-const IndexBuffer = require('../../gl/index_buffer');
 const {ProgramConfigurationSet} = require('../program_configuration');
 const createVertexArrayType = require('../vertex_array_type');
 const {TriangleIndexArray} = require('../index_array_type');
 const loadGeometry = require('../load_geometry');
 const EXTENT = require('../extent');
 const vectorTileFeatureTypes = require('@mapbox/vector-tile').VectorTileFeature.types;
-const {packUint8ToFloat} = require('../../shaders/encode_attribute');
+const {register} = require('../../util/web_worker_transfer');
 
-import type {Bucket, IndexedFeature, PopulateParameters, SerializedBucket} from '../bucket';
+import type {
+    Bucket,
+    BucketParameters,
+    IndexedFeature,
+    PopulateParameters
+} from '../bucket';
 import type {ProgramInterface} from '../program_configuration';
-import type StyleLayer from '../../style/style_layer';
+import type LineStyleLayer from '../../style/style_layer/line_style_layer';
 import type Point from '@mapbox/point-geometry';
 import type {Segment} from '../segment';
+import type Context from '../../gl/context';
+import type IndexBuffer from '../../gl/index_buffer';
+import type VertexBuffer from '../../gl/vertex_buffer';
 import type {StructArray} from '../../util/struct_array';
 
 // NOTE ON EXTRUDE SCALE:
@@ -53,7 +59,7 @@ const MAX_LINE_DISTANCE = Math.pow(2, LINE_DISTANCE_BUFFER_BITS - 1) / LINE_DIST
 
 const lineInterface = {
     layoutAttributes: [
-        {name: 'a_pos_normal', components: 3, type: 'Int16'},
+        {name: 'a_pos_normal', components: 4, type: 'Int16'},
         {name: 'a_data', components: 4, type: 'Uint8'}
     ],
     paintAttributes: [
@@ -63,7 +69,7 @@ const lineInterface = {
         {property: 'line-gap-width', name: 'gapwidth'},
         {property: 'line-offset'},
         {property: 'line-width'},
-        {property: 'line-width', name: 'floorwidth', useIntegerZoom: true},
+        {property: 'line-floorwidth'},
     ],
     indexArrayType: TriangleIndexArray
 };
@@ -73,7 +79,8 @@ function addLineVertex(layoutVertexBuffer, point: Point, extrude: Point, round: 
         // a_pos_normal
         point.x,
         point.y,
-        packUint8ToFloat(round ? 1 : 0, up ? 1 : 0),
+        round ? 1 : 0,
+        up ? 1 : -1,
         // a_data
         // add 128 to store a byte in an unsigned byte
         Math.round(EXTRUDE_SCALE * extrude.x) + 128,
@@ -103,7 +110,8 @@ class LineBucket implements Bucket {
     index: number;
     zoom: number;
     overscaling: number;
-    layers: Array<StyleLayer>;
+    layers: Array<LineStyleLayer>;
+    layerIds: Array<string>;
 
     layoutVertexArray: StructArray;
     layoutVertexBuffer: VertexBuffer;
@@ -111,27 +119,29 @@ class LineBucket implements Bucket {
     indexArray: StructArray;
     indexBuffer: IndexBuffer;
 
-    programConfigurations: ProgramConfigurationSet;
+    programConfigurations: ProgramConfigurationSet<LineStyleLayer>;
     segments: SegmentVector;
     uploaded: boolean;
 
-    constructor(options: any) {
+    constructor(options: BucketParameters<LineStyleLayer>) {
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
+        this.layerIds = this.layers.map(layer => layer.id);
         this.index = options.index;
 
-        this.layoutVertexArray = new LayoutVertexArrayType(options.layoutVertexArray);
-        this.indexArray = new TriangleIndexArray(options.indexArray);
-        this.programConfigurations = new ProgramConfigurationSet(lineInterface, options.layers, options.zoom, options.programConfigurations);
-        this.segments = new SegmentVector(options.segments);
+        this.layoutVertexArray = new LayoutVertexArrayType();
+        this.indexArray = new TriangleIndexArray();
+        this.programConfigurations = new ProgramConfigurationSet(lineInterface, options.layers, options.zoom);
+        this.segments = new SegmentVector();
     }
 
     populate(features: Array<IndexedFeature>, options: PopulateParameters) {
         for (const {feature, index, sourceLayerIndex} of features) {
-            if (this.layers[0].filter(feature)) {
-                this.addFeature(feature);
-                options.featureIndex.insert(feature, index, sourceLayerIndex, this.index);
+            if (this.layers[0]._featureFilter({zoom: this.zoom}, feature)) {
+                const geometry = loadGeometry(feature);
+                this.addFeature(feature, geometry);
+                options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
             }
         }
     }
@@ -140,21 +150,10 @@ class LineBucket implements Bucket {
         return this.layoutVertexArray.length === 0;
     }
 
-    serialize(transferables?: Array<Transferable>): SerializedBucket {
-        return {
-            zoom: this.zoom,
-            layerIds: this.layers.map((l) => l.id),
-            layoutVertexArray: this.layoutVertexArray.serialize(transferables),
-            indexArray: this.indexArray.serialize(transferables),
-            programConfigurations: this.programConfigurations.serialize(transferables),
-            segments: this.segments.get(),
-        };
-    }
-
-    upload(gl: WebGLRenderingContext) {
-        this.layoutVertexBuffer = new VertexBuffer(gl, this.layoutVertexArray);
-        this.indexBuffer = new IndexBuffer(gl, this.indexArray);
-        this.programConfigurations.upload(gl);
+    upload(context: Context) {
+        this.layoutVertexBuffer = context.createVertexBuffer(this.layoutVertexArray);
+        this.indexBuffer = context.createIndexBuffer(this.indexArray);
+        this.programConfigurations.upload(context);
     }
 
     destroy() {
@@ -165,20 +164,19 @@ class LineBucket implements Bucket {
         this.segments.destroy();
     }
 
-    addFeature(feature: VectorTileFeature) {
+    addFeature(feature: VectorTileFeature, geometry: Array<Array<Point>>) {
         const layout = this.layers[0].layout;
-        const join = this.layers[0].getLayoutValue('line-join', {zoom: this.zoom}, feature.properties);
-        const cap = layout['line-cap'];
-        const miterLimit = layout['line-miter-limit'];
-        const roundLimit = layout['line-round-limit'];
+        const join = layout.get('line-join').evaluate(feature);
+        const cap = layout.get('line-cap');
+        const miterLimit = layout.get('line-miter-limit');
+        const roundLimit = layout.get('line-round-limit');
 
-        for (const line of loadGeometry(feature, LINE_DISTANCE_BUFFER_BITS)) {
+        for (const line of geometry) {
             this.addLine(line, feature, join, cap, miterLimit, roundLimit);
         }
     }
 
     addLine(vertices: Array<Point>, feature: VectorTileFeature, join: string, cap: string, miterLimit: number, roundLimit: number) {
-        const featureProperties = feature.properties;
         const isPolygon = vectorTileFeatureTypes[feature.type] === 'Polygon';
 
         // If the line has duplicate vertices at the ends, adjust start/length to remove them.
@@ -441,7 +439,7 @@ class LineBucket implements Bucket {
             startOfLine = false;
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, featureProperties);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature);
     }
 
     /**
@@ -530,6 +528,8 @@ class LineBucket implements Bucket {
         }
     }
 }
+
+register('LineBucket', LineBucket, {omit: ['layers']});
 
 LineBucket.programInterface = lineInterface;
 

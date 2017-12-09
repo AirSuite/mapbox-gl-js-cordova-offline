@@ -1,7 +1,12 @@
 // @flow
 
+const {warnOnce} = require('../util/util');
+const {register} = require('../util/web_worker_transfer');
+
 import type VertexArrayObject from '../render/vertex_array_object';
 import type {StructArray} from '../util/struct_array';
+
+const MAX_VERTEX_ARRAY_LENGTH = Math.pow(2, 16) - 1;
 
 export type Segment = {
     vertexOffset: number,
@@ -20,6 +25,7 @@ class SegmentVector {
 
     prepareSegment(numVertices: number, layoutVertexArray: StructArray, indexArray: StructArray): Segment {
         let segment: Segment = this.segments[this.segments.length - 1];
+        if (numVertices > MAX_VERTEX_ARRAY_LENGTH) warnOnce(`Max vertices per segment is ${MAX_VERTEX_ARRAY_LENGTH}: bucket requested ${numVertices}`);
         if (!segment || segment.vertexLength + numVertices > module.exports.MAX_VERTEX_ARRAY_LENGTH) {
             segment = ({
                 vertexOffset: layoutVertexArray.length,
@@ -45,6 +51,8 @@ class SegmentVector {
     }
 }
 
+register('SegmentVector', SegmentVector);
+
 module.exports = {
     SegmentVector,
 
@@ -54,5 +62,5 @@ module.exports = {
      * @private
      * @readonly
      */
-    MAX_VERTEX_ARRAY_LENGTH: Math.pow(2, 16) - 1
+    MAX_VERTEX_ARRAY_LENGTH: MAX_VERTEX_ARRAY_LENGTH
 };

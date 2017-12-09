@@ -3,6 +3,10 @@
 // Note: all "sizes" are measured in bytes
 
 const assert = require('assert');
+const {register} = require('./web_worker_transfer');
+const Point = require('@mapbox/point-geometry');
+
+import type {Transferable} from '../types/transferable';
 
 module.exports = createStructArrayType;
 
@@ -64,11 +68,6 @@ export type StructArrayMember = {
     offset: number
 };
 
-export type SerializedStructArray = {
-    length: number,
-    arrayBuffer: ArrayBuffer
-};
-
 export type StructArrayTypeParameters = {
     members: $ReadOnlyArray<{
         name: string,
@@ -77,6 +76,15 @@ export type StructArrayTypeParameters = {
     }>,
     alignment?: number
 };
+
+type SerializedStructArray = {
+    length: number,
+    arrayBuffer: ArrayBuffer,
+    type: StructArrayTypeParameters,
+    cacheKey?: string
+};
+
+const structArrayTypeCache: {[key: string]: Class<StructArray>} = {}; // eslint-disable-line no-use-before-define
 
 /**
  * The StructArray class is inherited by the custom StructArrayType classes created with
@@ -105,49 +113,50 @@ class StructArray {
     _usedTypes: Array<ViewType>;
     emplaceBack: Function;
 
-    constructor(serialized?: SerializedStructArray) {
+    _cacheKey: string;
+
+    constructor() {
         this.isTransferred = false;
-
-        if (serialized !== undefined) {
-        // Create from an serialized StructArray
-            this.arrayBuffer = serialized.arrayBuffer;
-            this.length = serialized.length;
-            this.capacity = this.arrayBuffer.byteLength / this.bytesPerElement;
-            this._refreshViews();
-
-        // Create a new StructArray
-        } else {
-            this.capacity = -1;
-            this.resize(0);
-        }
+        this.capacity = -1;
+        this.resize(0);
     }
 
     /**
-     * Serialize the StructArray type. This serializes the *type* not an instance of the type.
+     * Serialize a StructArray instance.  Serializes both the raw data and the
+     * metadata needed to reconstruct the StructArray base class during
+     * deserialization.
      */
-    static serialize(): StructArrayTypeParameters {
-        return {
-            members: this.prototype.members,
-            alignment: this.prototype.StructType.prototype.alignment
-        };
-    }
+    static serialize(array: StructArray, transferables?: Array<Transferable>): SerializedStructArray {
+        assert(!array.isTransferred);
 
-    /**
-     * Serialize this StructArray instance
-     */
-    serialize(transferables?: Array<Transferable>): SerializedStructArray {
-        assert(!this.isTransferred);
-
-        this._trim();
+        array._trim();
 
         if (transferables) {
-            this.isTransferred = true;
-            transferables.push(this.arrayBuffer);
+            array.isTransferred = true;
+            transferables.push(array.arrayBuffer);
         }
+
         return {
-            length: this.length,
-            arrayBuffer: this.arrayBuffer
+            length: array.length,
+            arrayBuffer: array.arrayBuffer,
+            type: {
+                members: array.constructor.prototype.members,
+                alignment: array.constructor.prototype.StructType.prototype.alignment
+            },
+            cacheKey: array.constructor.prototype._cacheKey
         };
+    }
+
+    static deserialize(input: SerializedStructArray): StructArray {
+        const Klass = input.cacheKey && input.cacheKey in structArrayTypeCache ?
+            structArrayTypeCache[input.cacheKey] :
+            createStructArrayType(input.type);
+        const structArray = Object.create(Klass.prototype);
+        structArray.arrayBuffer = input.arrayBuffer;
+        structArray.length = input.length;
+        structArray.capacity = structArray.arrayBuffer.byteLength / structArray.bytesPerElement;
+        structArray._refreshViews();
+        return structArray;
     }
 
     /**
@@ -226,9 +235,12 @@ class StructArray {
     }
 }
 
-export type { StructArray as StructArray };
+register('StructArray', StructArray);
 
-const structArrayTypeCache: {[key: string]: Class<StructArray>} = {};
+class StructArrayType extends StructArray {}
+register('StructArrayType', StructArrayType);
+
+export type { StructArray as StructArray };
 
 /**
  * `createStructArrayType` is used to create new `StructArray` types.
@@ -279,11 +291,14 @@ function createStructArrayType(options: StructArrayTypeParameters): Class<Struct
     let maxSize = 0;
     const usedTypes = ['Uint8'];
 
+    let hasAnchorPoint = false;
+
     const members = options.members.map((member) => {
         assert(member.name.length);
         assert(member.type in viewTypes);
 
         if (usedTypes.indexOf(member.type) < 0) usedTypes.push(member.type);
+        if (member.name === 'anchorPointX') hasAnchorPoint = true;
 
         const typeSize = sizeOf(member.type);
         const memberOffset = offset = align(offset, Math.max(alignment, typeSize));
@@ -324,6 +339,14 @@ function createStructArrayType(options: StructArrayTypeParameters): Class<Struct
         }
     }
 
+    // Special case used for the CollisionBoxArray type
+    if (hasAnchorPoint) {
+        // https://github.com/facebook/flow/issues/285
+        (Object.defineProperty: any)(StructType.prototype, 'anchorPoint', {
+            get() { return new Point(this.anchorPointX, this.anchorPointY); }
+        });
+    }
+
     class StructArrayType extends StructArray {}
 
     StructArrayType.prototype.members = members;
@@ -332,7 +355,23 @@ function createStructArrayType(options: StructArrayTypeParameters): Class<Struct
     StructArrayType.prototype.emplaceBack = createEmplaceBack(members, size);
     StructArrayType.prototype._usedTypes = usedTypes;
 
+    StructArrayType.prototype._cacheKey = key;
+
     structArrayTypeCache[key] = StructArrayType;
+
+    for (const member of members) {
+        for (let c = 0; c < member.components; c++) {
+            let name = `get${member.name}`;
+            if (member.components > 1) {
+                name += c;
+            }
+            if (name in StructArrayType.prototype) {
+                throw new Error(`${name} is a reserved name and cannot be used as a member name.`);
+            }
+            // $FlowFixMe
+            StructArrayType.prototype[name] = createIndexedMemberComponentGetter(member, c, size);
+        }
+    }
 
     return StructArrayType;
 }
@@ -395,6 +434,13 @@ function createMemberComponentString(member, component) {
     const componentOffset = (member.offset / sizeOf(member.type) + component).toFixed(0);
     const index = `${elementOffset} + ${componentOffset}`;
     return `this._structArray.${getArrayViewName(member.type)}[${index}]`;
+}
+
+function createIndexedMemberComponentGetter(member, component, size) {
+    const componentOffset = (member.offset / sizeOf(member.type) + component).toFixed(0);
+    const componentStride = size / sizeOf(member.type);
+    return new Function('index',
+        `return this.${getArrayViewName(member.type)}[index * ${componentStride} + ${componentOffset}];`);
 }
 
 function createAccessors(member, c) {
