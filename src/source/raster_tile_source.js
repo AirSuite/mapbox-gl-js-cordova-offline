@@ -85,7 +85,7 @@ class RasterTileSource extends Evented implements Source {
 
     loadTile(tile: Tile, callback: Callback<void>) {
 
-        const url = normalizeURL(tile.coord.url(this.tiles, null, this.scheme), this.url, this.tileSize);
+		const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
         if (this._options.mbtiles == undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles){
           tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
