@@ -1,7 +1,6 @@
 /docs/components/api.json
 /docs/pages/dist/mapbox-gl-dev.js
 /docs/pages/dist/mapbox-gl.js
-*.js.map
 node_modules
 npm-debug.log
 *.sublime-*
