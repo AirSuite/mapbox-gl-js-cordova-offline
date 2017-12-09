@@ -21,7 +21,8 @@ export type WorkerTileParameters = TileParameters & {
     tileSize: number,
     pixelRatio: number,
     overscaling: number,
-    showCollisionBoxes: boolean
+    showCollisionBoxes: boolean,
+    mbtiles: boolean
 };
 
 export type WorkerDEMTileParameters = TileParameters & {

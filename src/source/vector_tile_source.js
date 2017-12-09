@@ -4,6 +4,7 @@ const Evented = require('../util/evented');
 const util = require('../util/util');
 const loadTileJSON = require('./load_tilejson');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
+const Pako = require('pako');
 const TileBounds = require('./tile_bounds');
 const ResourceType = require('../util/ajax').ResourceType;
 const browser = require('../util/browser');
@@ -101,17 +102,56 @@ class VectorTileSource extends Evented implements Source {
             source: this.id,
             pixelRatio: browser.devicePixelRatio,
             overscaling: overscaling,
-            showCollisionBoxes: this.map.showCollisionBoxes
+            angle: this.map.transform.angle,
+            pitch: this.map.transform.pitch,
+            cameraToCenterDistance: this.map.transform.cameraToCenterDistance,
+            cameraToTileDistance: this.map.transform.cameraToTileDistance(tile),
+            showCollisionBoxes: this.map.showCollisionBoxes,
+            mbtiles: this._options.mbtiles
         };
+        if (params.mbtiles == undefined) params.mbtiles = false;
+        if (!tile.workerID || tile.state === 'expired') {
+          if (!params.mbtiles){
+              tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
+          }else{
+              let Rurl = url.split('/'),
+              z = Rurl[0],
+              x = Rurl[1],
+              y = Rurl[2];
+              y = (1 << z) - 1 - y;
+              var database = params.source;
+              if (window.openDatabases[database] === undefined) {
+                  window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                      name: database + '.mbtiles',
+                      location: 2,
+                      createFromLocation: 1,
+                      androidDatabaseImplementation: 2
+                  });
+              }
 
-        if (tile.workerID === undefined || tile.state === 'expired') {
-            tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
-        } else if (tile.state === 'loading') {
-            // schedule tile reloading after it has been loaded
-            tile.reloadCallback = callback;
-        } else {
-            this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
-        }
+              window.openDatabases[database].transaction(function(tx) {
+                  tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                      var tileData = res.rows.item(0).tile_data,
+                          tileDataDecoded = window.atob(tileData),
+                          tileDataDecodedLength = tileDataDecoded.length,
+                          tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                      for (var i = 0; i < tileDataDecodedLength; ++i) {
+                          tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                      }
+                      var tileDataInflated = Pako.inflate(tileDataTypedArray);
+                      params.tileData = tileDataInflated;
+                      tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
+                  }.bind(this), function(tx, e) {
+                      console.log('Database Error: ' + e.message);
+                  });
+              }.bind(this));
+          }
+      } else if (tile.state === 'loading') {
+          // schedule tile reloading after it has been loaded
+          tile.reloadCallback = callback;
+      } else {
+          this.dispatcher.send('reloadTile', params, done.bind(this), tile.workerID);
+      }
 
         function done(err, data) {
             if (tile.aborted)

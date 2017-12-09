@@ -50,6 +50,7 @@ class WorkerTile {
         this.source = params.source;
         this.overscaling = params.overscaling;
         this.showCollisionBoxes = params.showCollisionBoxes;
+        this.mbtiles = params.mbtiles || false;
     }
 
     parse(data: VectorTile, layerIndex: StyleLayerIndex, actor: Actor, callback: WorkerTileCallback) {

@@ -84,8 +84,39 @@ class RasterTileSource extends Evented implements Source {
     }
 
     loadTile(tile: Tile, callback: Callback<void>) {
-        const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
-        tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), (err, img) => {
+
+        const url = normalizeURL(tile.coord.url(this.tiles, null, this.scheme), this.url, this.tileSize);
+        if (this._options.mbtiles == undefined) this._options.mbtiles = false;
+        if (!this._options.mbtiles){
+          tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
+        }else{
+          let Rurl = url.split('/'),
+          z = Rurl[0],
+          x = Rurl[1],
+          y = Rurl[2];
+          y = (1 << z) - 1 - y;
+          var database = this.id;
+          if (window.openDatabases[database] === undefined) {
+              window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                  name: database + '.mbtiles',
+                  location: 2,
+                  createFromLocation: 1,
+                  androidDatabaseImplementation: 2
+              });
+          }
+
+          window.openDatabases[database].transaction(function(tx) {
+              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+
+                  var tileData = res.rows.item(0).tile_data;
+                  tile.request = ajax.getmbtileImage(tileData, done.bind(this));
+              }.bind(this), function(tx, e) {
+                  console.log('Database Error: ' + e.message);
+              });
+          }.bind(this));
+        }
+
+        function done(err, img) {
             delete tile.request;
 
             if (tile.aborted) {
