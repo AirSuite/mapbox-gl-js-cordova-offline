@@ -2,6 +2,8 @@
 
 const window = require('./window');
 
+import type { Callback } from '../types/callback';
+
 /**
  * The type of a resource.
  * @private
@@ -34,7 +36,8 @@ if (typeof Object.freeze == 'function') {
 export type RequestParameters = {
     url: string,
     headers?: Object,
-    credentials?: 'same-origin' | 'include'
+    credentials?: 'same-origin' | 'include',
+    collectResourceTiming?: boolean
 };
 
 class AJAXError extends Error {

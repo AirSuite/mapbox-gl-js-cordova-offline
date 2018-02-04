@@ -4,6 +4,7 @@ const Actor = require('../util/actor');
 const StyleLayerIndex = require('../style/style_layer_index');
 
 const VectorTileWorkerSource = require('./vector_tile_worker_source');
+const RasterDEMTileWorkerSource = require('./raster_dem_tile_worker_source');
 const GeoJSONWorkerSource = require('./geojson_worker_source');
 const assert = require('assert');
 
@@ -12,13 +13,14 @@ const globalRTLTextPlugin = require('./rtl_text_plugin');
 import type {
     WorkerSource,
     WorkerTileParameters,
+    WorkerDEMTileParameters,
     WorkerTileCallback,
-    TileParameters,
-    RedoPlacementParameters,
-    RedoPlacementCallback
+    WorkerDEMTileCallback,
+    TileParameters
 } from '../source/worker_source';
 
 import type {WorkerGlobalScopeInterface} from '../util/web_worker';
+import type {Callback} from '../types/callback';
 
 /**
  * @private
@@ -28,7 +30,8 @@ class Worker {
     actor: Actor;
     layerIndexes: { [string]: StyleLayerIndex };
     workerSourceTypes: { [string]: Class<WorkerSource> };
-    workerSources: { [string]: { [string]: WorkerSource } };
+    workerSources: { [string]: { [string]: { [string]: WorkerSource } } };
+    demWorkerSources: { [string]: { [string]: RasterDEMTileWorkerSource } };
 
     constructor(self: WorkerGlobalScopeInterface) {
         this.self = self;
@@ -41,8 +44,9 @@ class Worker {
             geojson: GeoJSONWorkerSource
         };
 
-        // [mapId][sourceType] => worker source instance
+        // [mapId][sourceType][sourceName] => worker source instance
         this.workerSources = {};
+        this.demWorkerSources = {};
 
         this.self.registerWorkerSource = (name: string, WorkerSource: Class<WorkerSource>) => {
             if (this.workerSourceTypes[name]) {
@@ -60,45 +64,62 @@ class Worker {
         };
     }
 
-    setLayers(mapId: string, layers: Array<LayerSpecification>) {
+    setLayers(mapId: string, layers: Array<LayerSpecification>, callback: WorkerTileCallback) {
         this.getLayerIndex(mapId).replace(layers);
+        callback();
     }
 
-    updateLayers(mapId: string, params: {layers: Array<LayerSpecification>, removedIds: Array<string>, symbolOrder: ?Array<string>}) {
-        this.getLayerIndex(mapId).update(params.layers, params.removedIds, params.symbolOrder);
+    updateLayers(mapId: string, params: {layers: Array<LayerSpecification>, removedIds: Array<string>}, callback: WorkerTileCallback) {
+        this.getLayerIndex(mapId).update(params.layers, params.removedIds);
+        callback();
     }
 
     loadTile(mapId: string, params: WorkerTileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
-        this.getWorkerSource(mapId, params.type).loadTile(params, callback);
+        this.getWorkerSource(mapId, params.type, params.source).loadTile(params, callback);
+    }
+
+    loadDEMTile(mapId: string, params: WorkerDEMTileParameters, callback: WorkerDEMTileCallback) {
+        this.getDEMWorkerSource(mapId, params.source).loadTile(params, callback);
     }
 
     reloadTile(mapId: string, params: WorkerTileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
-        this.getWorkerSource(mapId, params.type).reloadTile(params, callback);
+        this.getWorkerSource(mapId, params.type, params.source).reloadTile(params, callback);
     }
 
-    abortTile(mapId: string, params: TileParameters & {type: string}) {
+    abortTile(mapId: string, params: TileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
-        this.getWorkerSource(mapId, params.type).abortTile(params);
+        this.getWorkerSource(mapId, params.type, params.source).abortTile(params, callback);
     }
 
-    removeTile(mapId: string, params: TileParameters & {type: string}) {
+    removeTile(mapId: string, params: TileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
-        this.getWorkerSource(mapId, params.type).removeTile(params);
+        this.getWorkerSource(mapId, params.type, params.source).removeTile(params, callback);
     }
 
-    removeSource(mapId: string, params: {source: string} & {type: string}) {
+    removeDEMTile(mapId: string, params: TileParameters) {
+        this.getDEMWorkerSource(mapId, params.source).removeTile(params);
+    }
+
+    removeSource(mapId: string, params: {source: string} & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
-        const worker = this.getWorkerSource(mapId, params.type);
-        if (worker.removeSource !== undefined) {
-            worker.removeSource(params);
+        assert(params.source);
+
+        if (!this.workerSources[mapId] ||
+            !this.workerSources[mapId][params.type] ||
+            !this.workerSources[mapId][params.type][params.source]) {
+            return;
         }
-    }
 
-    redoPlacement(mapId: string, params: RedoPlacementParameters & {type: string}, callback: RedoPlacementCallback) {
-        assert(params.type);
-        this.getWorkerSource(mapId, params.type).redoPlacement(params, callback);
+        const worker = this.workerSources[mapId][params.type][params.source];
+        delete this.workerSources[mapId][params.type][params.source];
+
+        if (worker.removeSource !== undefined) {
+            worker.removeSource(params, callback);
+        } else {
+            callback();
+        }
     }
 
     /**
@@ -137,22 +158,36 @@ class Worker {
         return layerIndexes;
     }
 
-    getWorkerSource(mapId: string, type: string) {
+    getWorkerSource(mapId: string, type: string, source: string) {
         if (!this.workerSources[mapId])
             this.workerSources[mapId] = {};
-        if (!this.workerSources[mapId][type]) {
+        if (!this.workerSources[mapId][type])
+            this.workerSources[mapId][type] = {};
+
+        if (!this.workerSources[mapId][type][source]) {
             // use a wrapped actor so that we can attach a target mapId param
             // to any messages invoked by the WorkerSource
             const actor = {
-                send: (type, data, callback, buffers) => {
-                    this.actor.send(type, data, callback, buffers, mapId);
+                send: (type, data, callback) => {
+                    this.actor.send(type, data, callback, mapId);
                 }
             };
 
-            this.workerSources[mapId][type] = new this.workerSourceTypes[type]((actor: any), this.getLayerIndex(mapId));
+            this.workerSources[mapId][type][source] = new (this.workerSourceTypes[type]: any)((actor: any), this.getLayerIndex(mapId));
         }
 
-        return this.workerSources[mapId][type];
+        return this.workerSources[mapId][type][source];
+    }
+
+    getDEMWorkerSource(mapId: string, source: string) {
+        if (!this.demWorkerSources[mapId])
+            this.demWorkerSources[mapId] = {};
+
+        if (!this.demWorkerSources[mapId][source]) {
+            this.demWorkerSources[mapId][source] = new RasterDEMTileWorkerSource();
+        }
+
+        return this.demWorkerSources[mapId][source];
     }
 }
 

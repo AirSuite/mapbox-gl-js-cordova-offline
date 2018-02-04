@@ -1,37 +1,59 @@
 // @flow
+const assert = require('assert');
 
+import type {StructArray} from '../util/struct_array';
 import type {TriangleIndexArray, LineIndexArray} from '../data/index_array_type';
+import type Context from '../gl/context';
+
 
 class IndexBuffer {
-    gl: WebGLRenderingContext;
+    context: Context;
     buffer: WebGLBuffer;
+    dynamicDraw: boolean;
 
-    constructor(gl: WebGLRenderingContext, array: TriangleIndexArray | LineIndexArray) {
-        this.gl = gl;
+    constructor(context: Context, array: TriangleIndexArray | LineIndexArray, dynamicDraw?: boolean) {
+        this.context = context;
+        const gl = context.gl;
         this.buffer = gl.createBuffer();
+        this.dynamicDraw = Boolean(dynamicDraw);
 
+        this.unbindVAO();
+
+        context.bindElementBuffer.set(this.buffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, array.arrayBuffer, this.dynamicDraw ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
+
+        if (!this.dynamicDraw) {
+            delete array.arrayBuffer;
+        }
+    }
+
+    unbindVAO() {
         // The bound index buffer is part of vertex array object state. We don't want to
         // modify whatever VAO happens to be currently bound, so make sure the default
         // vertex array provided by the context is bound instead.
-        if (gl.extVertexArrayObject === undefined) {
-            (gl: any).extVertexArrayObject = gl.getExtension("OES_vertex_array_object");
+        if (this.context.extVertexArrayObject) {
+            this.context.bindVertexArrayOES.set(null);
         }
-        if (gl.extVertexArrayObject) {
-            (gl: any).extVertexArrayObject.bindVertexArrayOES(null);
-        }
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, array.arrayBuffer, gl.STATIC_DRAW);
-        delete array.arrayBuffer;
     }
 
     bind() {
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.buffer);
+        this.context.bindElementBuffer.set(this.buffer);
+    }
+
+    updateData(array: StructArray) {
+        const gl = this.context.gl;
+        assert(this.dynamicDraw);
+        // The right VAO will get this buffer re-bound later in VertexArrayObject#bind
+        // See https://github.com/mapbox/mapbox-gl-js/issues/5620
+        this.unbindVAO();
+        this.bind();
+        gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, array.arrayBuffer);
     }
 
     destroy() {
+        const gl = this.context.gl;
         if (this.buffer) {
-            this.gl.deleteBuffer(this.buffer);
+            gl.deleteBuffer(this.buffer);
             delete this.buffer;
         }
     }

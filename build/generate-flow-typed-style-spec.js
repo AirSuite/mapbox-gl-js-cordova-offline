@@ -44,6 +44,8 @@ function flowType(property) {
         return `DataDrivenPropertyValueSpecification<${baseType}>`;
     } else if (property['zoom-function']) {
         return `PropertyValueSpecification<${baseType}>`;
+    } else if (property.function) {
+        return `ExpressionSpecification`;
     } else {
         return baseType;
     }
@@ -67,7 +69,7 @@ ${indent}${sealing}}`
 }
 
 function flowSourceTypeName(key) {
-    return key.replace(/source_(.)(.*)/, (_, _1, _2) => `${_1.toUpperCase()}${_2}SourceSpecification`);
+    return key.replace(/source_(.)(.*)/, (_, _1, _2) => `${_1.toUpperCase()}${_2}SourceSpecification`).replace(/_dem/, 'DEM');
 }
 
 function flowLayerTypeName(key) {
@@ -87,11 +89,11 @@ function flowLayer(key) {
     delete layer['paint.*'];
 
     layer.paint.type = () => {
-        return flowObject(spec[`layout_${key}`], '    ', '|');
+        return flowObject(spec[`paint_${key}`], '    ', '|');
     };
 
     layer.layout.type = () => {
-        return flowObject(spec[`paint_${key}`], '    ', '|');
+        return flowObject(spec[`layout_${key}`], '    ', '|');
     };
 
     if (key === 'background') {
@@ -130,29 +132,33 @@ declare type TransitionSpecification = {
 // Note: doesn't capture interpolatable vs. non-interpolatable types.
 
 declare type CameraFunctionSpecification<T> =
-    | { type: 'exponential', stops: Array<[number, T]> }
-    | { type: 'interval',    stops: Array<[number, T]> };
+    | {| type: 'exponential', stops: Array<[number, T]> |}
+    | {| type: 'interval',    stops: Array<[number, T]> |};
 
 declare type SourceFunctionSpecification<T> =
-    | { type: 'exponential', stops: Array<[number, T]>, property: string, default?: T }
-    | { type: 'interval',    stops: Array<[number, T]>, property: string, default?: T }
-    | { type: 'categorical', stops: Array<[string | number | boolean, T]>, property: string, default?: T }
-    | { type: 'identity', property: string, default?: T };
+    | {| type: 'exponential', stops: Array<[number, T]>, property: string, default?: T |}
+    | {| type: 'interval',    stops: Array<[number, T]>, property: string, default?: T |}
+    | {| type: 'categorical', stops: Array<[string | number | boolean, T]>, property: string, default?: T |}
+    | {| type: 'identity', property: string, default?: T |};
 
 declare type CompositeFunctionSpecification<T> =
-    | { type: 'exponential', stops: Array<[{zoom: number, value: number}, T]>, property: string, default?: T }
-    | { type: 'interval',    stops: Array<[{zoom: number, value: number}, T]>, property: string, default?: T }
-    | { type: 'categorical', stops: Array<[{zoom: number, value: string | number | boolean}, T]>, property: string, default?: T };
+    | {| type: 'exponential', stops: Array<[{zoom: number, value: number}, T]>, property: string, default?: T |}
+    | {| type: 'interval',    stops: Array<[{zoom: number, value: number}, T]>, property: string, default?: T |}
+    | {| type: 'categorical', stops: Array<[{zoom: number, value: string | number | boolean}, T]>, property: string, default?: T |};
+
+declare type ExpressionSpecification = Array<mixed>;
 
 declare type PropertyValueSpecification<T> =
     | T
-    | CameraFunctionSpecification<T>;
+    | CameraFunctionSpecification<T>
+    | ExpressionSpecification;
 
 declare type DataDrivenPropertyValueSpecification<T> =
     | T
     | CameraFunctionSpecification<T>
     | SourceFunctionSpecification<T>
-    | CompositeFunctionSpecification<T>;
+    | CompositeFunctionSpecification<T>
+    | ExpressionSpecification;
 
 ${flowObjectDeclaration('StyleSpecification', spec.$root)}
 

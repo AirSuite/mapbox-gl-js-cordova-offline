@@ -26,11 +26,16 @@
     "no-eq-null": "off",
     "no-lonely-if": "off",
     "no-new": "off",
+    "no-restricted-properties": [2, {
+        "object": "Object",
+        "property": "assign"
+    }],
+    "no-unused-vars": ["error", {"argsIgnorePattern": "^_$"}],
     "no-var": "error",
     "no-warning-comments": "error",
     "object-curly-spacing": "off",
     "prefer-arrow-callback": "error",
-    "prefer-const": "error",
+    "prefer-const": ["error", {"destructuring": "all"}],
     "prefer-template": "error",
     "quotes": "off",
     "space-before-function-paren": "off",
@@ -38,6 +43,9 @@
     "no-useless-escape": "off",
     "indent": ["error", 4, {
       "flatTernaryExpressions": true,
+      "CallExpression": {
+        "arguments": "off"
+      },
       "FunctionDeclaration": {
         "parameters": "off"
       },
@@ -45,6 +53,9 @@
         "parameters": "off"
       }
     }]
+  },
+  "globals": {
+    "performance": true
   },
   "env": {
     "es6": true,

@@ -7,7 +7,7 @@ const path = require('path');
 const queue = require('d3-queue').queue;
 const colors = require('colors/safe');
 const template = require('lodash').template;
-const shuffle = require('shuffle-array');
+const shuffler = require('shuffle-seed');
 
 module.exports = function (directory, implementation, options, run) {
     const q = queue(1);
@@ -17,6 +17,8 @@ module.exports = function (directory, implementation, options, run) {
     const ignores = options.ignores || {};
 
     const available = [];
+    const fixtureFilename = options.fixtureFilename || 'style.json';
+
     fs.readdirSync(directory).forEach((group) => {
         if (
             group === 'index.html' ||
@@ -42,10 +44,10 @@ module.exports = function (directory, implementation, options, run) {
         try {
             if (!fs.lstatSync(path.join(directory, group, test)).isDirectory())
                 return false;
-            if (!fs.lstatSync(path.join(directory, group, test, 'style.json')).isFile())
+            if (!fs.lstatSync(path.join(directory, group, test, fixtureFilename)).isFile())
                 return false;
         } catch (err) {
-            console.log(colors.blue(`* omitting ${group} ${test} due to missing style`));
+            console.log(colors.blue(`* omitting ${group} ${test} due to missing ${fixtureFilename}`));
             return false;
         }
 
@@ -65,7 +67,10 @@ module.exports = function (directory, implementation, options, run) {
     }
 
     function addTestToSequence(group, test) {
-        const style = require(path.join(directory, group, test, 'style.json'));
+        // Skip ignored and malformed tests.
+        if (!shouldRunTest(group, test)) return;
+
+        const style = require(path.join(directory, group, test, fixtureFilename));
 
         server.localizeURLs(style);
 
@@ -118,19 +123,26 @@ module.exports = function (directory, implementation, options, run) {
         });
     }
 
-    // Skip ignored and malformed tests.
-    sequence = sequence.filter((value) => { return shouldRunTest(value.params.group, value.params.test); });
 
     if (options.shuffle) {
-        shuffle(sequence);
+        console.log(colors.white(`* shuffle seed: `) + colors.bold(`${options.seed}`));
+        sequence = shuffler.shuffle(sequence, options.seed);
     }
 
     q.defer(server.listen);
 
     sequence.forEach((test) => {
         q.defer((callback) => {
-            run(test.style, test.params, (err) => {
-                if (err) return callback(err);
+            try {
+                run(test.style, test.params, handleResult);
+            } catch (error) {
+                handleResult(error);
+            }
+
+            function handleResult (error) {
+                if (error) {
+                    test.params.error = error;
+                }
 
                 if (test.params.ignored && !test.params.ok) {
                     test.params.color = '#9E9E9E';
@@ -140,6 +152,10 @@ module.exports = function (directory, implementation, options, run) {
                     test.params.color = '#E8A408';
                     test.params.status = 'ignored passed';
                     console.log(colors.yellow(`* ignore ${test.params.group} ${test.params.test} (${test.params.ignored})`));
+                } else if (test.params.error) {
+                    test.params.color = 'red';
+                    test.params.status = 'errored';
+                    console.log(colors.red(`* errored ${test.params.group} ${test.params.test}`));
                 } else if (!test.params.ok) {
                     test.params.color = 'red';
                     test.params.status = 'failed';
@@ -151,7 +167,7 @@ module.exports = function (directory, implementation, options, run) {
                 }
 
                 callback(null, test.params);
-            });
+            }
         });
     });
 
@@ -174,13 +190,16 @@ module.exports = function (directory, implementation, options, run) {
         let passedCount = 0,
             ignoreCount = 0,
             ignorePassCount = 0,
-            failedCount = 0;
+            failedCount = 0,
+            erroredCount = 0;
 
         results.forEach((params) => {
             if (params.ignored && !params.ok) {
                 ignoreCount++;
             } else if (params.ignored) {
                 ignorePassCount++;
+            } else if (params.error) {
+                erroredCount++;
             } else if (!params.ok) {
                 failedCount++;
             } else {
@@ -188,7 +207,7 @@ module.exports = function (directory, implementation, options, run) {
             }
         });
 
-        const totalCount = passedCount + ignorePassCount + ignoreCount + failedCount;
+        const totalCount = passedCount + ignorePassCount + ignoreCount + failedCount + erroredCount;
 
         if (passedCount > 0) {
             console.log(colors.green('%d passed (%s%)'),
@@ -210,11 +229,17 @@ module.exports = function (directory, implementation, options, run) {
                 failedCount, (100 * failedCount / totalCount).toFixed(1));
         }
 
+        if (erroredCount > 0) {
+            console.log(colors.red('%d errored (%s%)'),
+                erroredCount, (100 * erroredCount / totalCount).toFixed(1));
+        }
+
         const resultsTemplate = template(fs.readFileSync(path.join(__dirname, '..', 'results.html.tmpl'), 'utf8'));
         const itemTemplate = template(fs.readFileSync(path.join(directory, 'result_item.html.tmpl'), 'utf8'));
 
-        const failed = results.filter(r => /failed/.test(r.status));
-        const resultsShell = resultsTemplate({ failed, sequence })
+        const unsuccessful = results.filter(r => r.status === 'failed' || r.status === 'errored');
+
+        const resultsShell = resultsTemplate({ unsuccessful, sequence, shuffle: options.shuffle, seed: options.seed })
             .split('<!-- results go here -->');
 
         const p = path.join(directory, options.recycleMap ? 'index-recycle-map.html' : 'index.html');
@@ -223,14 +248,14 @@ module.exports = function (directory, implementation, options, run) {
         const q = queue(1);
         q.defer(write, out, resultsShell[0]);
         for (const r of results) {
-            q.defer(write, out, itemTemplate({ r, hasFailedTests: failed.length > 0 }));
+            q.defer(write, out, itemTemplate({ r, hasFailedTests: unsuccessful.length > 0 }));
         }
         q.defer(write, out, resultsShell[1]);
         q.await(() => {
             out.end();
             out.on('close', () => {
                 console.log(`Results at: ${p}`);
-                process.exit(failedCount === 0 ? 0 : 1);
+                process.exit((failedCount + erroredCount) === 0 ? 0 : 1);
             });
         });
     });

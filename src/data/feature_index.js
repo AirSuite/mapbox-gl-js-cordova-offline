@@ -4,29 +4,21 @@ const Point = require('@mapbox/point-geometry');
 const loadGeometry = require('./load_geometry');
 const EXTENT = require('./extent');
 const featureFilter = require('../style-spec/feature_filter');
-const createStructArrayType = require('../util/struct_array');
 const Grid = require('grid-index');
 const DictionaryCoder = require('../util/dictionary_coder');
 const vt = require('@mapbox/vector-tile');
 const Protobuf = require('pbf');
 const GeoJSONFeature = require('../util/vectortile_to_geojson');
 const arraysIntersect = require('../util/util').arraysIntersect;
+const {OverscaledTileID} = require('../source/tile_id');
+const {register} = require('../util/web_worker_transfer');
 
-import type CollisionTile from '../symbol/collision_tile';
-import type TileCoord from '../source/tile_coord';
+import type CollisionIndex from '../symbol/collision_index';
 import type StyleLayer from '../style/style_layer';
-import type {SerializedStructArray} from '../util/struct_array';
+import type {FeatureFilter} from '../style-spec/feature_filter';
+import type {CollisionBoxArray} from './array_types';
 
-const FeatureIndexArray = createStructArrayType({
-    members: [
-        // the index of the feature in the original vectortile
-        { type: 'Uint32', name: 'featureIndex' },
-        // the source layer the feature appears in
-        { type: 'Uint16', name: 'sourceLayerIndex' },
-        // the bucket the feature appears in
-        { type: 'Uint16', name: 'bucketIndex' }
-    ]
-});
+const {FeatureIndexArray} = require('./array_types');
 
 type QueryParameters = {
     scale: number,
@@ -37,19 +29,15 @@ type QueryParameters = {
     params: {
         filter: FilterSpecification,
         layers: Array<string>,
-    }
-}
-
-export type SerializedFeatureIndex = {
-    coord: TileCoord,
-    overscaling: number,
-    grid: ArrayBuffer,
-    featureIndexArray: SerializedStructArray,
-    bucketLayerIDs: Array<Array<string>>
+    },
+    collisionBoxArray: CollisionBoxArray,
+    sourceID: string,
+    bucketInstanceIds: { [number]: boolean },
+    collisionIndex: CollisionIndex
 }
 
 class FeatureIndex {
-    coord: TileCoord;
+    tileID: OverscaledTileID;
     overscaling: number;
     x: number;
     y: number;
@@ -60,43 +48,27 @@ class FeatureIndex {
     rawTileData: ArrayBuffer;
     bucketLayerIDs: Array<Array<string>>;
 
-    collisionTile: CollisionTile;
     vtLayers: {[string]: VectorTileLayer};
     sourceLayerCoder: DictionaryCoder;
 
-    static deserialize(serialized: SerializedFeatureIndex,
-                       rawTileData: ArrayBuffer,
-                       collisionTile: CollisionTile) {
-        const self = new FeatureIndex(
-            serialized.coord,
-            serialized.overscaling,
-            new Grid(serialized.grid),
-            new FeatureIndexArray(serialized.featureIndexArray));
+    collisionIndex: CollisionIndex;
 
-        self.rawTileData = rawTileData;
-        self.bucketLayerIDs = serialized.bucketLayerIDs;
-        self.setCollisionTile(collisionTile);
-
-        return self;
-    }
-
-    constructor(coord: TileCoord,
+    constructor(tileID: OverscaledTileID,
                 overscaling: number,
                 grid?: Grid,
                 featureIndexArray?: FeatureIndexArray) {
-        this.coord = coord;
+        this.tileID = tileID;
         this.overscaling = overscaling;
-        this.x = coord.x;
-        this.y = coord.y;
-        this.z = coord.z - Math.log(overscaling) / Math.LN2;
+        this.x = tileID.canonical.x;
+        this.y = tileID.canonical.y;
+        this.z = tileID.canonical.z;
         this.grid = grid || new Grid(EXTENT, 16, 0);
         this.featureIndexArray = featureIndexArray || new FeatureIndexArray();
     }
 
-    insert(feature: VectorTileFeature, featureIndex: number, sourceLayerIndex: number, bucketIndex: number) {
+    insert(feature: VectorTileFeature, geometry: Array<Array<Point>>, featureIndex: number, sourceLayerIndex: number, bucketIndex: number) {
         const key = this.featureIndexArray.length;
         this.featureIndexArray.emplaceBack(featureIndex, sourceLayerIndex, bucketIndex);
-        const geometry = loadGeometry(feature);
 
         for (let r = 0; r < geometry.length; r++) {
             const ring = geometry[r];
@@ -112,24 +84,6 @@ class FeatureIndex {
 
             this.grid.insert(key, bbox[0], bbox[1], bbox[2], bbox[3]);
         }
-    }
-
-    setCollisionTile(collisionTile: CollisionTile) {
-        this.collisionTile = collisionTile;
-    }
-
-    serialize(transferables?: Array<Transferable>): SerializedFeatureIndex {
-        const grid = this.grid.toArrayBuffer();
-        if (transferables) {
-            transferables.push(grid);
-        }
-        return {
-            coord: this.coord,
-            overscaling: this.overscaling,
-            grid: grid,
-            featureIndexArray: this.featureIndexArray.serialize(transferables),
-            bucketLayerIDs: this.bucketLayerIDs
-        };
     }
 
     // Finds features in this tile at a particular position.
@@ -167,9 +121,11 @@ class FeatureIndex {
         matching.sort(topDownFeatureComparator);
         this.filterMatching(result, matching, this.featureIndexArray, queryGeometry, filter, params.layers, styleLayers, args.bearing, pixelsToTileUnits);
 
-        const matchingSymbols = this.collisionTile.queryRenderedSymbols(queryGeometry, args.scale);
+        const matchingSymbols = args.collisionIndex ?
+            args.collisionIndex.queryRenderedSymbols(queryGeometry, this.tileID, EXTENT / args.tileSize, args.collisionBoxArray, args.sourceID, args.bucketInstanceIds) :
+            [];
         matchingSymbols.sort();
-        this.filterMatching(result, matchingSymbols, this.collisionTile.collisionBoxArray, queryGeometry, filter, params.layers, styleLayers, args.bearing, pixelsToTileUnits);
+        this.filterMatching(result, matchingSymbols, args.collisionBoxArray, queryGeometry, filter, params.layers, styleLayers, args.bearing, pixelsToTileUnits);
 
         return result;
     }
@@ -177,9 +133,9 @@ class FeatureIndex {
     filterMatching(
         result: {[string]: Array<{ featureIndex: number, feature: GeoJSONFeature }>},
         matching: Array<any>,
-        array: any,
+        array: FeatureIndexArray | CollisionBoxArray,
         queryGeometry: Array<Array<Point>>,
-        filter: any,
+        filter: FeatureFilter,
         filterLayerIDs: Array<string>,
         styleLayers: {[string]: StyleLayer},
         bearing: number,
@@ -202,7 +158,7 @@ class FeatureIndex {
             const sourceLayer = this.vtLayers[sourceLayerName];
             const feature = sourceLayer.feature(match.featureIndex);
 
-            if (!filter(feature)) continue;
+            if (!filter({zoom: this.tileID.overscaledZ}, feature)) continue;
 
             let geometry = null;
 
@@ -247,6 +203,12 @@ class FeatureIndex {
         return false;
     }
 }
+
+register(
+    'FeatureIndex',
+    FeatureIndex,
+    { omit: ['rawTileData', 'sourceLayerCoder', 'collisionIndex'] }
+);
 
 module.exports = FeatureIndex;
 

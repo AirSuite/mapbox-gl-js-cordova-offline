@@ -5,11 +5,14 @@ const util = require('../util/util');
 const window = require('../util/window');
 const EXTENT = require('../data/extent');
 const ResourceType = require('../util/ajax').ResourceType;
+const browser = require('../util/browser');
 
 import type {Source} from './source';
 import type Map from '../ui/map';
 import type Dispatcher from '../util/dispatcher';
 import type Tile from './tile';
+import type {Callback} from '../types/callback';
+import type {PerformanceResourceTiming} from '../types/performance_resource_timing';
 
 /**
  * A source containing GeoJSON.
@@ -74,8 +77,11 @@ class GeoJSONSource extends Evented implements Source {
     map: Map;
     workerID: number;
     _loaded: boolean;
+    _collectResourceTiming: boolean;
+    _resourceTiming: Array<PerformanceResourceTiming>;
+    _removed: boolean;
 
-    constructor(id: string, options: GeojsonSourceSpecification & { workerOptions?: any }, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: GeojsonSourceSpecification & {workerOptions?: any, collectResourceTiming: boolean}, dispatcher: Dispatcher, eventedParent: Evented) {
         super();
 
         this.id = id;
@@ -89,12 +95,16 @@ class GeoJSONSource extends Evented implements Source {
         this.tileSize = 512;
         this.isTileClipped = true;
         this.reparseOverscaled = true;
+        this._removed = false;
 
         this.dispatcher = dispatcher;
         this.setEventedParent(eventedParent);
 
-        this._data = options.data;
+        this._data = (options.data: any);
         this._options = util.extend({}, options);
+
+        this._collectResourceTiming = options.collectResourceTiming;
+        this._resourceTiming = [];
 
         if (options.maxzoom !== undefined) this.maxzoom = options.maxzoom;
         if (options.type) this.type = options.type;
@@ -132,9 +142,16 @@ class GeoJSONSource extends Evented implements Source {
                 this.fire('error', {error: err});
                 return;
             }
+
+            const data: Object = { dataType: 'source', sourceDataType: 'metadata' };
+            if (this._collectResourceTiming && this._resourceTiming && (this._resourceTiming.length > 0)) {
+                data.resourceTiming = this._resourceTiming;
+                this._resourceTiming = [];
+            }
+
             // although GeoJSON sources contain no metadata, we fire this event to let the SourceCache
             // know its ok to start requesting tiles.
-            this.fire('data', {dataType: 'source', sourceDataType: 'metadata'});
+            this.fire('data', data);
         });
     }
 
@@ -156,7 +173,13 @@ class GeoJSONSource extends Evented implements Source {
             if (err) {
                 return this.fire('error', { error: err });
             }
-            this.fire('data', {dataType: 'source', sourceDataType: 'content'});
+
+            const data: Object = { dataType: 'source', sourceDataType: 'content' };
+            if (this._collectResourceTiming && this._resourceTiming && (this._resourceTiming.length > 0)) {
+                data.resourceTiming = this._resourceTiming;
+                this._resourceTiming = [];
+            }
+            this.fire('data', data);
         });
 
         return this;
@@ -172,53 +195,63 @@ class GeoJSONSource extends Evented implements Source {
         const data = this._data;
         if (typeof data === 'string') {
             options.request = this.map._transformRequest(resolveURL(data), ResourceType.Source);
+            options.request.collectResourceTiming = this._collectResourceTiming;
         } else {
             options.data = JSON.stringify(data);
         }
 
-        // target {this.type}.loadData rather than literally geojson.loadData,
+        // target {this.type}.{options.source}.loadData rather than literally geojson.loadData,
         // so that other geojson-like source types can easily reuse this
         // implementation
-        this.workerID = this.dispatcher.send(`${this.type}.loadData`, options, (err) => {
+        this.workerID = this.dispatcher.send(`${this.type}.${options.source}.loadData`, options, (err, result) => {
+            if (this._removed || (result && result.abandoned)) {
+                return;
+            }
+
             this._loaded = true;
+
+            if (result && result.resourceTiming && result.resourceTiming[this.id])
+                this._resourceTiming = result.resourceTiming[this.id].slice(0);
+            // Any `loadData` calls that piled up while we were processing
+            // this one will get coalesced into a single call when this
+            // 'coalesce' message is processed.
+            // We would self-send from the worker if we had access to its
+            // message queue. Waiting instead for the 'coalesce' to round-trip
+            // through the foreground just means we're throttling the worker
+            // to run at a little less than full-throttle.
+            this.dispatcher.send(`${this.type}.${options.source}.coalesce`, null, null, this.workerID);
             callback(err);
+
         }, this.workerID);
     }
 
     loadTile(tile: Tile, callback: Callback<void>) {
-        const message = !tile.workerID || tile.state === 'expired' ? 'loadTile' : 'reloadTile';
+        const message = tile.workerID === undefined || tile.state === 'expired' ? 'loadTile' : 'reloadTile';
         const params = {
             type: this.type,
             uid: tile.uid,
-            coord: tile.coord,
-            zoom: tile.coord.z,
+            tileID: tile.tileID,
+            zoom: tile.tileID.overscaledZ,
             maxZoom: this.maxzoom,
             tileSize: this.tileSize,
             source: this.id,
-            overscaling: tile.coord.z > this.maxzoom ? Math.pow(2, tile.coord.z - this.maxzoom) : 1,
-            angle: this.map.transform.angle,
-            pitch: this.map.transform.pitch,
-            cameraToCenterDistance: this.map.transform.cameraToCenterDistance,
-            cameraToTileDistance: this.map.transform.cameraToTileDistance(tile),
+            pixelRatio: browser.devicePixelRatio,
+            overscaling: tile.tileID.overscaleFactor(),
             showCollisionBoxes: this.map.showCollisionBoxes
         };
 
         tile.workerID = this.dispatcher.send(message, params, (err, data) => {
             tile.unloadVectorData();
 
-            if (tile.aborted)
-                return;
+            if (tile.aborted) {
+                return callback(null);
+            }
 
             if (err) {
                 return callback(err);
             }
 
-            tile.loadVectorData(data, this.map.painter);
-
-            if (tile.redoWhenDone) {
-                tile.redoWhenDone = false;
-                tile.redoPlacement(this);
-            }
+            tile.loadVectorData(data, this.map.painter, message === 'reloadTile');
 
             return callback(null);
         }, this.workerID);
@@ -230,11 +263,12 @@ class GeoJSONSource extends Evented implements Source {
 
     unloadTile(tile: Tile) {
         tile.unloadVectorData();
-        this.dispatcher.send('removeTile', { uid: tile.uid, type: this.type, source: this.id }, () => {}, tile.workerID);
+        this.dispatcher.send('removeTile', { uid: tile.uid, type: this.type, source: this.id }, null, tile.workerID);
     }
 
     onRemove() {
-        this.dispatcher.broadcast('removeSource', { type: this.type, source: this.id }, () => {});
+        this._removed = true;
+        this.dispatcher.send('removeSource', { type: this.type, source: this.id }, null, this.workerID);
     }
 
     serialize() {
@@ -242,6 +276,10 @@ class GeoJSONSource extends Evented implements Source {
             type: this.type,
             data: this._data
         });
+    }
+
+    hasTransition() {
+        return false;
     }
 }
 

@@ -33,6 +33,7 @@ module.exports = function bindHandlers(map: Map, options: {}) {
     el.addEventListener('mousedown', onMouseDown, false);
     el.addEventListener('mouseup', onMouseUp, false);
     el.addEventListener('mousemove', onMouseMove, false);
+    el.addEventListener('mouseover', onMouseOver, false);
     el.addEventListener('touchstart', onTouchStart, false);
     el.addEventListener('touchend', onTouchEnd, false);
     el.addEventListener('touchmove', onTouchMove, false);
@@ -46,7 +47,10 @@ module.exports = function bindHandlers(map: Map, options: {}) {
     }
 
     function onMouseDown(e: MouseEvent) {
-        map.stop();
+        if (!map.doubleClickZoom.isActive()) {
+            map.stop();
+        }
+
         startPos = DOM.mousePos(el, e);
         fireMouseEvent('mousedown', e);
 
@@ -75,6 +79,15 @@ module.exports = function bindHandlers(map: Map, options: {}) {
         if (target !== el) return;
 
         fireMouseEvent('mousemove', e);
+    }
+
+    function onMouseOver(e: MouseEvent) {
+
+        let target: any = e.toElement || e.target;
+        while (target && target !== el) target = target.parentNode;
+        if (target !== el) return;
+
+        fireMouseEvent('mouseover', e);
     }
 
     function onTouchStart(e: TouchEvent) {

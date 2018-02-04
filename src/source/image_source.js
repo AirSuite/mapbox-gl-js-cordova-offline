@@ -1,22 +1,25 @@
 // @flow
 
 const util = require('../util/util');
-const window = require('../util/window');
-const TileCoord = require('./tile_coord');
+const {CanonicalTileID} = require('./tile_id');
 const LngLat = require('../geo/lng_lat');
 const Point = require('@mapbox/point-geometry');
 const Evented = require('../util/evented');
 const ajax = require('../util/ajax');
+const browser = require('../util/browser');
 const EXTENT = require('../data/extent');
-const RasterBoundsArray = require('../data/raster_bounds_array');
-const VertexBuffer = require('../gl/vertex_buffer');
+const {RasterBoundsArray} = require('../data/array_types');
+const rasterBoundsAttributes = require('../data/raster_bounds_attributes');
 const VertexArrayObject = require('../render/vertex_array_object');
+const Texture = require('../render/texture');
 
 import type {Source} from './source';
 import type Map from '../ui/map';
 import type Dispatcher from '../util/dispatcher';
 import type Tile from './tile';
 import type Coordinate from '../geo/coordinate';
+import type {Callback} from '../types/callback';
+import type VertexBuffer from '../gl/vertex_buffer';
 
 /**
  * A data source containing an image.
@@ -61,11 +64,10 @@ class ImageSource extends Evented implements Source {
     options: any;
     dispatcher: Dispatcher;
     map: Map;
-    texture: WebGLTexture;
-    textureLoaded: boolean;
-    image: HTMLImageElement;
+    texture: Texture;
+    image: ImageData;
     centerCoord: Coordinate;
-    coord: TileCoord;
+    tileID: CanonicalTileID;
     _boundsArray: RasterBoundsArray;
     boundsBuffer: VertexBuffer;
     boundsVAO: VertexArrayObject;
@@ -85,7 +87,6 @@ class ImageSource extends Evented implements Source {
         this.setEventedParent(eventedParent);
 
         this.options = options;
-        this.textureLoaded = false;
     }
 
     load() {
@@ -97,7 +98,7 @@ class ImageSource extends Evented implements Source {
             if (err) {
                 this.fire('error', {error: err});
             } else if (image) {
-                this.image = image;
+                this.image = browser.getImageData(image);
                 this._finishLoading();
             }
         });
@@ -145,7 +146,7 @@ class ImageSource extends Evented implements Source {
         // represent integer tile coordinates
         centerCoord.column = Math.floor(centerCoord.column);
         centerCoord.row = Math.floor(centerCoord.row);
-        this.coord = new TileCoord(centerCoord.zoom, centerCoord.column, centerCoord.row);
+        this.tileID = new CanonicalTileID(centerCoord.zoom, centerCoord.column, centerCoord.row);
 
         // Constrain min/max zoom to our tile's zoom level in order to force
         // SourceCache to request this tile (no matter what the map's zoom
@@ -177,33 +178,24 @@ class ImageSource extends Evented implements Source {
     }
 
     prepare() {
-        if (Object.keys(this.tiles).length === 0 || !this.image) return;
-        this._prepareImage(this.map.painter.gl, this.image);
-    }
+        if (Object.keys(this.tiles).length === 0 || !this.image) {
+            return;
+        }
 
-    _prepareImage(gl: WebGLRenderingContext, image: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement, resize?: boolean) {
+        const context = this.map.painter.context;
+        const gl = context.gl;
+
         if (!this.boundsBuffer) {
-            this.boundsBuffer = new VertexBuffer(gl, this._boundsArray);
+            this.boundsBuffer = context.createVertexBuffer(this._boundsArray, rasterBoundsAttributes.members);
         }
 
         if (!this.boundsVAO) {
             this.boundsVAO = new VertexArrayObject();
         }
 
-        if (!this.textureLoaded) {
-            this.textureLoaded = true;
-            this.texture = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, this.texture);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        } else if (resize) {
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        } else if (image instanceof window.HTMLVideoElement || image instanceof window.ImageData || image instanceof window.HTMLCanvasElement) {
-            gl.bindTexture(gl.TEXTURE_2D, this.texture);
-            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        if (!this.texture) {
+            this.texture = new Texture(context, this.image, gl.RGBA);
+            this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
 
         for (const w in this.tiles) {
@@ -216,14 +208,14 @@ class ImageSource extends Evented implements Source {
     }
 
     loadTile(tile: Tile, callback: Callback<void>) {
-        // We have a single tile -- whoose coordinates are this.coord -- that
+        // We have a single tile -- whoose coordinates are this.tileID -- that
         // covers the image we want to render.  If that's the one being
         // requested, set it up with the image; otherwise, mark the tile as
         // `errored` to indicate that we have no data for it.
         // If the world wraps, we may have multiple "wrapped" copies of the
         // single tile.
-        if (this.coord && this.coord.toString() === tile.coord.toString()) {
-            this.tiles[String(tile.coord.w)] = tile;
+        if (this.tileID && this.tileID.equals(tile.tileID.canonical)) {
+            this.tiles[String(tile.tileID.wrap)] = tile;
             tile.buckets = {};
             callback(null);
         } else {
@@ -235,9 +227,13 @@ class ImageSource extends Evented implements Source {
     serialize(): Object {
         return {
             type: 'image',
-            urls: this.options.url,
+            url: this.options.url,
             coordinates: this.coordinates
         };
+    }
+
+    hasTransition() {
+        return false;
     }
 }
 

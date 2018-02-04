@@ -1,8 +1,13 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const vt = require('@mapbox/vector-tile');
+const Protobuf = require('pbf');
 const test = require('mapbox-gl-js-test').test;
 const VectorTileWorkerSource = require('../../../src/source/vector_tile_worker_source');
 const StyleLayerIndex = require('../../../src/style/style_layer_index');
+const perf = require('../../../src/util/performance');
 
 test('abortTile', (t) => {
     t.test('aborts pending request', (t) => {
@@ -11,15 +16,22 @@ test('abortTile', (t) => {
         source.loadTile({
             source: 'source',
             uid: 0,
+            tileID: { overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0} },
             request: { url: 'http://localhost:2900/abort' }
-        }, t.fail);
+        }, (err, res) => {
+            t.false(err);
+            t.false(res);
+        });
 
         source.abortTile({
             source: 'source',
             uid: 0
+        }, (err, res) => {
+            t.false(err);
+            t.false(res);
         });
 
-        t.deepEqual(source.loading, { source: {} });
+        t.deepEqual(source.loading, {});
         t.end();
     });
 
@@ -31,69 +43,79 @@ test('removeTile', (t) => {
         const source = new VectorTileWorkerSource(null, new StyleLayerIndex());
 
         source.loaded = {
-            source: {
-                '0': {}
-            }
+            '0': {}
         };
 
         source.removeTile({
             source: 'source',
             uid: 0
+        }, (err, res) => {
+            t.false(err);
+            t.false(res);
         });
 
-        t.deepEqual(source.loaded, { source: {} });
+        t.deepEqual(source.loaded, {});
         t.end();
     });
 
     t.end();
 });
 
-test('redoPlacement', (t) => {
+test('loadTile', (t) => {
+    t.test('resourceTiming', (t) => {
+        const rawTileData = fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'));
 
-    t.test('on loaded tile', (t) => {
-        const source = new VectorTileWorkerSource(null, new StyleLayerIndex());
-        const tile = {
-            redoPlacement: function(angle, pitch, cameraToCenterDistance, cameraToTileDistance, showCollisionBoxes) {
-                t.equal(angle, 60);
-                t.equal(pitch, 30);
-                t.equal(showCollisionBoxes, false);
-                return {
-                    result: {isResult: true},
-                    transferables: {isTransferrables: true}
-                };
-            }
+        function loadVectorData(params, callback) {
+            return callback(null, {
+                vectorTile: new vt.VectorTile(new Protobuf(rawTileData)),
+                rawData: rawTileData,
+                cacheControl: null,
+                expires: null
+            });
+        }
+
+        const exampleResourceTiming = {
+            connectEnd: 473,
+            connectStart: 473,
+            decodedBodySize: 86494,
+            domainLookupEnd: 473,
+            domainLookupStart: 473,
+            duration: 341,
+            encodedBodySize: 52528,
+            entryType: "resource",
+            fetchStart: 473.5,
+            initiatorType: "xmlhttprequest",
+            name: "http://localhost:2900/faketile.pbf",
+            nextHopProtocol: "http/1.1",
+            redirectEnd: 0,
+            redirectStart: 0,
+            requestStart: 477,
+            responseEnd: 815,
+            responseStart: 672,
+            secureConnectionStart: 0
         };
-        source.loaded = {mapbox: {3: tile}};
 
-        source.redoPlacement({
-            uid: 3,
-            source: 'mapbox',
-            angle: 60,
-            pitch: 30,
-            cameraToCenterDistance: 1,
-            cameraToTileDistance: 1,
-            showCollisionBoxes: false
-        }, (err, result, transferables) => {
-            t.error(err);
-            t.ok(result.isResult);
-            t.ok(transferables.isTransferrables);
+        const layerIndex = new StyleLayerIndex([{
+            id: 'test',
+            source: 'source',
+            'source-layer': 'test',
+            type: 'fill'
+        }]);
+
+        const source = new VectorTileWorkerSource(null, layerIndex, loadVectorData);
+
+        t.stub(perf, 'getEntriesByName').callsFake(() => { return [ exampleResourceTiming ]; });
+
+        source.loadTile({
+            source: 'source',
+            uid: 0,
+            tileID: { overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0} },
+            request: { url: 'http://localhost:2900/faketile.pbf', collectResourceTiming: true }
+        }, (err, res) => {
+            t.false(err);
+            t.deepEquals(res.resourceTiming[0], exampleResourceTiming, 'resourceTiming resp is expected');
             t.end();
         });
-    });
-
-    t.test('on loading tile', (t) => {
-        const source = new VectorTileWorkerSource(null, new StyleLayerIndex());
-        const tile = {};
-        source.loading = {mapbox: {3: tile}};
-
-        source.redoPlacement({
-            uid: 3,
-            source: 'mapbox',
-            angle: 60
-        });
-
-        t.equal(source.loading.mapbox[3].angle, 60);
-        t.end();
     });
 
     t.end();

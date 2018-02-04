@@ -1,10 +1,13 @@
 // @flow
 
 const Point = require('@mapbox/point-geometry');
+const {GLYPH_PBF_BORDER} = require('../style/parse_glyph_pbf');
 
 import type Anchor from './anchor';
 import type {PositionedIcon, Shaping} from './shaping';
-import type StyleLayer from '../style/style_layer';
+import type SymbolStyleLayer from '../style/style_layer/symbol_style_layer';
+import type {Feature} from '../style-spec/expression';
+import type {GlyphPosition} from '../render/glyph_atlas';
 
 module.exports = {
     getIconQuads,
@@ -45,11 +48,11 @@ export type SymbolQuad = {
  */
 function getIconQuads(anchor: Anchor,
                       shapedIcon: PositionedIcon,
-                      layer: StyleLayer,
+                      layer: SymbolStyleLayer,
                       alongLine: boolean,
                       shapedText: Shaping,
                       globalProperties: Object,
-                      featureProperties: Object): Array<SymbolQuad> {
+                      feature: Feature): Array<SymbolQuad> {
     const image = shapedIcon.image;
     const layout = layer.layout;
 
@@ -65,24 +68,24 @@ function getIconQuads(anchor: Anchor,
     let tl, tr, br, bl;
 
     // text-fit mode
-    if (layout['icon-text-fit'] !== 'none' && shapedText) {
+    if (layout.get('icon-text-fit') !== 'none' && shapedText) {
         const iconWidth = (right - left),
             iconHeight = (bottom - top),
-            size = layout['text-size'] / 24,
+            size = layout.get('text-size').evaluate(feature) / 24,
             textLeft = shapedText.left * size,
             textRight = shapedText.right * size,
             textTop = shapedText.top * size,
             textBottom = shapedText.bottom * size,
             textWidth = textRight - textLeft,
             textHeight = textBottom - textTop,
-            padT = layout['icon-text-fit-padding'][0],
-            padR = layout['icon-text-fit-padding'][1],
-            padB = layout['icon-text-fit-padding'][2],
-            padL = layout['icon-text-fit-padding'][3],
-            offsetY = layout['icon-text-fit'] === 'width' ? (textHeight - iconHeight) * 0.5 : 0,
-            offsetX = layout['icon-text-fit'] === 'height' ? (textWidth - iconWidth) * 0.5 : 0,
-            width = layout['icon-text-fit'] === 'width' || layout['icon-text-fit'] === 'both' ? textWidth : iconWidth,
-            height = layout['icon-text-fit'] === 'height' || layout['icon-text-fit'] === 'both' ? textHeight : iconHeight;
+            padT = layout.get('icon-text-fit-padding')[0],
+            padR = layout.get('icon-text-fit-padding')[1],
+            padB = layout.get('icon-text-fit-padding')[2],
+            padL = layout.get('icon-text-fit-padding')[3],
+            offsetY = layout.get('icon-text-fit') === 'width' ? (textHeight - iconHeight) * 0.5 : 0,
+            offsetX = layout.get('icon-text-fit') === 'height' ? (textWidth - iconWidth) * 0.5 : 0,
+            width = layout.get('icon-text-fit') === 'width' || layout.get('icon-text-fit') === 'both' ? textWidth : iconWidth,
+            height = layout.get('icon-text-fit') === 'height' || layout.get('icon-text-fit') === 'both' ? textHeight : iconHeight;
         tl = new Point(textLeft + offsetX - padL,         textTop + offsetY - padT);
         tr = new Point(textLeft + offsetX + padR + width, textTop + offsetY - padT);
         br = new Point(textLeft + offsetX + padR + width, textTop + offsetY + padB + height);
@@ -95,7 +98,7 @@ function getIconQuads(anchor: Anchor,
         bl = new Point(left, bottom);
     }
 
-    const angle = layer.getLayoutValue('icon-rotate', globalProperties, featureProperties) * Math.PI / 180;
+    const angle = layer.layout.get('icon-rotate').evaluate(feature) * Math.PI / 180;
 
     if (angle) {
         const sin = Math.sin(angle),
@@ -125,14 +128,15 @@ function getIconQuads(anchor: Anchor,
  */
 function getGlyphQuads(anchor: Anchor,
                        shaping: Shaping,
-                       layer: StyleLayer,
+                       layer: SymbolStyleLayer,
                        alongLine: boolean,
                        globalProperties: Object,
-                       featureProperties: Object): Array<SymbolQuad> {
+                       feature: Feature,
+                       positions: {[number]: GlyphPosition}): Array<SymbolQuad> {
 
     const oneEm = 24;
-    const textRotate = layer.getLayoutValue('text-rotate', globalProperties, featureProperties) * Math.PI / 180;
-    const textOffset = layer.getLayoutValue('text-offset', globalProperties, featureProperties).map((t)=> t * oneEm);
+    const textRotate = layer.layout.get('text-rotate').evaluate(feature) * Math.PI / 180;
+    const textOffset = layer.layout.get('text-offset').evaluate(feature).map((t)=> t * oneEm);
 
     const positionedGlyphs = shaping.positionedGlyphs;
     const quads = [];
@@ -140,13 +144,17 @@ function getGlyphQuads(anchor: Anchor,
 
     for (let k = 0; k < positionedGlyphs.length; k++) {
         const positionedGlyph = positionedGlyphs[k];
-        const glyph = positionedGlyph.glyph;
+        const glyph = positions[positionedGlyph.glyph];
         if (!glyph) continue;
 
         const rect = glyph.rect;
         if (!rect) continue;
 
-        const halfAdvance = glyph.advance / 2;
+        // The rects have an addditional buffer that is not included in their size.
+        const glyphPadding = 1.0;
+        const rectBuffer = GLYPH_PBF_BORDER + glyphPadding;
+
+        const halfAdvance = glyph.metrics.advance / 2;
 
         const glyphOffset = alongLine ?
             [positionedGlyph.x + halfAdvance, positionedGlyph.y] :
@@ -157,8 +165,8 @@ function getGlyphQuads(anchor: Anchor,
             [positionedGlyph.x + halfAdvance + textOffset[0], positionedGlyph.y + textOffset[1]];
 
 
-        const x1 = glyph.left - halfAdvance + builtInOffset[0];
-        const y1 = -glyph.top + builtInOffset[1];
+        const x1 = glyph.metrics.left - rectBuffer - halfAdvance + builtInOffset[0];
+        const y1 = -glyph.metrics.top - rectBuffer + builtInOffset[1];
         const x2 = x1 + rect.w;
         const y2 = y1 + rect.h;
 
