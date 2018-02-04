@@ -5,8 +5,9 @@ import type {RGBAImage, AlphaImage} from '../util/image';
 import type {OverscaledTileID} from './tile_id';
 import type {Bucket} from '../data/bucket';
 import type FeatureIndex from '../data/feature_index';
-import type CollisionBoxArray from '../symbol/collision_box';
+import type {CollisionBoxArray} from '../data/array_types';
 import type {DEMData} from '../data/dem_data';
+import type {PerformanceResourceTiming} from '../types/performance_resource_timing';
 
 export type TileParameters = {
     source: string,
@@ -22,7 +23,8 @@ export type WorkerTileParameters = TileParameters & {
     pixelRatio: number,
     overscaling: number,
     showCollisionBoxes: boolean,
-    mbtiles: boolean
+    mbtiles: boolean,
+    collectResourceTiming?: boolean
 };
 
 export type WorkerDEMTileParameters = TileParameters & {
@@ -37,6 +39,7 @@ export type WorkerTileResult = {
     featureIndex: FeatureIndex,
     collisionBoxArray: CollisionBoxArray,
     rawTileData?: ArrayBuffer,
+    resourceTiming?: Array<PerformanceResourceTiming>
 };
 
 export type WorkerTileCallback = (error: ?Error, result: ?WorkerTileResult) => void;
@@ -83,5 +86,10 @@ export interface WorkerSource {
      */
     removeTile(params: TileParameters, callback: WorkerTileCallback): void;
 
+    /**
+     * Tells the WorkerSource to abort in-progress tasks and release resources.
+     * The foreground Source is responsible for ensuring that 'removeSource' is
+     * the last message sent to the WorkerSource.
+     */
     removeSource?: (params: {source: string}, callback: WorkerTileCallback) => void;
 }

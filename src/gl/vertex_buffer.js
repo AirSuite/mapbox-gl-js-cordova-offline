@@ -1,5 +1,6 @@
 // @flow
 
+const assert = require('assert');
 import type {
     StructArray,
     StructArrayMember
@@ -30,7 +31,7 @@ const AttributeType = {
  */
 class VertexBuffer {
     length: number;
-    attributes: Array<StructArrayMember>;
+    attributes: $ReadOnlyArray<StructArrayMember>;
     itemSize: number;
     dynamicDraw: ?boolean;
     context: Context;
@@ -39,9 +40,9 @@ class VertexBuffer {
     /**
      * @param dynamicDraw Whether this buffer will be repeatedly updated.
      */
-    constructor(context: Context, array: StructArray, dynamicDraw?: boolean) {
+    constructor(context: Context, array: StructArray, attributes: $ReadOnlyArray<StructArrayMember>, dynamicDraw?: boolean) {
         this.length = array.length;
-        this.attributes = array.members;
+        this.attributes = attributes;
         this.itemSize = array.bytesPerElement;
         this.dynamicDraw = dynamicDraw;
 
@@ -61,6 +62,7 @@ class VertexBuffer {
     }
 
     updateData(array: StructArray) {
+        assert(array.length === this.length);
         const gl = this.context.gl;
         this.bind();
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, array.arrayBuffer);

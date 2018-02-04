@@ -16,7 +16,7 @@ const SymbolBucket = require('../data/bucket/symbol_bucket');
 const EvaluationParameters = require('../style/evaluation_parameters');
 
 import type {Shaping, PositionedIcon} from './shaping';
-import type CollisionBoxArray from './collision_box';
+import type {CollisionBoxArray} from '../data/array_types';
 import type {SymbolFeature} from '../data/bucket/symbol_bucket';
 import type {StyleImage} from '../style/style_image';
 import type {StyleGlyph} from '../style/style_glyph';
@@ -260,7 +260,7 @@ function addTextVertices(bucket: SymbolBucket,
                          globalProperties: Object,
                          feature: SymbolFeature,
                          textOffset: [number, number],
-                         lineArray: any,
+                         lineArray: {lineStartIndex: number, lineLength: number},
                          writingMode: number,
                          placedTextSymbolIndices: Array<number>,
                          glyphPositionMap: {[number]: GlyphPosition},
@@ -292,12 +292,11 @@ function addTextVertices(bucket: SymbolBucket,
         writingMode,
         anchor,
         lineArray.lineStartIndex,
-        lineArray.lineLength,
-        bucket.placedGlyphArray);
+        lineArray.lineLength);
 
-    // The placedGlyphArray is used at render time in drawTileSymbols
+    // The placedSymbolArray is used at render time in drawTileSymbols
     // These indices allow access to the array at collision detection time
-    placedTextSymbolIndices.push(bucket.placedGlyphArray.length - 1);
+    placedTextSymbolIndices.push(bucket.text.placedSymbolArray.length - 1);
 
     return glyphQuads.length * 4;
 }
@@ -385,8 +384,7 @@ function addSymbol(bucket: SymbolBucket,
             false,
             anchor,
             lineArray.lineStartIndex,
-            lineArray.lineLength,
-            bucket.placedIconArray);
+            lineArray.lineLength);
     }
 
     const iconBoxStartIndex = iconCollisionFeature ? iconCollisionFeature.boxStartIndex : bucket.collisionBoxArray.length;
@@ -415,7 +413,8 @@ function addSymbol(bucket: SymbolBucket,
         textOpacityState,
         iconOpacityState,
         isDuplicate: false,
-        placedTextSymbolIndices
+        placedTextSymbolIndices,
+        crossTileID: 0
     };
 }
 

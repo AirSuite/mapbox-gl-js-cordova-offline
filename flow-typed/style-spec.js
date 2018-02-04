@@ -83,7 +83,7 @@ declare type VectorSourceSpecification = {
 }
 
 declare type RasterSourceSpecification = {
-    "type": "raster" | "raster-dem",
+    "type": "raster",
     "url"?: string,
     "tiles"?: Array<string>,
     "bounds"?: [number, number, number, number],
@@ -91,6 +91,17 @@ declare type RasterSourceSpecification = {
     "maxzoom"?: number,
     "tileSize"?: number,
     "scheme"?: "xyz" | "tms",
+    "attribution"?: string
+}
+
+declare type RasterDEMSourceSpecification = {
+    "type": "raster-dem",
+    "url"?: string,
+    "tiles"?: Array<string>,
+    "bounds"?: [number, number, number, number],
+    "minzoom"?: number,
+    "maxzoom"?: number,
+    "tileSize"?: number,
     "attribution"?: string
 }
 
@@ -127,6 +138,7 @@ declare type CanvasSourceSpecification = {|
 declare type SourceSpecification =
     | VectorSourceSpecification
     | RasterSourceSpecification
+    | RasterDEMSourceSpecification
     | GeojsonSourceSpecification
     | VideoSourceSpecification
     | ImageSourceSpecification
@@ -291,7 +303,7 @@ declare type HeatmapLayerSpecification = {|
         "visibility"?: "visible" | "none"
     |},
     "paint"?: {|
-        "heatmap-radius"?: PropertyValueSpecification<number>,
+        "heatmap-radius"?: DataDrivenPropertyValueSpecification<number>,
         "heatmap-weight"?: DataDrivenPropertyValueSpecification<number>,
         "heatmap-intensity"?: PropertyValueSpecification<number>,
         "heatmap-color"?: ExpressionSpecification,
