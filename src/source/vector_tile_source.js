@@ -111,7 +111,6 @@ class VectorTileSource extends Evented implements Source {
         params.request.collectResourceTiming = this._collectResourceTiming;
 
         if (tile.workerID === undefined || tile.state === 'expired') {
-        if (!tile.workerID || tile.state === 'expired') {
           if (!params.mbtiles){
               tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
           }else{

@@ -161,7 +161,7 @@ class VectorTileWorkerSource implements WorkerSource {
 
             this.loaded = this.loaded || {};
             this.loaded[uid] = workerTile;
-        });
+        }
     }
 
     /**
