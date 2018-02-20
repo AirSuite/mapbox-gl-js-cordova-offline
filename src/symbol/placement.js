@@ -61,17 +61,16 @@ class JointPlacement {
 class Placement {
     transform: Transform;
     collisionIndex: CollisionIndex;
-    recentUntil: number;
     placements: { [string | number]: JointPlacement };
     opacities: { [string | number]: JointOpacityState };
     commitTime: number;
+    lastPlacementChangeTime: number;
     stale: boolean;
     fadeDuration: number;
 
     constructor(transform: Transform, fadeDuration: number) {
         this.transform = transform.clone();
         this.collisionIndex = new CollisionIndex(this.transform);
-        this.recentUntil = -Infinity;
         this.placements = {};
         this.opacities = {};
         this.stale = false;
@@ -119,8 +118,8 @@ class Placement {
         for (const symbolInstance of bucket.symbolInstances) {
             if (!seenCrossTileIDs[symbolInstance.crossTileID]) {
 
-                let placeText = false;
-                let placeIcon = false;
+                let placeText = symbolInstance.feature.text !== undefined;
+                let placeIcon = symbolInstance.feature.icon !== undefined;
                 let offscreen = true;
 
                 let placedGlyphBoxes = null;
@@ -204,7 +203,7 @@ class Placement {
         bucket.justReloaded = false;
     }
 
-    commit(prevPlacement: ?Placement, now: number) {
+    commit(prevPlacement: ?Placement, now: number): void {
         this.commitTime = now;
 
         let placementChanged = false;
@@ -242,7 +241,15 @@ class Placement {
             }
         }
 
-        return placementChanged;
+        // this.lastPlacementChangeTime is the time of the last commit() that
+        // resulted in a placement change -- in other words, the start time of
+        // the last symbol fade animation
+        assert(!prevPlacement || prevPlacement.lastPlacementChangeTime !== undefined);
+        if (placementChanged) {
+            this.lastPlacementChangeTime = now;
+        } else if (typeof this.lastPlacementChangeTime !== 'number') {
+            this.lastPlacementChangeTime = prevPlacement ? prevPlacement.lastPlacementChangeTime : now;
+        }
     }
 
     updateLayerOpacities(styleLayer: StyleLayer, tiles: Array<Tile>) {
@@ -263,6 +270,7 @@ class Placement {
         if (bucket.hasCollisionCircleData()) bucket.collisionCircle.collisionVertexArray.clear();
 
         const layout = bucket.layers[0].layout;
+        const duplicateOpacityState = new JointOpacityState(null, 0, false, false, true);
         const defaultOpacityState = new JointOpacityState(null, 0,
                 layout.get('text-allow-overlap'),
                 layout.get('icon-allow-overlap'), true);
@@ -272,12 +280,12 @@ class Placement {
             const isDuplicate = seenCrossTileIDs[symbolInstance.crossTileID];
 
             let opacityState = this.opacities[symbolInstance.crossTileID];
-            if (!opacityState) {
+            if (isDuplicate) {
+                opacityState = duplicateOpacityState;
+            } else if (!opacityState) {
                 opacityState = defaultOpacityState;
                 // store the state so that future placements use it as a starting point
                 this.opacities[symbolInstance.crossTileID] = opacityState;
-            } else if (isDuplicate) {
-                opacityState = defaultOpacityState;
             }
 
             seenCrossTileIDs[symbolInstance.crossTileID] = true;
@@ -362,16 +370,13 @@ class Placement {
     }
 
     hasTransitions(now: number) {
-        return this.symbolFadeChange(now) < 1 || this.stale;
+        return this.stale ||
+            now - this.lastPlacementChangeTime < this.fadeDuration;
     }
 
     stillRecent(now: number) {
-        return this.recentUntil > now;
-    }
-
-    setRecent(now: number, stale: boolean) {
-        this.stale = stale;
-        this.recentUntil = now + this.fadeDuration;
+        return this.commitTime !== 'undefined' &&
+            this.commitTime + this.fadeDuration > now;
     }
 
     setStale() {

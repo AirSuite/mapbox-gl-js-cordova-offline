@@ -27,7 +27,6 @@ class DragPanHandler {
     _active: boolean;
     _pos: Point;
     _previousPos: Point;
-    _startPos: Point;
     _inertia: Array<[number, Point]>;
     _lastMoveEvent: MouseEvent | TouchEvent | void;
 
@@ -39,10 +38,7 @@ class DragPanHandler {
             '_onDown',
             '_onMove',
             '_onUp',
-            '_onTouchEnd',
-            '_onMouseUp',
-            '_onDragFrame',
-            '_onDragFinished'
+            '_onDragFrame'
         ], this);
     }
 
@@ -93,26 +89,30 @@ class DragPanHandler {
     }
 
     _onDown(e: MouseEvent | TouchEvent) {
-        if (this._ignoreEvent(e)) return;
+        if (this._map.boxZoom.isActive()) return;
+        if (this._map.dragRotate.isActive()) return;
         if (this.isActive()) return;
 
         if (e.touches) {
+            if ((e.touches: any).length > 1) return;
             window.document.addEventListener('touchmove', this._onMove);
-            window.document.addEventListener('touchend', this._onTouchEnd);
+            window.document.addEventListener('touchend', this._onUp);
         } else {
+            if (e.ctrlKey || e.button !== 0) return;
             window.document.addEventListener('mousemove', this._onMove);
-            window.document.addEventListener('mouseup', this._onMouseUp);
+            window.document.addEventListener('mouseup', this._onUp);
         }
-        /* Deactivate DragPan when the window looses focus. Otherwise if a mouseup occurs when the window isn't in focus, DragPan will still be active even though the mouse is no longer pressed. */
-        window.addEventListener('blur', this._onMouseUp);
+
+        // Deactivate DragPan when the window loses focus. Otherwise if a mouseup occurs when the window
+        // isn't in focus, DragPan will still be active even though the mouse is no longer pressed.
+        window.addEventListener('blur', this._onUp);
 
         this._active = false;
-        this._startPos = this._previousPos = DOM.mousePos(this._el, e);
-        this._inertia = [[browser.now(), this._startPos]];
+        this._previousPos = DOM.mousePos(this._el, e);
+        this._inertia = [[browser.now(), this._previousPos]];
     }
 
     _onMove(e: MouseEvent | TouchEvent) {
-        if (this._ignoreEvent(e)) return;
         this._lastMoveEvent = e;
         e.preventDefault();
 
@@ -124,15 +124,11 @@ class DragPanHandler {
             // we treat the first move event (rather than the mousedown event)
             // as the start of the drag
             this._active = true;
-            this._map.moving = true;
             this._fireEvent('dragstart', e);
             this._fireEvent('movestart', e);
-
-            this._map._startAnimation(this._onDragFrame, this._onDragFinished);
         }
 
-        // ensure a new render frame is scheduled
-        this._map._update();
+        this._map._startAnimation(this._onDragFrame);
     }
 
     /**
@@ -155,12 +151,19 @@ class DragPanHandler {
      * Called when dragging stops.
      * @private
      */
-    _onDragFinished(e: MouseEvent | TouchEvent | FocusEvent | void) {
+    _onUp(e: MouseEvent | TouchEvent | FocusEvent) {
+        if (e.type === 'mouseup' && e.button !== 0) return;
+
+        window.document.removeEventListener('touchmove', this._onMove);
+        window.document.removeEventListener('touchend', this._onUp);
+        window.document.removeEventListener('mousemove', this._onMove);
+        window.document.removeEventListener('mouseup', this._onUp);
+        window.removeEventListener('blur', this._onUp);
+
         if (!this.isActive()) return;
 
         this._active = false;
         delete this._lastMoveEvent;
-        delete this._startPos;
         delete this._previousPos;
         delete this._pos;
 
@@ -168,7 +171,6 @@ class DragPanHandler {
         this._drainInertiaBuffer();
 
         const finish = () => {
-            this._map.moving = false;
             this._fireEvent('moveend', e);
         };
 
@@ -207,40 +209,8 @@ class DragPanHandler {
         }, { originalEvent: e });
     }
 
-    _onUp(e: MouseEvent | TouchEvent | FocusEvent) {
-        this._onDragFinished(e);
-    }
-
-    _onMouseUp(e: MouseEvent | FocusEvent) {
-        if (this._ignoreEvent(e)) return;
-        this._onUp(e);
-        window.document.removeEventListener('mousemove', this._onMove);
-        window.document.removeEventListener('mouseup', this._onMouseUp);
-        window.removeEventListener('blur', this._onMouseUp);
-    }
-
-    _onTouchEnd(e: TouchEvent) {
-        if (this._ignoreEvent(e)) return;
-        this._onUp(e);
-        window.document.removeEventListener('touchmove', this._onMove);
-        window.document.removeEventListener('touchend', this._onTouchEnd);
-    }
-
     _fireEvent(type: string, e: ?Event) {
         return this._map.fire(type, e ? { originalEvent: e } : {});
-    }
-
-    _ignoreEvent(e: any) {
-        const map = this._map;
-
-        if (map.boxZoom && map.boxZoom.isActive()) return true;
-        if (map.dragRotate && map.dragRotate.isActive()) return true;
-        if (e.touches) {
-            return (e.touches.length > 1);
-        } else {
-            if (e.ctrlKey) return true;
-            return e.type !== 'mousemove' && e.button && e.button !== 0; // left button
-        }
     }
 
     _drainInertiaBuffer() {
