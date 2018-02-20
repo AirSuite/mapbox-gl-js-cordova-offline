@@ -30,13 +30,13 @@ class DragRotateHandler {
     _enabled: boolean;
     _active: boolean;
     _button: 'right' | 'left';
+    _eventButton: number;
     _bearingSnap: number;
     _pitchWithRotate: boolean;
 
     _lastMoveEvent: MouseEvent;
     _pos: Point;
     _previousPos: Point;
-    _startPos: Point;
     _inertia: Array<[number, number]>;
     _center: Point;
 
@@ -56,8 +56,7 @@ class DragRotateHandler {
             '_onDown',
             '_onMove',
             '_onUp',
-            '_onDragFrame',
-            '_onDragFinished'
+            '_onDragFrame'
         ], this);
     }
 
@@ -104,23 +103,23 @@ class DragRotateHandler {
     }
 
     _onDown(e: MouseEvent) {
-        if (this._map.boxZoom && this._map.boxZoom.isActive()) return;
-        if (this._map.dragPan && this._map.dragPan.isActive()) return;
+        if (this._map.boxZoom.isActive()) return;
+        if (this._map.dragPan.isActive()) return;
         if (this.isActive()) return;
 
         if (this._button === 'right') {
-            const button = (e.ctrlKey ? 0 : 2);   // ? ctrl+left button : right button
-            let eventButton = e.button;
+            this._eventButton = e.button;
             if (typeof window.InstallTrigger !== 'undefined' && e.button === 2 && e.ctrlKey &&
                 window.navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
                 // Fix for https://github.com/mapbox/mapbox-gl-js/issues/3131:
                 // Firefox (detected by InstallTrigger) on Mac determines e.button = 2 when
                 // using Control + left click
-                eventButton = 0;
+                this._eventButton = 0;
             }
-            if (eventButton !== button) return;
+            if (this._eventButton !== (e.ctrlKey ? 0 : 2)) return;
         } else {
             if (e.ctrlKey || e.button !== 0) return;
+            this._eventButton = 0;
         }
 
         DOM.disableDrag();
@@ -132,7 +131,7 @@ class DragRotateHandler {
 
         this._active = false;
         this._inertia = [[browser.now(), this._map.getBearing()]];
-        this._startPos = this._previousPos = DOM.mousePos(this._el, e);
+        this._previousPos = DOM.mousePos(this._el, e);
         this._center = this._map.transform.centerPoint;  // Center of rotation
 
         e.preventDefault();
@@ -144,28 +143,14 @@ class DragRotateHandler {
 
         if (!this.isActive()) {
             this._active = true;
-            this._map.moving = true;
             this._fireEvent('rotatestart', e);
             this._fireEvent('movestart', e);
             if (this._pitchWithRotate) {
                 this._fireEvent('pitchstart', e);
             }
-
-            this._map._startAnimation(this._onDragFrame, this._onDragFinished);
         }
 
-        // ensure a new render frame is scheduled
-        this._map._update();
-    }
-
-    _onUp(e: MouseEvent | FocusEvent) {
-        window.document.removeEventListener('mousemove', this._onMove, {capture: true});
-        window.document.removeEventListener('mouseup', this._onUp);
-        window.removeEventListener('blur', this._onUp);
-
-        DOM.enableDrag();
-
-        this._onDragFinished(e);
+        this._map._startAnimation(this._onDragFrame);
     }
 
     _onDragFrame(tr: Transform) {
@@ -197,7 +182,15 @@ class DragRotateHandler {
         this._previousPos = this._pos;
     }
 
-    _onDragFinished(e: MouseEvent | FocusEvent | void) {
+    _onUp(e: MouseEvent | FocusEvent) {
+        if (e.type === 'mouseup' && e.button !== this._eventButton) return;
+
+        window.document.removeEventListener('mousemove', this._onMove, {capture: true});
+        window.document.removeEventListener('mouseup', this._onUp);
+        window.removeEventListener('blur', this._onUp);
+
+        DOM.enableDrag();
+
         if (!this.isActive()) return;
 
         this._active = false;
@@ -215,7 +208,6 @@ class DragRotateHandler {
             if (Math.abs(mapBearing) < this._bearingSnap) {
                 map.resetNorth({noMoveStart: true}, { originalEvent: e });
             } else {
-                this._map.moving = false;
                 this._fireEvent('moveend', e);
             }
             if (this._pitchWithRotate) this._fireEvent('pitchend', e);
