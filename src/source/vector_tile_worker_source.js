@@ -59,7 +59,30 @@ function loadVectorTile(params: WorkerTileParameters, callback: LoadVectorDataCa
         callback();
     };
 }
-
+/*
+//This is the old laodVectorData method here for reference from 0.38
+loadVectorData(params, callback) {
+    const xhr = ajax.getArrayBuffer(params.url, done.bind(this));
+    return function abort () { xhr.abort(); };
+    function done(err, response) {
+        if (err) { return callback(err); }
+        const vectorTile = new vt.VectorTile(new Protobuf(response.data));
+        vectorTile.rawData = response.data;
+        vectorTile.cacheControl = response.cacheControl;
+        vectorTile.expires = response.expires;
+        callback(err, vectorTile);
+    }
+}
+*/
+function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
+    const arrayBuffer = params.tileData;
+    callback(null, {
+        vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
+        rawData: arrayBuffer,
+        cacheControl: "max-age=43200,s-maxage=604800",
+        expires: "never"
+    });
+}
 /**
  * The {@link WorkerSource} implementation that supports {@link VectorTileSource}.
  * This class is designed to be easily reused to support custom source types
@@ -86,6 +109,7 @@ class VectorTileWorkerSource implements WorkerSource {
         this.actor = actor;
         this.layerIndex = layerIndex;
         this.loadVectorData = loadVectorData || loadVectorTile;
+        this.loadVectorMbtileData = loadVectorMbtile;
         this.loading = {};
         this.loaded = {};
     }
@@ -101,9 +125,14 @@ class VectorTileWorkerSource implements WorkerSource {
 
         if (!this.loading[source])
             this.loading[source] = {};
-
         const workerTile = this.loading[source][uid] = new WorkerTile(params);
-        workerTile.abort = this.loadVectorData(params, (err, response) => {
+        if (params.mbtiles == undefined) params.mbtiles = false;
+        if (!params.mbtiles){
+            workerTile.abort = this.loadVectorData(params, done.bind(this));
+        }else{
+            workerTile.abort = this.loadVectorMbtileData(params, done.bind(this));
+        }
+        function done(err, response) {
             delete this.loading[source][uid];
 
             if (err || !response) {
@@ -133,7 +162,7 @@ class VectorTileWorkerSource implements WorkerSource {
 
             this.loaded[source] = this.loaded[source] || {};
             this.loaded[source][uid] = workerTile;
-        });
+        }
     }
 
     /**
