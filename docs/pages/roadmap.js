@@ -10,36 +10,18 @@ const meta = {
 };
 
 const roadmap = {
-    "updated_at": "August 1, 2017",
+    "updated_at": "January 26, 2018",
     "roadmap_items": [
         {
             "term": "Active",
             "description": "Things actively being built right now.",
             "items": [
                 {
-                    "name": "Client-side hillshade rendering",
+                    "name": "Improved feature interactivity",
                     "issues": [
-                        "3730",
-                        "4701"
-                    ]
-                },
-                {
-                    "name": "Arbitrary expressions for property functions",
-                    "issues": [
-                        "4715"
-                    ]
-                },
-                {
-                    "name": "Viewport label placement",
-                    "issues": [
-                        "4704",
-                        "#4972"
-                    ]
-                },
-                {
-                    "name": "Heatmaps",
-                    "issues": [
-                        "4756"
+                        "6020",
+                        "6021",
+                        "6022"
                     ]
                 }
             ]

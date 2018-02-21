@@ -2,7 +2,7 @@
 
 const FeatureIndex = require('../data/feature_index');
 const {performSymbolLayout} = require('../symbol/symbol_layout');
-const CollisionBoxArray = require('../symbol/collision_box');
+const {CollisionBoxArray} = require('../data/array_types');
 const DictionaryCoder = require('../util/dictionary_coder');
 const SymbolBucket = require('../data/bucket/symbol_bucket');
 const util = require('../util/util');
@@ -32,6 +32,7 @@ class WorkerTile {
     source: string;
     overscaling: number;
     showCollisionBoxes: boolean;
+    collectResourceTiming: boolean;
 
     status: 'parsing' | 'done';
     data: VectorTile;
@@ -51,6 +52,7 @@ class WorkerTile {
         this.overscaling = params.overscaling;
         this.showCollisionBoxes = params.showCollisionBoxes;
         this.mbtiles = params.mbtiles || false;
+        this.collectResourceTiming = !!params.collectResourceTiming;
     }
 
     parse(data: VectorTile, layerIndex: StyleLayerIndex, actor: Actor, callback: WorkerTileCallback) {

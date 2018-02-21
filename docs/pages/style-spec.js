@@ -5,7 +5,7 @@ import md from '../components/md';
 import PageShell from '../components/page_shell';
 import LeftNav from '../components/left_nav';
 import TopNav from '../components/top_nav';
-import {highlightJavascript, highlightJSON} from '../components/prism_highlight';
+import {highlightJavascript, highlightJSON, highlightMarkup} from '../components/prism_highlight';
 import entries from 'object.entries';
 
 const ref = require('../../src/style-spec/reference/latest');
@@ -469,12 +469,12 @@ export default class extends React.Component {
                                     than use <a href='https://www.mapbox.com/studio'>Mapbox Studio</a></li>
                                 <li>Developers using style-related features of <a
                                     href='https://www.mapbox.com/mapbox-gl-js/'>Mapbox GL JS</a> or the <a
-                                    href='https://www.mapbox.com/android-sdk/'>Mapbox Android SDK</a></li>
+                                    href='https://www.mapbox.com/android-sdk/'>Mapbox Maps SDK for Android</a></li>
                                 <li>Authors of software that generates or processes Mapbox styles.</li>
                             </ul>
-                            <p>Developers using the <a href='https://www.mapbox.com/ios-sdk/'>Mapbox iOS SDK</a> or <a
-                                href='https://github.com/mapbox/mapbox-gl-native/tree/master/platform/macos/'>Mapbox
-                                macOS SDK</a> should consult the iOS SDK API reference for platform-appropriate
+                            <p>Developers using the <a href='https://www.mapbox.com/ios-sdk/'>Mapbox Maps SDK for iOS</a> or <a
+                                href='https://github.com/mapbox/mapbox-gl-native/tree/master/platform/macos/'>
+                                Mapbox Maps SDK for macOS</a> should consult the iOS SDK API reference for platform-appropriate
                                 documentation of style-related features.</p>
                         </div>
 
@@ -889,12 +889,12 @@ export default class extends React.Component {
                                         If an HTML document contains a canvas such as this:
                                     </p>
                                     <div className='space-bottom1 clearfix'>
-                                        &lt;canvas id="mycanvas" width="400" height="300" style="display: none;"&gt;&lt;/canvas&gt;
+                                        {highlightMarkup(`<canvas id="mycanvas" width="400" height="300" style="display: none;"/>`)}
                                     </div>
                                     <p>
                                         the corresponding canvas source would be specified as follows:
                                     </p>
-                                    <div>
+                                    <div className='space-bottom1 clearfix'>
                                         {highlightJSON(`
                                             "canvas": {
                                                 "type": "canvas",
@@ -907,6 +907,10 @@ export default class extends React.Component {
                                                 ]
                                             }`)}
                                     </div>
+                                    <p>
+                                        This source type is available only in Mapbox GL JS. Avoid using it in styles that need to maintain
+                                        compatibility with other Mapbox Maps SDKs.
+                                    </p>
                                     <div className='space-bottom1 clearfix'>
                                         { entries(ref.source_canvas).map(([name, prop], i) =>
                                             name !== '*' && name !== 'type' &&
@@ -1474,10 +1478,13 @@ export default class extends React.Component {
                                         <div className="col12 clearfix pad0y pad2x space-bottom2">
                                             <div><span className='code'><a id="function-stops" href="#function-stops">stops</a></span>
                                             </div>
-                                            <div><em className='quiet'>Required (except for <var>identity</var>
-                                                functions) <a href='#types-array'>array</a>.</em></div>
+                                            <div><em className='quiet'>Required (except
+                                                for <var>identity</var> functions) <a href='#types-array'>array</a>.</em></div>
                                             <div>Functions are defined in terms of input and output values. A set of one
-                                                input value and one output value is known as a "stop."
+                                                input value and one output value is known as a "stop." Stop output values
+                                                must be literal values (i.e. not functions or expressions), and appropriate
+                                                for the property. For example, stop output values for a function used in
+                                                the <code>fill-color</code> property must be <a href="#types-color">colors</a>.
                                             </div>
                                         </div>
                                         <div className="col12 clearfix pad0y pad2x space-bottom2">
@@ -1731,7 +1738,7 @@ export default class extends React.Component {
                                 </div>
 
                                 <div className='pad2'>
-                                    <a id='#other-filter' className='anchor'></a>
+                                    <a id='other-filter' className='anchor'></a>
                                     <h3 className='space-bottom1'><a href='#other-filter' title='link to filter'>Filter</a></h3>
                                     <p>A filter selects specific features from a layer. A filter is defined using any boolean <a href="#types-expression">expression</a>. In previous versions of the style specification, filters were defined using the deprecated syntax documented below:</p>
 
