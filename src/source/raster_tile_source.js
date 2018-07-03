@@ -99,7 +99,7 @@ class RasterTileSource extends Evented implements Source {
 		const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
         if (this._options.mbtiles == undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles){
-          tile.request = getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
+          tile.request = getImage(this.map._transformRequest(url, ResourceType.Tile), done.bind(this));
         }else{
           let Rurl = url.split('/'),
           z = Rurl[0],
