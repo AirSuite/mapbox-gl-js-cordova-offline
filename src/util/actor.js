@@ -1,7 +1,7 @@
 // @flow
 
-const util = require('./util');
-const {serialize, deserialize} = require('./web_worker_transfer');
+import { bindAll } from './util';
+import { serialize, deserialize } from './web_worker_transfer';
 
 import type {Transferable} from '../types/transferable';
 
@@ -30,7 +30,7 @@ class Actor {
         this.mapId = mapId;
         this.callbacks = {};
         this.callbackID = 0;
-        util.bindAll(['receive'], this);
+        bindAll(['receive'], this);
         this.target.addEventListener('message', this.receive, false);
     }
 
@@ -86,10 +86,11 @@ class Actor {
             // data.type == 'loadTile', 'removeTile', etc.
             this.parent[data.type](data.sourceMapId, deserialize(data.data), done);
         } else if (typeof data.id !== 'undefined' && this.parent.getWorkerSource) {
-            // data.type == sourcetype.sourcename.method
+            // data.type == sourcetype.method
             const keys = data.type.split('.');
-            const workerSource = (this.parent: any).getWorkerSource(data.sourceMapId, keys[0], keys[1]);
-            workerSource[keys[2]](deserialize(data.data), done);
+            const params = (deserialize(data.data): any);
+            const workerSource = (this.parent: any).getWorkerSource(data.sourceMapId, keys[0], params.source);
+            workerSource[keys[1]](params, done);
         } else {
             this.parent[data.type](deserialize(data.data));
         }
@@ -100,4 +101,4 @@ class Actor {
     }
 }
 
-module.exports = Actor;
+export default Actor;

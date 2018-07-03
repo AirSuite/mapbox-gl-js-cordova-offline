@@ -1,8 +1,10 @@
+/rollup/build/
 /docs/components/api.json
+/dist/
 /docs/pages/dist/mapbox-gl-dev.js
 /docs/pages/dist/mapbox-gl.js
 node_modules
-npm-debug.log
+package-lock.json
 *.sublime-*
 coverage
 flow-coverage
@@ -20,3 +22,6 @@ test/integration/**/diff.png
 src/style-spec/dist/index.js
 _batfish_site
 _batfish_tmp
+yarn-error.log
+yarn-debug.log
+npm-debug.log

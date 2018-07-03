@@ -11,8 +11,10 @@
         [1, "red"]
       ]
     },
-    "function": true,
-    "property-function": true
+    "property-type": "data-driven",
+    "expression": {
+      "parameters": ["zoom", "feature"]
+    }
   },
   "expression": [
     "interpolate",
@@ -34,7 +36,7 @@
     "outputs": [[0.5, 0, 0, 1]],
     "serialized": [
       "interpolate",
-      ["exponential", 1],
+      ["linear"],
       ["heatmap-density"],
       0,
       ["rgba", 0, 0, 0, 1],

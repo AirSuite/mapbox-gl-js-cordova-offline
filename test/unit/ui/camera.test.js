@@ -1,22 +1,28 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const Camera = require('../../../src/ui/camera');
-const Transform = require('../../../src/geo/transform');
-const browser = require('../../../src/util/browser');
-
-const fixed = require('mapbox-gl-js-test/fixed');
+import { test } from 'mapbox-gl-js-test';
+import Camera from '../../../src/ui/camera';
+import Transform from '../../../src/geo/transform';
+import TaskQueue from '../../../src/util/task_queue';
+import browser from '../../../src/util/browser';
+import fixed from 'mapbox-gl-js-test/fixed';
 const fixedLngLat = fixed.LngLat;
 const fixedNum = fixed.Num;
 
 test('camera', (t) => {
+    function attachSimulateFrame(camera) {
+        const queue = new TaskQueue();
+        camera._requestRenderFrame = (cb) => queue.add(cb);
+        camera._cancelRenderFrame = (id) => queue.remove(id);
+        camera.simulateFrame = () => queue.run();
+        return camera;
+    }
+
     function createCamera(options) {
         options = options || {};
 
         const transform = new Transform(0, 20, options.renderWorldCopies);
         transform.resize(512, 512);
 
-        const camera = new Camera(transform, {})
+        const camera = attachSimulateFrame(new Camera(transform, {}))
             .jumpTo(options);
 
         camera._update = () => {};
@@ -782,21 +788,21 @@ test('camera', (t) => {
 
                     setTimeout(() => {
                         stub.callsFake(() => 30);
-                        camera._updateCamera();
+                        camera.simulateFrame();
                     }, 0);
                 });
 
                 // setTimeout to avoid a synchronous callback
                 setTimeout(() => {
                     stub.callsFake(() => 20);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             });
 
             // setTimeout to avoid a synchronous callback
             setTimeout(() => {
                 stub.callsFake(() => 10);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -823,11 +829,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -855,11 +861,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -892,7 +898,8 @@ test('camera', (t) => {
         t.test('does not throw when cameras current zoom is above maxzoom and an offset creates infinite zoom out factor', (t)=>{
             const transform = new Transform(0, 20.9999, true);
             transform.resize(512, 512);
-            const camera = new Camera(transform, {}).jumpTo({zoom: 21, center:[0, 0]});
+            const camera = attachSimulateFrame(new Camera(transform, {}))
+                .jumpTo({zoom: 21, center:[0, 0]});
             camera._update = () => {};
             t.doesNotThrow(()=>camera.flyTo({zoom:7.5, center:[0, 0], offset:[0, 70]}));
             t.end();
@@ -902,6 +909,13 @@ test('camera', (t) => {
             const camera = createCamera();
             camera.flyTo({ zoom: 3.2, animate: false });
             t.equal(fixedNum(camera.getZoom()), 3.2);
+            t.end();
+        });
+
+        t.test('zooms to integer level without floating point errors', (t) => {
+            const camera = createCamera({zoom: 0.6});
+            camera.flyTo({ zoom: 2, animate: false });
+            t.equal(camera.getZoom(), 2);
             t.end();
         });
 
@@ -1090,11 +1104,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1125,15 +1139,15 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 10);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 20);
-                    camera._updateCamera();
+                    camera.simulateFrame();
 
                     setTimeout(() => {
                         stub.callsFake(() => 30);
-                        camera._updateCamera();
+                        camera.simulateFrame();
                     }, 0);
                 }, 0);
             }, 0);
@@ -1162,11 +1176,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1194,11 +1208,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 20);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1226,11 +1240,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 20);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1258,11 +1272,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 20);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1290,11 +1304,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1322,11 +1336,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1354,11 +1368,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1385,11 +1399,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1422,11 +1436,11 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 3);
-                camera._updateCamera();
+                camera.simulateFrame();
 
                 setTimeout(() => {
                     stub.callsFake(() => 10);
-                    camera._updateCamera();
+                    camera.simulateFrame();
                 }, 0);
             }, 0);
         });
@@ -1435,7 +1449,7 @@ test('camera', (t) => {
             const transform = new Transform(2, 10, false);
             transform.resize(512, 512);
 
-            const camera = new Camera(transform, {});
+            const camera = attachSimulateFrame(new Camera(transform, {}));
             camera._update = () => {};
 
             camera.on('moveend', () => {
@@ -1453,7 +1467,7 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 10);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -1461,7 +1475,7 @@ test('camera', (t) => {
             const transform = new Transform(2, 10, false);
             transform.resize(512, 512);
 
-            const camera = new Camera(transform, {});
+            const camera = attachSimulateFrame(new Camera(transform, {}));
             camera._update = () => {};
 
             camera.on('moveend', () => {
@@ -1479,7 +1493,7 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 10);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -1527,7 +1541,7 @@ test('camera', (t) => {
             camera.panTo([100, 0], {duration: 1});
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -1549,7 +1563,7 @@ test('camera', (t) => {
             camera.zoomTo(3.2, {duration: 1});
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -1571,7 +1585,7 @@ test('camera', (t) => {
             camera.rotateTo(90, {duration: 1});
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
         });
 
@@ -1650,8 +1664,41 @@ test('camera', (t) => {
 
             setTimeout(() => {
                 stub.callsFake(() => 1);
-                camera._updateCamera();
+                camera.simulateFrame();
             }, 0);
+        });
+
+        t.end();
+    });
+
+    t.test('#cameraForBounds', (t) => {
+        t.test('no padding passed', (t) => {
+            const camera = createCamera();
+            const bb = [[-133, 16], [-68, 50]];
+
+            const transform = camera.cameraForBounds(bb);
+            t.deepEqual(fixedLngLat(transform.center, 4), { lng: -100.5, lat: 34.7171 }, 'correctly calculates coordinates for new bounds');
+            t.equal(fixedNum(transform.zoom, 3), 2.469);
+            t.end();
+        });
+
+        t.test('padding number', (t) => {
+            const camera = createCamera();
+            const bb = [[-133, 16], [-68, 50]];
+
+            const transform = camera.cameraForBounds(bb, { padding: 15 });
+            t.deepEqual(fixedLngLat(transform.center, 4), { lng: -100.5, lat: 34.7171 }, 'correctly calculates coordinates for bounds with padding option as number applied');
+            t.equal(fixedNum(transform.zoom, 3), 2.382);
+            t.end();
+        });
+
+        t.test('padding object', (t) => {
+            const camera = createCamera();
+            const bb = [[-133, 16], [-68, 50]];
+
+            const transform = camera.cameraForBounds(bb, { padding: {top: 10, right: 75, bottom: 50, left: 25}, duration: 0 });
+            t.deepEqual(fixedLngLat(transform.center, 4), { lng: -100.5, lat: 34.7171 }, 'correctly calculates coordinates for bounds with padding option as object applied');
+            t.end();
         });
 
         t.end();
