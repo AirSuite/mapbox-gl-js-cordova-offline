@@ -99,7 +99,7 @@ class RasterTileSource extends Evented implements Source {
 		const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
         if (this._options.mbtiles == undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles){
-          tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
+          tile.request = getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), done.bind(this));
         }else{
           let Rurl = url.split('/'),
           z = Rurl[0],
@@ -120,7 +120,7 @@ class RasterTileSource extends Evented implements Source {
               tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
                   var tileData = res.rows.item(0).tile_data;
-                  tile.request = ajax.getmbtileImage(tileData, done.bind(this));
+                  tile.request = getmbtileImage(tileData, done.bind(this));
               }.bind(this), function(tx, e) {
                   console.log('Database Error: ' + e.message);
               });

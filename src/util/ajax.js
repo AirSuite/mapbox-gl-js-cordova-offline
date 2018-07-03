@@ -151,7 +151,7 @@ export const getImage = function(requestParameters: RequestParameters, callback:
     });
 };
 
-exports.getmbtileImage = function(imgData, callback) {
+export const getmbtileImage = function(imgData, callback) {
         const img = new window.Image();
         const URL = window.URL || window.webkitURL;
         img.onload = () => {

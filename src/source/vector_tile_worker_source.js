@@ -76,13 +76,19 @@ loadVectorData(params, callback) {
 }
 */
 function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
-    const arrayBuffer = params.tileData;
-    callback(null, {
-        vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
-        rawData: arrayBuffer,
-        cacheControl: "max-age=43200,s-maxage=604800",
-        expires: "never"
+    const request = getArrayBuffer(params.request, (err, response) => {
+      const arrayBuffer = params.tileData;
+      callback(null, {
+          vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
+          rawData: arrayBuffer,
+          cacheControl: "max-age=43200,s-maxage=604800",
+          expires: "never"
+      });
     });
+    return () => {
+        request.cancel();
+        callback();
+    };
 }
 /**
  * The {@link WorkerSource} implementation that supports {@link VectorTileSource}.
