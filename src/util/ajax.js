@@ -61,8 +61,9 @@ class AJAXError extends Error {
 
 function makeRequest(requestParameters: RequestParameters): XMLHttpRequest {
     const xhr: XMLHttpRequest = new window.XMLHttpRequest();
-
-    xhr.open('GET', requestParameters.url, true);
+    var url = requestParameters.url;
+    if (IOS) url = encodeURI(url);
+    xhr.open('GET', url, true);
     for (const k in requestParameters.headers) {
         xhr.setRequestHeader(k, requestParameters.headers[k]);
     }
