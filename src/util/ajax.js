@@ -151,16 +151,28 @@ export const getImage = function(requestParameters: RequestParameters, callback:
     });
 };
 
-export const getmbtileImage = function(imgData, callback) {
+export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElement>): Cancelable {
         const img = new window.Image();
-        const URL = window.URL || window.webkitURL;
+        //const URL = window.URL || window.webkitURL;
         img.onload = () => {
             callback(null, img);
-            URL.revokeObjectURL(img.src);
+            //URL.revokeObjectURL(img.src);
         };
         //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
         if (imgData == undefined) img.src = transparentPngUrl;
-        else img.src = 'data:image/png;base64,'+imgData;
+        else {
+          //check blob performance
+          /*
+          fetch('data:image/png;base64,'+imgData)
+          .then(res => res.blob())
+          .then(blob => img.src = URL.createObjectURL(blob));
+          */
+          img.src = 'data:image/png;base64,'+imgData;
+        }
+
+        return {
+            cancel:function(){console.log("Cancel loadmbtileImage")}
+        };
 };
 
 export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoElement>): Cancelable {

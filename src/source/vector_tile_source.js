@@ -5,6 +5,7 @@ import { Event, ErrorEvent, Evented } from '../util/evented';
 import { extend, pick } from '../util/util';
 import loadTileJSON from './load_tilejson';
 import { normalizeTileURL as normalizeURL } from '../util/mapbox';
+import Pako from 'pako';
 import TileBounds from './tile_bounds';
 import { ResourceType } from '../util/ajax';
 import browser from '../util/browser';

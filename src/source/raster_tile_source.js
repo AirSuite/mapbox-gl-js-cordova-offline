@@ -2,7 +2,7 @@
 
 import { extend, pick } from '../util/util';
 
-import { getImage, ResourceType } from '../util/ajax';
+import { getImage, getmbtileImage, ResourceType } from '../util/ajax';
 import { Event, ErrorEvent, Evented } from '../util/evented';
 import loadTileJSON from './load_tilejson';
 import { normalizeTileURL as normalizeURL } from '../util/mapbox';
@@ -106,6 +106,7 @@ class RasterTileSource extends Evented implements Source {
           x = Rurl[1],
           y = Rurl[2];
           y = (1 << z) - 1 - y;
+          //console.log(Rurl);
           var database = this.id;
           if (window.openDatabases[database] === undefined) {
               window.openDatabases[database] = window.sqlitePlugin.openDatabase({
