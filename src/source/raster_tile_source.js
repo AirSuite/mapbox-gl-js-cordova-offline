@@ -112,7 +112,7 @@ class RasterTileSource extends Evented implements Source {
               window.openDatabases[database] = window.sqlitePlugin.openDatabase({
                   name: database + '.mbtiles',
                   location: 2,
-                  createFromLocation: 1,
+                  createFromLocation: 0,
                   androidDatabaseImplementation: 2
               });
           }
