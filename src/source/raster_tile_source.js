@@ -113,14 +113,14 @@ class RasterTileSource extends Evented implements Source {
                   name: database + '.mbtiles',
                   location: 2,
                   createFromLocation: 0,
-                  androidDatabaseImplementation: 2
+                  androidDatabaseImplementation: 1
               });
           }
 
           window.openDatabases[database].transaction(function(tx) {
-              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+              tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
-                  var tileData = res.rows.item(0).tile_data;
+                  var tileData = res.rows.item(0).tile_data64;
                   tile.request = getmbtileImage(tileData, done.bind(this));
               }.bind(this), function(tx, e) {
                   console.log('Database Error: ' + e.message);
