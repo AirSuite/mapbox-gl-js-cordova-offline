@@ -1,8 +1,9 @@
 // @flow
 
-const window = require('./window');
+import window from './window';
 
 import type { Callback } from '../types/callback';
+import type { Cancelable } from '../types/cancelable';
 
 /**
  * The type of a resource.
@@ -20,7 +21,7 @@ const ResourceType = {
     SpriteJSON: 'SpriteJSON',
     Image: 'Image'
 };
-exports.ResourceType = ResourceType;
+export { ResourceType };
 
 if (typeof Object.freeze == 'function') {
     Object.freeze(ResourceType);
@@ -60,8 +61,9 @@ class AJAXError extends Error {
 
 function makeRequest(requestParameters: RequestParameters): XMLHttpRequest {
     const xhr: XMLHttpRequest = new window.XMLHttpRequest();
-
-    xhr.open('GET', requestParameters.url, true);
+    var url = requestParameters.url;
+    if (url.indexOf(' ') >= 0) url = encodeURI(url);
+    xhr.open('GET', url, true);
     for (const k in requestParameters.headers) {
         xhr.setRequestHeader(k, requestParameters.headers[k]);
     }
@@ -69,7 +71,7 @@ function makeRequest(requestParameters: RequestParameters): XMLHttpRequest {
     return xhr;
 }
 
-exports.getJSON = function(requestParameters: RequestParameters, callback: Callback<mixed>) {
+export const getJSON = function(requestParameters: RequestParameters, callback: Callback<mixed>): Cancelable {
     const xhr = makeRequest(requestParameters);
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.onerror = function() {
@@ -85,14 +87,18 @@ exports.getJSON = function(requestParameters: RequestParameters, callback: Callb
             }
             callback(null, data);
         } else {
-            callback(new AJAXError(xhr.statusText, xhr.status, requestParameters.url));
+            if (xhr.status === 401 && requestParameters.url.match(/mapbox.com/)) {
+                callback(new AJAXError(`${xhr.statusText}: you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens`, xhr.status, requestParameters.url));
+            } else {
+                callback(new AJAXError(xhr.statusText, xhr.status, requestParameters.url));
+            }
         }
     };
     xhr.send();
-    return xhr;
+    return { cancel: () => xhr.abort() };
 };
 
-exports.getArrayBuffer = function(requestParameters: RequestParameters, callback: Callback<{data: ArrayBuffer, cacheControl: ?string, expires: ?string}>) {
+export const getArrayBuffer = function(requestParameters: RequestParameters, callback: Callback<{data: ArrayBuffer, cacheControl: ?string, expires: ?string}>): Cancelable {
     const xhr = makeRequest(requestParameters);
     xhr.responseType = 'arraybuffer';
     xhr.onerror = function() {
@@ -114,7 +120,7 @@ exports.getArrayBuffer = function(requestParameters: RequestParameters, callback
         }
     };
     xhr.send();
-    return xhr;
+    return { cancel: () => xhr.abort() };
 };
 
 function sameOrigin(url) {
@@ -125,10 +131,10 @@ function sameOrigin(url) {
 
 const transparentPngUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=';
 
-exports.getImage = function(requestParameters: RequestParameters, callback: Callback<HTMLImageElement>) {
+export const getImage = function(requestParameters: RequestParameters, callback: Callback<HTMLImageElement>): Cancelable {
     // request the image with XHR to work around caching issues
     // see https://github.com/mapbox/mapbox-gl-js/issues/1470
-    return exports.getArrayBuffer(requestParameters, (err, imgData) => {
+    return getArrayBuffer(requestParameters, (err, imgData) => {
         if (err) {
             callback(err);
         } else if (imgData) {
@@ -146,21 +152,33 @@ exports.getImage = function(requestParameters: RequestParameters, callback: Call
     });
 };
 
-exports.getmbtileImage = function(imgData, callback) {
+export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElement>): Cancelable {
         const img = new window.Image();
-        const URL = window.URL || window.webkitURL;
+        //const URL = window.URL || window.webkitURL;
         img.onload = () => {
             callback(null, img);
-            URL.revokeObjectURL(img.src);
+            //URL.revokeObjectURL(img.src);
         };
         //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
         if (imgData == undefined) img.src = transparentPngUrl;
-        else img.src = 'data:image/png;base64,'+imgData;
+        else {
+          //check blob performance
+          /*
+          fetch('data:image/png;base64,'+imgData)
+          .then(res => res.blob())
+          .then(blob => img.src = URL.createObjectURL(blob));
+          */
+          img.src = 'data:image/png;base64,'+imgData;
+        }
+
+        return {
+            cancel:function(){console.log("Cancel loadmbtileImage")}
+        };
 };
 
-exports.getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoElement>) {
-    const video = window.document.createElement('video');
-
+export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoElement>): Cancelable {
+    const video: HTMLVideoElement = window.document.createElement('video');
+    video.muted = true;
     video.onloadstart = function() {
         callback(null, video);
     };
@@ -172,5 +190,5 @@ exports.getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoEle
         s.src = urls[i];
         video.appendChild(s);
     }
-    return video;
+    return { cancel: () => {} };
 };

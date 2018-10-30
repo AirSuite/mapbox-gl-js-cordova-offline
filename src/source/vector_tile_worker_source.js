@@ -1,11 +1,12 @@
 // @flow
 
-const ajax = require('../util/ajax');
-const vt = require('@mapbox/vector-tile');
-const Protobuf = require('pbf');
-const WorkerTile = require('./worker_tile');
-const util = require('../util/util');
-const perf = require('../util/performance');
+import {getArrayBuffer} from '../util/ajax';
+
+import vt from '@mapbox/vector-tile';
+import Protobuf from 'pbf';
+import WorkerTile from './worker_tile';
+import { extend } from '../util/util';
+import performance from '../util/performance';
 
 import type {
     WorkerSource,
@@ -42,7 +43,7 @@ export type LoadVectorData = (params: WorkerTileParameters, callback: LoadVector
  * @private
  */
 function loadVectorTile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
-    const xhr = ajax.getArrayBuffer(params.request, (err, response) => {
+    const request = getArrayBuffer(params.request, (err, response) => {
         if (err) {
             callback(err);
         } else if (response) {
@@ -55,7 +56,7 @@ function loadVectorTile(params: WorkerTileParameters, callback: LoadVectorDataCa
         }
     });
     return () => {
-        xhr.abort();
+        request.cancel();
         callback();
     };
 }
@@ -75,13 +76,22 @@ loadVectorData(params, callback) {
 }
 */
 function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
-    const arrayBuffer = params.tileData;
-    callback(null, {
-        vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
-        rawData: arrayBuffer,
-        cacheControl: "max-age=43200,s-maxage=604800",
-        expires: "never"
-    });
+      const arrayBuffer = params.tileData;
+      const request = {
+        cancel:function(){console.log("Cancel loadVectorMbtile")}
+      }
+      callback(null, {
+          vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
+          rawData: arrayBuffer,
+          cacheControl: "max-age=43200,s-maxage=604800",
+          expires: "never"
+      });
+
+      return () => {
+          request.cancel();
+          callback();
+      };
+
 }
 /**
  * The {@link WorkerSource} implementation that supports {@link VectorTileSource}.
@@ -124,6 +134,10 @@ class VectorTileWorkerSource implements WorkerSource {
 
         if (!this.loading)
             this.loading = {};
+
+        const perf = (params && params.request && params.request.collectResourceTiming) ?
+            new performance.Performance(params.request) : false;
+
         const workerTile = this.loading[uid] = new WorkerTile(params);
         if (params.mbtiles == undefined) params.mbtiles = false;
         if (!params.mbtiles){
@@ -142,9 +156,10 @@ class VectorTileWorkerSource implements WorkerSource {
             const cacheControl = {};
             if (response.expires) cacheControl.expires = response.expires;
             if (response.cacheControl) cacheControl.cacheControl = response.cacheControl;
+
             const resourceTiming = {};
-            if (params.request && params.request.collectResourceTiming) {
-                const resourceTimingData = perf.getEntriesByName(params.request.url);
+            if (perf) {
+                const resourceTimingData = perf.finish();
                 // it's necessary to eval the result of getEntriesByName() here via parse/stringify
                 // late evaluation in the main thread causes TypeError: illegal invocation
                 if (resourceTimingData)
@@ -156,7 +171,7 @@ class VectorTileWorkerSource implements WorkerSource {
                 if (err || !result) return callback(err);
 
                 // Transferring a copy of rawTileData because the worker needs to retain its copy.
-                callback(null, util.extend({rawTileData: rawTileData.slice(0)}, result, cacheControl, resourceTiming));
+                callback(null, extend({rawTileData: rawTileData.slice(0)}, result, cacheControl, resourceTiming));
             });
 
             this.loaded = this.loaded || {};
@@ -175,22 +190,20 @@ class VectorTileWorkerSource implements WorkerSource {
             const workerTile = loaded[uid];
             workerTile.showCollisionBoxes = params.showCollisionBoxes;
 
+            const done = (err, data) => {
+                const reloadCallback = workerTile.reloadCallback;
+                if (reloadCallback) {
+                    delete workerTile.reloadCallback;
+                    workerTile.parse(workerTile.vectorTile, vtSource.layerIndex, vtSource.actor, reloadCallback);
+                }
+                callback(err, data);
+            };
+
             if (workerTile.status === 'parsing') {
-                workerTile.reloadCallback = callback;
+                workerTile.reloadCallback = done;
             } else if (workerTile.status === 'done') {
-                workerTile.parse(workerTile.vectorTile, this.layerIndex, this.actor, done.bind(workerTile));
+                workerTile.parse(workerTile.vectorTile, this.layerIndex, this.actor, done);
             }
-
-        }
-
-        function done(err, data) {
-            if (this.reloadCallback) {
-                const reloadCallback = this.reloadCallback;
-                delete this.reloadCallback;
-                this.parse(this.vectorTile, vtSource.layerIndex, vtSource.actor, reloadCallback);
-            }
-
-            callback(err, data);
         }
     }
 
@@ -226,4 +239,4 @@ class VectorTileWorkerSource implements WorkerSource {
     }
 }
 
-module.exports = VectorTileWorkerSource;
+export default VectorTileWorkerSource;

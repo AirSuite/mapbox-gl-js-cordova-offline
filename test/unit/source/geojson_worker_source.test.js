@@ -1,10 +1,8 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const GeoJSONWorkerSource = require('../../../src/source/geojson_worker_source');
-const StyleLayerIndex = require('../../../src/style/style_layer_index');
-const OverscaledTileID = require('../../../src/source/tile_id').OverscaledTileID;
-const perf = require('../../../src/util/performance');
+import { test } from 'mapbox-gl-js-test';
+import GeoJSONWorkerSource from '../../../src/source/geojson_worker_source';
+import StyleLayerIndex from '../../../src/style/style_layer_index';
+import { OverscaledTileID } from '../../../src/source/tile_id';
+import perf from '../../../src/util/performance';
 
 test('reloadTile', (t) => {
     t.test('does not rebuild vector data unless data has changed', (t) => {
@@ -133,6 +131,38 @@ test('resourceTiming', (t) => {
         source.loadData({ source: 'testSource', request: { url: 'http://localhost/nonexistent', collectResourceTiming: true } }, (err, result) => {
             t.equal(err, null);
             t.deepEquals(result.resourceTiming.testSource, [ exampleResourceTiming ], 'got expected resource timing');
+            t.end();
+        });
+    });
+
+    t.test('loadData - url (resourceTiming fallback method)', (t) => {
+        const sampleMarks = [100, 350];
+        const marks = {};
+        const measures = {};
+        t.stub(perf, 'getEntriesByName').callsFake((name) => { return measures[name] || []; });
+        t.stub(perf, 'mark').callsFake((name) => {
+            marks[name] = sampleMarks.shift();
+            return null;
+        });
+        t.stub(perf, 'measure').callsFake((name, start, end) => {
+            measures[name] = measures[name] || [];
+            measures[name].push({
+                duration: marks[end] - marks[start],
+                entryType: 'measure',
+                name: name,
+                startTime: marks[start]
+            });
+            return null;
+        });
+        t.stub(perf, 'clearMarks').callsFake(() => { return null; });
+        t.stub(perf, 'clearMeasures').callsFake(() => { return null; });
+
+        const layerIndex = new StyleLayerIndex(layers);
+        const source = new GeoJSONWorkerSource(null, layerIndex, (params, callback) => { return callback(null, geoJson); });
+
+        source.loadData({ source: 'testSource', request: { url: 'http://localhost/nonexistent', collectResourceTiming: true } }, (err, result) => {
+            t.equal(err, null);
+            t.deepEquals(result.resourceTiming.testSource, [{"duration": 250, "entryType": "measure", "name": "http://localhost/nonexistent", "startTime": 100 }], 'got expected resource timing');
             t.end();
         });
     });
