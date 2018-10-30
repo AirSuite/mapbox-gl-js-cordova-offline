@@ -160,6 +160,9 @@ const navigation = [
                 "title": "String"
             },
             {
+                "title": "Formatted"
+            },
+            {
                 "title": "Boolean"
             },
             {
@@ -300,17 +303,15 @@ class Item extends React.Component {
             return <span key={i}><em>Requires</em> <var>{req}</var>. </span>;
         } else if (req['!']) {
             return <span key={i}><em>Disabled by</em> <var>{req['!']}</var>. </span>;
-        } else if (req['<=']) {
-            return <span key={i}><em>Must be less than or equal to</em> <var>{req['<=']}</var>. </span>;
         } else {
             const [name, value] = entries(req)[0];
             if (Array.isArray(value)) {
                 return <span key={i}><em>Requires</em> <var>{name}</var> to be {
                     value
-                        .map((r, i) => <var key={i}>{r}</var>)
+                        .map((r, i) => <code key={i}>{JSON.stringify(r)}</code>)
                         .reduce((prev, curr) => [prev, ', or ', curr])}. </span>;
             } else {
-                return <span key={i}><em>Requires</em> <var>{name}</var> to be <var>{value}</var>. </span>;
+                return <span key={i}><em>Requires</em> <var>{name}</var> to be <code>{JSON.stringify(value)}</code>. </span>;
             }
         }
     }
@@ -688,6 +689,12 @@ export default class extends React.Component {
                                             android: '4.2.0',
                                             ios: '3.4.0',
                                             macos: '0.3.0'
+                                        },
+                                        'line distance metrics': {
+                                            js: '0.45.0',
+                                            android: '6.5.0',
+                                            ios: '4.4.0',
+                                            macos: '0.11.0'
                                         }
                                     }}/>
                                 </div>
@@ -705,7 +712,7 @@ export default class extends React.Component {
                                         {highlightJSON(`
                                             "image": {
                                                 "type": "image",
-                                                "url": "/mapbox-gl-js/assets/radar.gif",
+                                                "url": "https://www.mapbox.com/mapbox-gl-js/assets/radar.gif",
                                                 "coordinates": [
                                                     [-80.425, 46.437],
                                                     [-71.516, 46.437],
@@ -776,7 +783,7 @@ export default class extends React.Component {
                             <p>
                                 A style's <code>sprite</code> property supplies a URL template for loading small images to use in
                                 rendering <code>background-pattern</code>, <code>fill-pattern</code>, <code>line-pattern</code>,
-                                and <code>icon-image</code> style properties.
+                                <code>fill-extrusion-pattern</code> and <code>icon-image</code> style properties.
                             </p>
                             <div className='space-bottom1 pad2x clearfix'>
                                 {highlightJSON(`"sprite": ${JSON.stringify(ref.$root.sprite.example, null, 2)}`)}
@@ -948,6 +955,19 @@ export default class extends React.Component {
                                             "line-color": "yellow"
                                         }`)}
                                     <p>Especially of note is the support for hsl, which can be <a href='http://mothereffinghsl.com/'>easier to reason about than rgb()</a>.</p>
+                                </div>
+
+                                <div className='pad2 keyline-bottom'>
+                                    <a id='types-formatted' className='anchor'/>
+                                    <h3 className='space-bottom1'><a href='#types-formatted' title='link to formatted'>Formatted</a></h3>
+                                    <p>The <code>formatted</code> type represents a string broken into sections annotated with separate formatting options.</p>
+                                    {highlightJSON(`
+                                        {
+                                            "text-field": ["format",
+                                              "foo", { "font-scale": 1.2 },
+                                              "bar", { "font-scale": 0.8 }
+                                            ]
+                                        }`)}
                                 </div>
 
                                 <div className='pad2 keyline-bottom'>

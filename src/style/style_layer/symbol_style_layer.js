@@ -13,6 +13,7 @@ import type {BucketParameters} from '../../data/bucket';
 import type {LayoutProps, PaintProps} from './symbol_style_layer_properties';
 import type {Feature} from '../../style-spec/expression';
 import type EvaluationParameters from '../evaluation_parameters';
+import type {LayerSpecification} from '../../style-spec/types';
 
 class SymbolStyleLayer extends StyleLayer {
     _unevaluatedLayout: Layout<LayoutProps>;
@@ -30,7 +31,7 @@ class SymbolStyleLayer extends StyleLayer {
         super.recalculate(parameters);
 
         if (this.layout.get('icon-rotation-alignment') === 'auto') {
-            if (this.layout.get('symbol-placement') === 'line') {
+            if (this.layout.get('symbol-placement') !== 'point') {
                 this.layout._values['icon-rotation-alignment'] = 'map';
             } else {
                 this.layout._values['icon-rotation-alignment'] = 'viewport';
@@ -38,7 +39,7 @@ class SymbolStyleLayer extends StyleLayer {
         }
 
         if (this.layout.get('text-rotation-alignment') === 'auto') {
-            if (this.layout.get('symbol-placement') === 'line') {
+            if (this.layout.get('symbol-placement') !== 'point') {
                 this.layout._values['text-rotation-alignment'] = 'map';
             } else {
                 this.layout._values['text-rotation-alignment'] = 'viewport';

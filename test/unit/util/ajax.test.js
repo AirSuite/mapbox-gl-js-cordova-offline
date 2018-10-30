@@ -1,7 +1,8 @@
 import { test } from 'mapbox-gl-js-test';
 import {
     getArrayBuffer,
-    getJSON
+    getJSON,
+    postData
 } from '../../../src/util/ajax';
 import window from '../../../src/util/window';
 
@@ -14,18 +15,6 @@ test('ajax', (t) => {
     t.afterEach(callback => {
         window.restore();
         callback();
-    });
-
-    t.test('getArrayBuffer, no content error', (t) => {
-        window.server.respondWith(request => {
-            request.respond(200, {'Content-Type': 'image/png'}, '');
-        });
-        getArrayBuffer({ url:'' }, (error) => {
-            t.pass('called getArrayBuffer');
-            t.ok(error, 'should error when the status is 200 without content.');
-            t.end();
-        });
-        window.server.respond();
     });
 
     t.test('getArrayBuffer, 404', (t) => {
@@ -92,6 +81,17 @@ test('ajax', (t) => {
         getJSON({ url:'api.mapbox.com' }, (error) => {
             t.equal(error.status, 401);
             t.equal(error.message, "Unauthorized: you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens");
+            t.end();
+        });
+        window.server.respond();
+    });
+
+    t.test('postData, 204(no content): no error', (t) => {
+        window.server.respondWith(request => {
+            request.respond(204);
+        });
+        postData({ url:'api.mapbox.com' }, (error) => {
+            t.equal(error, null);
             t.end();
         });
         window.server.respond();

@@ -20,6 +20,7 @@ import type {
 
 import type {WorkerGlobalScopeInterface} from '../util/web_worker';
 import type {Callback} from '../types/callback';
+import type {LayerSpecification} from '../style-spec/types';
 
 /**
  * @private
@@ -31,6 +32,7 @@ export default class Worker {
     workerSourceTypes: { [string]: Class<WorkerSource> };
     workerSources: { [string]: { [string]: { [string]: WorkerSource } } };
     demWorkerSources: { [string]: { [string]: RasterDEMTileWorkerSource } };
+    referrer: ?string;
 
     constructor(self: WorkerGlobalScopeInterface) {
         this.self = self;
@@ -54,13 +56,18 @@ export default class Worker {
             this.workerSourceTypes[name] = WorkerSource;
         };
 
-        this.self.registerRTLTextPlugin = (rtlTextPlugin: {applyArabicShaping: Function, processBidirectionalText: Function}) => {
+        this.self.registerRTLTextPlugin = (rtlTextPlugin: {applyArabicShaping: Function, processBidirectionalText: Function, processStyledBidirectionalText?: Function}) => {
             if (globalRTLTextPlugin.isLoaded()) {
                 throw new Error('RTL text plugin already registered.');
             }
             globalRTLTextPlugin['applyArabicShaping'] = rtlTextPlugin.applyArabicShaping;
             globalRTLTextPlugin['processBidirectionalText'] = rtlTextPlugin.processBidirectionalText;
+            globalRTLTextPlugin['processStyledBidirectionalText'] = rtlTextPlugin.processStyledBidirectionalText;
         };
+    }
+
+    setReferrer(mapID: string, referrer: string) {
+        this.referrer = referrer;
     }
 
     setLayers(mapId: string, layers: Array<LayerSpecification>, callback: WorkerTileCallback) {
@@ -194,6 +201,5 @@ export default class Worker {
 if (typeof WorkerGlobalScope !== 'undefined' &&
     typeof self !== 'undefined' &&
     self instanceof WorkerGlobalScope) {
-    new Worker(self);
+    self.worker = new Worker(self);
 }
-

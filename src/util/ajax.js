@@ -1,6 +1,8 @@
 // @flow
 
 import window from './window';
+import { extend } from './util';
+import { isMapboxHTTPURL } from './mapbox';
 
 import type { Callback } from '../types/callback';
 import type { Cancelable } from '../types/cancelable';
@@ -37,14 +39,22 @@ if (typeof Object.freeze == 'function') {
 export type RequestParameters = {
     url: string,
     headers?: Object,
+    method?: 'GET' | 'POST' | 'PUT',
+    body?: string,
+    type?: 'string' | 'json' | 'arrayBuffer',
     credentials?: 'same-origin' | 'include',
     collectResourceTiming?: boolean
 };
+
+export type ResponseCallback<T> = (error: ?Error, data: ?T, cacheControl: ?string, expires: ?string) => void;
 
 class AJAXError extends Error {
     status: number;
     url: string;
     constructor(message: string, status: number, url: string) {
+        if (status === 401 && isMapboxHTTPURL(url)) {
+            message += ': you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens';
+        }
         super(message);
         this.status = status;
         this.url = url;
@@ -59,68 +69,102 @@ class AJAXError extends Error {
     }
 }
 
-function makeRequest(requestParameters: RequestParameters): XMLHttpRequest {
+// Ensure that we're sending the correct referrer from blob URL worker bundles.
+// For files loaded from the local file system, `location.origin` will be set
+// to the string(!) "null" (Firefox), or "file://" (Chrome, Safari, Edge, IE),
+// and we will set an empty referrer. Otherwise, we're using the document's URL.
+/* global self, WorkerGlobalScope */
+export const getReferrer = typeof WorkerGlobalScope !== 'undefined' &&
+                           typeof self !== 'undefined' &&
+                           self instanceof WorkerGlobalScope ?
+    () => self.worker && self.worker.referrer :
+    () => {
+        const origin = window.location.origin;
+        if (origin && origin !== 'null' && origin !== 'file://') {
+            return origin + window.location.pathname;
+        }
+    };
+
+function makeFetchRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
+    const controller = new window.AbortController();
+    const request = new window.Request(requestParameters.url, {
+        method: requestParameters.method || 'GET',
+        body: requestParameters.body,
+        credentials: requestParameters.credentials,
+        headers: requestParameters.headers,
+        referrer: getReferrer(),
+        signal: controller.signal
+    });
+
+    if (requestParameters.type === 'json') {
+        request.headers.set('Accept', 'application/json');
+    }
+
+    window.fetch(request).then(response => {
+        if (response.ok) {
+            response[requestParameters.type || 'text']().then(result => {
+                callback(null, result, response.headers.get('Cache-Control'), response.headers.get('Expires'));
+            }).catch(err => callback(new Error(err.message)));
+        } else {
+            callback(new AJAXError(response.statusText, response.status, requestParameters.url));
+        }
+    }).catch((error) => {
+        callback(new Error(error.message));
+    });
+
+    return { cancel: () => controller.abort() };
+}
+
+function makeXMLHttpRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     const xhr: XMLHttpRequest = new window.XMLHttpRequest();
     var url = requestParameters.url;
     if (url.indexOf(' ') >= 0) url = encodeURI(url);
-    xhr.open('GET', url, true);
+    xhr.open(requestParameters.method || 'GET', url, true);
+    if (requestParameters.type === 'arrayBuffer') {
+        xhr.responseType = 'arraybuffer';
+    }
     for (const k in requestParameters.headers) {
         xhr.setRequestHeader(k, requestParameters.headers[k]);
     }
+    if (requestParameters.type === 'json') {
+        xhr.setRequestHeader('Accept', 'application/json');
+    }
     xhr.withCredentials = requestParameters.credentials === 'include';
-    return xhr;
-}
-
-export const getJSON = function(requestParameters: RequestParameters, callback: Callback<mixed>): Cancelable {
-    const xhr = makeRequest(requestParameters);
-    xhr.setRequestHeader('Accept', 'application/json');
-    xhr.onerror = function() {
+    xhr.onerror = () => {
         callback(new Error(xhr.statusText));
     };
-    xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-            let data;
-            try {
-                data = JSON.parse(xhr.response);
-            } catch (err) {
-                return callback(err);
+    xhr.onload = () => {
+        if (((xhr.status >= 200 && xhr.status < 300) || xhr.status === 0) && xhr.response !== null) {
+            let data: mixed = xhr.response;
+            if (requestParameters.type === 'json') {
+                // We're manually parsing JSON here to get better error messages.
+                try {
+                    data = JSON.parse(xhr.response);
+                } catch (err) {
+                    return callback(err);
+                }
             }
-            callback(null, data);
-        } else {
-            if (xhr.status === 401 && requestParameters.url.match(/mapbox.com/)) {
-                callback(new AJAXError(`${xhr.statusText}: you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens`, xhr.status, requestParameters.url));
-            } else {
-                callback(new AJAXError(xhr.statusText, xhr.status, requestParameters.url));
-            }
-        }
-    };
-    xhr.send();
-    return { cancel: () => xhr.abort() };
-};
-
-export const getArrayBuffer = function(requestParameters: RequestParameters, callback: Callback<{data: ArrayBuffer, cacheControl: ?string, expires: ?string}>): Cancelable {
-    const xhr = makeRequest(requestParameters);
-    xhr.responseType = 'arraybuffer';
-    xhr.onerror = function() {
-        callback(new Error(xhr.statusText));
-    };
-    xhr.onload = function() {
-        const response: ArrayBuffer = xhr.response;
-        if (response.byteLength === 0 && xhr.status === 200) {
-            return callback(new Error('http status 200 returned without content.'));
-        }
-        if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-            callback(null, {
-                data: response,
-                cacheControl: xhr.getResponseHeader('Cache-Control'),
-                expires: xhr.getResponseHeader('Expires')
-            });
+            callback(null, data, xhr.getResponseHeader('Cache-Control'), xhr.getResponseHeader('Expires'));
         } else {
             callback(new AJAXError(xhr.statusText, xhr.status, requestParameters.url));
         }
     };
-    xhr.send();
+    xhr.send(requestParameters.body);
     return { cancel: () => xhr.abort() };
+}
+
+const makeRequest = window.fetch && window.Request && window.AbortController ? makeFetchRequest : makeXMLHttpRequest;
+
+export const getJSON = function(requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
+    return makeRequest(extend(requestParameters, { type: 'json' }), callback);
+};
+
+export const getArrayBuffer = function(requestParameters: RequestParameters, callback: ResponseCallback<ArrayBuffer>): Cancelable {
+    return makeRequest(extend(requestParameters, { type: 'arrayBuffer' }), callback);
+};
+
+export const postData = function(requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
+    return makeRequest(extend(requestParameters, { method: 'POST' }), callback);
 };
 
 function sameOrigin(url) {
@@ -134,20 +178,21 @@ const transparentPngUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAA
 export const getImage = function(requestParameters: RequestParameters, callback: Callback<HTMLImageElement>): Cancelable {
     // request the image with XHR to work around caching issues
     // see https://github.com/mapbox/mapbox-gl-js/issues/1470
-    return getArrayBuffer(requestParameters, (err, imgData) => {
+    return getArrayBuffer(requestParameters, (err: ?Error, data: ?ArrayBuffer, cacheControl: ?string, expires: ?string) => {
         if (err) {
             callback(err);
-        } else if (imgData) {
+        } else if (data) {
             const img: HTMLImageElement = new window.Image();
             const URL = window.URL || window.webkitURL;
             img.onload = () => {
                 callback(null, img);
                 URL.revokeObjectURL(img.src);
             };
-            const blob: Blob = new window.Blob([new Uint8Array(imgData.data)], { type: 'image/png' });
-            (img: any).cacheControl = imgData.cacheControl;
-            (img: any).expires = imgData.expires;
-            img.src = imgData.data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
+            img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
+            const blob: Blob = new window.Blob([new Uint8Array(data)], { type: 'image/png' });
+            (img: any).cacheControl = cacheControl;
+            (img: any).expires = expires;
+            img.src = data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
         }
     });
 };

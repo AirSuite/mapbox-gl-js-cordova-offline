@@ -7,7 +7,8 @@ import config from '../../util/config';
 import type Map from '../map';
 
 type Options = {
-    compact?: boolean
+    compact?: boolean,
+    customAttribution?: string | Array<string>
 };
 
 /**
@@ -16,6 +17,7 @@ type Options = {
  * @implements {IControl}
  * @param {Object} [options]
  * @param {boolean} [options.compact] If `true` force a compact attribution that shows the full attribution on mouse hover, or if `false` force the full attribution control. The default is a responsive attribution that collapses when the map is less than 640 pixels wide.
+ * @param {string | Array<string>} [options.customAttribution] String or strings to show in addition to any other attributions.
  * @example
  * var map = new mapboxgl.Map({attributionControl: false})
  *     .addControl(new mapboxgl.AttributionControl({
@@ -57,6 +59,7 @@ class AttributionControl {
         this._updateAttributions();
         this._updateEditLink();
 
+        this._map.on('styledata', this._updateData);
         this._map.on('sourcedata', this._updateData);
         this._map.on('moveend', this._updateEditLink);
 
@@ -71,6 +74,7 @@ class AttributionControl {
     onRemove() {
         DOM.remove(this._container);
 
+        this._map.off('styledata', this._updateData);
         this._map.off('sourcedata', this._updateData);
         this._map.off('moveend', this._updateEditLink);
         this._map.off('resize', this._updateCompact);
@@ -102,7 +106,7 @@ class AttributionControl {
     }
 
     _updateData(e: any) {
-        if (e && e.sourceDataType === 'metadata') {
+        if (e && (e.sourceDataType === 'metadata' || e.dataType === 'style')) {
             this._updateAttributions();
             this._updateEditLink();
         }
@@ -111,6 +115,18 @@ class AttributionControl {
     _updateAttributions() {
         if (!this._map.style) return;
         let attributions: Array<string> = [];
+        if (this.options.customAttribution) {
+            if (Array.isArray(this.options.customAttribution)) {
+                attributions = attributions.concat(
+                    this.options.customAttribution.map(attribution => {
+                        if (typeof attribution !== 'string') return '';
+                        return `<p>${attribution}</p>`;
+                    })
+                );
+            } else if (typeof this.options.customAttribution === 'string') {
+                attributions.push(`<p>${this.options.customAttribution}</p>`);
+            }
+        }
 
         if (this._map.style.stylesheet) {
             const stylesheet: any = this._map.style.stylesheet;
@@ -120,9 +136,12 @@ class AttributionControl {
 
         const sourceCaches = this._map.style.sourceCaches;
         for (const id in sourceCaches) {
-            const source = sourceCaches[id].getSource();
-            if (source.attribution && attributions.indexOf(source.attribution) < 0) {
-                attributions.push(source.attribution);
+            const sourceCache = sourceCaches[id];
+            if (sourceCache.used) {
+                const source = sourceCache.getSource();
+                if (source.attribution && attributions.indexOf(source.attribution) < 0) {
+                    attributions.push(source.attribution);
+                }
             }
         }
 
@@ -136,7 +155,7 @@ class AttributionControl {
             return true;
         });
         if (attributions.length) {
-            this._container.innerHTML = attributions.join(' | ');
+            this._container.innerHTML = attributions.join('<p> | </p>');
             this._container.classList.remove('mapboxgl-attrib-empty');
         } else {
             this._container.classList.add('mapboxgl-attrib-empty');

@@ -2,12 +2,16 @@
 
 import type {RequestParameters} from '../util/ajax';
 import type {RGBAImage, AlphaImage} from '../util/image';
+import type { GlyphPositions } from '../render/glyph_atlas';
+import type ImageAtlas from '../render/image_atlas';
 import type {OverscaledTileID} from './tile_id';
 import type {Bucket} from '../data/bucket';
 import type FeatureIndex from '../data/feature_index';
 import type {CollisionBoxArray} from '../data/array_types';
 import type DEMData from '../data/dem_data';
 import type {PerformanceResourceTiming} from '../types/performance_resource_timing';
+import type { StyleGlyph } from '../style/style_glyph';
+import type { StyleImage } from '../style/style_image';
 
 export type TileParameters = {
     source: string,
@@ -22,8 +26,9 @@ export type WorkerTileParameters = TileParameters & {
     tileSize: number,
     pixelRatio: number,
     showCollisionBoxes: boolean,
+    collectResourceTiming?: boolean,
+    returnDependencies?: boolean,
     mbtiles: boolean,
-    collectResourceTiming?: boolean
 };
 
 export type WorkerDEMTileParameters = TileParameters & {
@@ -34,12 +39,16 @@ export type WorkerDEMTileParameters = TileParameters & {
 
 export type WorkerTileResult = {
     buckets: Array<Bucket>,
-    iconAtlasImage: RGBAImage,
+    imageAtlas: ImageAtlas,
     glyphAtlasImage: AlphaImage,
     featureIndex: FeatureIndex,
     collisionBoxArray: CollisionBoxArray,
     rawTileData?: ArrayBuffer,
-    resourceTiming?: Array<PerformanceResourceTiming>
+    resourceTiming?: Array<PerformanceResourceTiming>,
+    // Only used for benchmarking:
+    glyphMap?: {[string]: {[number]: ?StyleGlyph}} | null,
+    iconMap?: {[string]: StyleImage} | null,
+    glyphPositions?: GlyphPositions | null
 };
 
 export type WorkerTileCallback = (error: ?Error, result: ?WorkerTileResult) => void;

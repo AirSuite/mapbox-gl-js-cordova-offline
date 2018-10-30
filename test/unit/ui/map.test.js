@@ -12,7 +12,6 @@ import simulate from 'mapbox-gl-js-test/simulate_interaction';
 import fixed from 'mapbox-gl-js-test/fixed';
 const fixedNum = fixed.Num;
 const fixedLngLat = fixed.LngLat;
-const fixedCoord = fixed.Coord;
 
 function createStyleSource() {
     return {
@@ -51,6 +50,20 @@ test('Map', (t) => {
                 container: 'anElementIdWhichDoesNotExistInTheDocument'
             });
         }, new Error("Container 'anElementIdWhichDoesNotExistInTheDocument' not found"), 'throws on invalid map container id');
+        t.end();
+    });
+
+    t.test('initial bounds in constructor options', (t) => {
+        const container = window.document.createElement('div');
+        Object.defineProperty(container, 'offsetWidth', {value: 512});
+        Object.defineProperty(container, 'offsetHeight', {value: 512});
+
+        const bounds = [[-133, 16], [-68, 50]];
+        const map = createMap(t, {container, bounds});
+
+        t.deepEqual(fixedLngLat(map.getCenter(), 4), { lng: -100.5, lat: 34.7171 });
+        t.equal(fixedNum(map.getZoom(), 3), 2.113);
+
         t.end();
     });
 
@@ -466,12 +479,12 @@ test('Map', (t) => {
     });
 
     t.test('#resize', (t) => {
-        t.test('sets width and height from container offsets', (t) => {
+        t.test('sets width and height from container clients', (t) => {
             const map = createMap(t),
                 container = map.getContainer();
 
-            Object.defineProperty(container, 'offsetWidth', {value: 250});
-            Object.defineProperty(container, 'offsetHeight', {value: 250});
+            Object.defineProperty(container, 'clientWidth', {value: 250});
+            Object.defineProperty(container, 'clientHeight', {value: 250});
             map.resize();
 
             t.equal(map.transform.width, 250);
@@ -555,9 +568,16 @@ test('Map', (t) => {
         t.test('rotated bounds', (t) => {
             const map = createMap(t, { zoom: 1, bearing: 45, skipCSSStub: true });
             t.deepEqual(
-                toFixed([[-49.718445552178764, 0], [49.7184455522, 0]]),
+                toFixed([[-49.718445552178764, -44.44541580601936], [49.7184455522, 44.445415806019355]]),
                 toFixed(map.getBounds().toArray())
             );
+
+            map.setBearing(135);
+            t.deepEqual(
+                toFixed([[-49.718445552178764, -44.44541580601936], [49.7184455522, 44.445415806019355]]),
+                toFixed(map.getBounds().toArray())
+            );
+
             t.end();
         });
 
@@ -783,17 +803,69 @@ test('Map', (t) => {
         t.end();
     });
 
+    t.test('#remove calls onRemove on added controls', (t) => {
+        const map = createMap(t);
+        const control = {
+            onRemove: t.spy(),
+            onAdd: function (_) {
+                return window.document.createElement('div');
+            }
+        };
+        map.addControl(control);
+        map.remove();
+        t.ok(control.onRemove.calledOnce);
+        t.end();
+    });
+
+    t.test('#remove calls onRemove on added controls before style is destroyed', (t) => {
+        const map = createMap(t);
+        let onRemoveCalled = 0;
+        let style;
+        const control = {
+            onRemove: function(map) {
+                onRemoveCalled++;
+                t.deepEqual(map.getStyle(), style);
+            },
+            onAdd: function (_) {
+                return window.document.createElement('div');
+            }
+        };
+
+        map.addControl(control);
+
+        map.on('style.load', () => {
+            style = map.getStyle();
+            map.remove();
+            t.equal(onRemoveCalled, 1);
+            t.end();
+        });
+    });
+
     t.test('#addControl', (t) => {
         const map = createMap(t);
         const control = {
             onAdd: function(_) {
                 t.equal(map, _, 'addTo() called with map');
-                t.end();
                 return window.document.createElement('div');
             }
         };
         map.addControl(control);
+        t.equal(map._controls[1], control, "saves reference to added controls");
+        t.end();
     });
+
+    t.test('#removeControl errors on invalid arguments', (t) => {
+        const map = createMap(t);
+        const control = {};
+        const stub = t.stub(console, 'error');
+
+        map.addControl(control);
+        map.removeControl(control);
+        t.ok(stub.calledTwice);
+        t.end();
+
+    });
+
 
     t.test('#removeControl', (t) => {
         const map = createMap(t);
@@ -803,11 +875,13 @@ test('Map', (t) => {
             },
             onRemove: function(_) {
                 t.equal(map, _, 'onRemove() called with map');
-                t.end();
             }
         };
         map.addControl(control);
         map.removeControl(control);
+        t.equal(map._controls.length, 1, "removes removed controls from map's control array");
+        t.end();
+
     });
 
     t.test('#project', (t) => {
@@ -871,7 +945,7 @@ test('Map', (t) => {
                 const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)));
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.deepEqual(args[0].worldCoordinate.map(c => fixedCoord(c)), [{ column: 0.5, row: 0.5, zoom: 0 }]); // query geometry
+                t.deepEqual(args[0], [{ x: 100, y: 100 }]); // query geometry
                 t.deepEqual(args[1], {}); // params
                 t.deepEqual(args[2], map.transform); // transform
                 t.deepEqual(output, []);
@@ -919,11 +993,7 @@ test('Map', (t) => {
 
                 map.queryRenderedFeatures(map.project(new LngLat(360, 0)));
 
-                const coords = map.style.queryRenderedFeatures.getCall(0).args[0].worldCoordinate.map(c => fixedCoord(c));
-                t.equal(coords[0].column, 1.5);
-                t.equal(coords[0].row, 0.5);
-                t.equal(coords[0].zoom, 0);
-
+                t.deepEqual(map.style.queryRenderedFeatures.getCall(0).args[0], [{x: 612, y: 100}]);
                 t.end();
             });
         });
@@ -1230,8 +1300,25 @@ test('Map', (t) => {
                 }
             });
             map.on('load', () => {
+                map.setFeatureState({ source: 'geojson', id: 12345}, {'hover': true});
+                const fState = map.getFeatureState({ source: 'geojson', id: 12345});
+                t.equal(fState.hover, true);
+                t.end();
+            });
+        });
+        t.test('parses feature id as an int', (t) => {
+            const map = createMap(t, {
+                style: {
+                    "version": 8,
+                    "sources": {
+                        "geojson": createStyleSource()
+                    },
+                    "layers": []
+                }
+            });
+            map.on('load', () => {
                 map.setFeatureState({ source: 'geojson', id: '12345'}, {'hover': true});
-                const fState = map.getFeatureState({ source: 'geojson', id: '12345'});
+                const fState = map.getFeatureState({ source: 'geojson', id: 12345});
                 t.equal(fState.hover, true);
                 t.end();
             });
@@ -1247,7 +1334,7 @@ test('Map', (t) => {
                 }
             });
             t.throws(() => {
-                map.setFeatureState({ source: 'geojson', id: '12345'}, {'hover': true});
+                map.setFeatureState({ source: 'geojson', id: 12345}, {'hover': true});
             }, Error, /load/i);
 
             t.end();
@@ -1267,7 +1354,7 @@ test('Map', (t) => {
                     t.match(error.message, /source/);
                     t.end();
                 });
-                map.setFeatureState({ source: 'vector', id: '12345'}, {'hover': true});
+                map.setFeatureState({ source: 'vector', id: 12345}, {'hover': true});
             });
         });
         t.test('fires an error if sourceLayer not provided for a vector source', (t) => {
@@ -1288,10 +1375,72 @@ test('Map', (t) => {
                     t.match(error.message, /sourceLayer/);
                     t.end();
                 });
-                map.setFeatureState({ source: 'vector', sourceLayer: 0, id: '12345'}, {'hover': true});
+                map.setFeatureState({ source: 'vector', sourceLayer: 0, id: 12345}, {'hover': true});
             });
         });
-
+        t.test('fires an error if id not provided', (t) => {
+            const map = createMap(t, {
+                style: {
+                    "version": 8,
+                    "sources": {
+                        "vector": {
+                            "type": "vector",
+                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
+                        }
+                    },
+                    "layers": []
+                }
+            });
+            map.on('load', () => {
+                map.on('error', ({ error }) => {
+                    t.match(error.message, /id/);
+                    t.end();
+                });
+                map.setFeatureState({ source: 'vector', sourceLayer: "1"}, {'hover': true});
+            });
+        });
+        t.test('fires an error if id is less than zero', (t) => {
+            const map = createMap(t, {
+                style: {
+                    "version": 8,
+                    "sources": {
+                        "vector": {
+                            "type": "vector",
+                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
+                        }
+                    },
+                    "layers": []
+                }
+            });
+            map.on('load', () => {
+                map.on('error', ({ error }) => {
+                    t.match(error.message, /id/);
+                    t.end();
+                });
+                map.setFeatureState({ source: 'vector', sourceLayer: "1", id: -1}, {'hover': true});
+            });
+        });
+        t.test('fires an error if id cannot be parsed as an int', (t) => {
+            const map = createMap(t, {
+                style: {
+                    "version": 8,
+                    "sources": {
+                        "vector": {
+                            "type": "vector",
+                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
+                        }
+                    },
+                    "layers": []
+                }
+            });
+            map.on('load', () => {
+                map.on('error', ({ error }) => {
+                    t.match(error.message, /id/);
+                    t.end();
+                });
+                map.setFeatureState({ source: 'vector', sourceLayer: "1", id: 'abc'}, {'hover': true});
+            });
+        });
         t.end();
     });
 
@@ -1451,8 +1600,8 @@ test('Map', (t) => {
 
         map.flyTo({ center: [200, 0], duration: 100 });
 
-        Object.defineProperty(container, 'offsetWidth', {value: 250});
-        Object.defineProperty(container, 'offsetHeight', {value: 250});
+        Object.defineProperty(container, 'clientWidth', {value: 250});
+        Object.defineProperty(container, 'clientHeight', {value: 250});
         map.resize();
 
         t.ok(map.isMoving(), 'map is still moving after resize due to camera animation');

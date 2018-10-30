@@ -11,7 +11,7 @@ import GlyphManager from '../render/glyph_manager';
 import Light from './light';
 import LineAtlas from '../render/line_atlas';
 import { pick, clone, extend, deepEqual, filterObject, mapObject } from '../util/util';
-import { getJSON, ResourceType } from '../util/ajax';
+import { getJSON, getReferrer, ResourceType } from '../util/ajax';
 import { isMapboxURL, normalizeStyleURL } from '../util/mapbox';
 import browser from '../util/browser';
 import Dispatcher from '../util/dispatcher';
@@ -35,6 +35,7 @@ import {
 import PauseablePlacement from './pauseable_placement';
 import ZoomHistory from './zoom_history';
 import CrossTileSymbolIndex from '../symbol/cross_tile_symbol_index';
+import {validateCustomStyleLayer} from './style_layer/custom_style_layer';
 
 // We're skipping validation errors with the `source.canvas` identifier in order
 // to continue to allow canvas sources to be added at runtime/updated in
@@ -50,6 +51,15 @@ import type {Callback} from '../types/callback';
 import type EvaluationParameters from './evaluation_parameters';
 import type {Placement} from '../symbol/placement';
 import type {Cancelable} from '../types/cancelable';
+import type {GeoJSON} from '@mapbox/geojson-types';
+import type {
+    LayerSpecification,
+    FilterSpecification,
+    StyleSpecification,
+    LightSpecification,
+    SourceSpecification
+} from '../style-spec/types';
+import type {CustomLayerInterface} from './style_layer/custom_style_layer';
 
 const supportedDiffOperations = pick(diffOperations, [
     'addLayer',
@@ -134,6 +144,8 @@ class Style extends Evented {
 
         this._resetUpdates();
 
+        this.dispatcher.broadcast('setReferrer', getReferrer());
+
         const self = this;
         this._rtlTextPluginCallback = Style.registerForPluginAvailability((args) => {
             self.dispatcher.broadcast('loadRTLTextPlugin', args.pluginURL, args.completionCallback);
@@ -178,12 +190,12 @@ class Style extends Evented {
         url = normalizeStyleURL(url, options.accessToken);
         const request = this.map._transformRequest(url, ResourceType.Style);
 
-        this._request = getJSON(request, (error, json) => {
+        this._request = getJSON(request, (error: ?Error, json: ?Object) => {
             this._request = null;
             if (error) {
                 this.fire(new ErrorEvent(error));
             } else if (json) {
-                this._load((json: any), validate);
+                this._load(json, validate);
             }
         });
     }
@@ -288,8 +300,15 @@ class Style extends Evented {
         return true;
     }
 
-    _serializeLayers(ids: Array<string>) {
-        return ids.map((id) => this._layers[id].serialize());
+    _serializeLayers(ids: Array<string>): Array<Object> {
+        const serializedLayers = [];
+        for (const id of ids) {
+            const layer = this._layers[id];
+            if (layer.type !== 'custom') {
+                serializedLayers.push(layer.serialize());
+            }
+        }
+        return serializedLayers;
     }
 
     hasTransitions() {
@@ -326,6 +345,7 @@ class Style extends Evented {
             return;
         }
 
+        const changed = this._changed;
         if (this._changed) {
             const updatedIds = Object.keys(this._updatedLayers);
             const removedIds = Object.keys(this._removedLayers);
@@ -350,8 +370,6 @@ class Style extends Evented {
             this.light.updateTransitions(parameters);
 
             this._resetUpdates();
-
-            this.fire(new Event('data', {dataType: 'style'}));
         }
 
         for (const sourceId in this.sourceCaches) {
@@ -369,6 +387,11 @@ class Style extends Evented {
 
         this.light.recalculate(parameters);
         this.z = parameters.zoom;
+
+        if (changed) {
+            this.fire(new Event('data', {dataType: 'style'}));
+        }
+
     }
 
     _updateWorkerLayers(updatedIds: Array<string>, removedIds: Array<string>) {
@@ -544,7 +567,7 @@ class Style extends Evented {
      * ID `before`, or appended if `before` is omitted.
      * @param {string} [before] ID of an existing layer to insert before
      */
-    addLayer(layerObject: LayerSpecification, before?: string, options?: {validate?: boolean}) {
+    addLayer(layerObject: LayerSpecification | CustomLayerInterface, before?: string, options?: {validate?: boolean}) {
         this._checkLoaded();
 
         const id = layerObject.id;
@@ -554,21 +577,29 @@ class Style extends Evented {
             return;
         }
 
-        if (typeof layerObject.source === 'object') {
-            this.addSource(id, layerObject.source);
-            layerObject = clone(layerObject);
-            layerObject = (extend(layerObject, {source: id}): any);
+        let layer;
+        if (layerObject.type === 'custom') {
+
+            if (emitValidationErrors(this, validateCustomStyleLayer(layerObject))) return;
+
+            layer = createStyleLayer(layerObject);
+
+        } else {
+            if (typeof layerObject.source === 'object') {
+                this.addSource(id, layerObject.source);
+                layerObject = clone(layerObject);
+                layerObject = (extend(layerObject, {source: id}): any);
+            }
+
+            // this layer is not in the style.layers array, so we pass an impossible array index
+            if (this._validate(validateStyle.layer,
+                `layers.${id}`, layerObject, {arrayIndex: -1}, options)) return;
+
+            layer = createStyleLayer(layerObject);
+            this._validateLayer(layer);
+
+            layer.setEventedParent(this, {layer: {id: id}});
         }
-
-        // this layer is not in the style.layers array, so we pass an impossible array index
-        if (this._validate(validateStyle.layer,
-            `layers.${id}`, layerObject, {arrayIndex: -1}, options)) return;
-
-        const layer = createStyleLayer(layerObject);
-        this._validateLayer(layer);
-
-        layer.setEventedParent(this, {layer: {id: id}});
-
 
         const index = before ? this._order.indexOf(before) : this._order.length;
         if (before && index === -1) {
@@ -581,7 +612,7 @@ class Style extends Evented {
 
         this._layers[id] = layer;
 
-        if (this._removedLayers[id] && layer.source) {
+        if (this._removedLayers[id] && layer.source && layer.type !== 'custom') {
             // If, in the current batch, we have already removed this layer
             // and we are now re-adding it with a different `type`, then we
             // need to clear (rather than just reload) the underyling source's
@@ -599,6 +630,10 @@ class Style extends Evented {
             }
         }
         this._updateLayer(layer);
+
+        if (layer.onAdd) {
+            layer.onAdd(this.map);
+        }
     }
 
     /**
@@ -662,6 +697,10 @@ class Style extends Evented {
         delete this._layers[id];
         delete this._updatedLayers[id];
         delete this._updatedPaintProps[id];
+
+        if (layer.onRemove) {
+            layer.onRemove(this.map);
+        }
     }
 
     /**
@@ -779,11 +818,12 @@ class Style extends Evented {
         return this.getLayer(layer).getPaintProperty(name);
     }
 
-    setFeatureState(feature: { source: string; sourceLayer?: string; id: string; }, state: Object) {
+    setFeatureState(feature: { source: string; sourceLayer?: string; id: string | number; }, state: Object) {
         this._checkLoaded();
         const sourceId = feature.source;
         const sourceLayer = feature.sourceLayer;
         const sourceCache = this.sourceCaches[sourceId];
+        const featureId = parseInt(feature.id, 10);
 
         if (sourceCache === undefined) {
             this.fire(new ErrorEvent(new Error(`The source '${sourceId}' does not exist in the map's style.`)));
@@ -794,15 +834,20 @@ class Style extends Evented {
             this.fire(new ErrorEvent(new Error(`The sourceLayer parameter must be provided for vector source types.`)));
             return;
         }
+        if (isNaN(featureId) || featureId < 0) {
+            this.fire(new ErrorEvent(new Error(`The feature id parameter must be provided and non-negative.`)));
+            return;
+        }
 
-        sourceCache.setFeatureState(sourceLayer, feature.id, state);
+        sourceCache.setFeatureState(sourceLayer, featureId, state);
     }
 
-    getFeatureState(feature: { source: string; sourceLayer?: string; id: string; }) {
+    getFeatureState(feature: { source: string; sourceLayer?: string; id: string | number; }) {
         this._checkLoaded();
         const sourceId = feature.source;
         const sourceLayer = feature.sourceLayer;
         const sourceCache = this.sourceCaches[sourceId];
+        const featureId = parseInt(feature.id, 10);
 
         if (sourceCache === undefined) {
             this.fire(new ErrorEvent(new Error(`The source '${sourceId}' does not exist in the map's style.`)));
@@ -813,8 +858,12 @@ class Style extends Evented {
             this.fire(new ErrorEvent(new Error(`The sourceLayer parameter must be provided for vector source types.`)));
             return;
         }
+        if (isNaN(featureId) || featureId < 0) {
+            this.fire(new ErrorEvent(new Error(`The feature id parameter must be provided and non-negative.`)));
+            return;
+        }
 
-        return sourceCache.getFeatureState(sourceLayer, feature.id);
+        return sourceCache.getFeatureState(sourceLayer, featureId);
     }
 
     getTransition() {
@@ -835,7 +884,7 @@ class Style extends Evented {
             glyphs: this.stylesheet.glyphs,
             transition: this.stylesheet.transition,
             sources: mapObject(this.sourceCaches, (source) => source.serialize()),
-            layers: this._order.map((id) => this._layers[id].serialize())
+            layers: this._serializeLayers(this._order)
         }, (value) => { return value !== undefined; });
     }
 
@@ -887,13 +936,15 @@ class Style extends Evented {
         }
 
         const sourceResults = [];
+        const queryCoordinates = queryGeometry.map((p) => transform.pointCoordinate(p));
+
         for (const id in this.sourceCaches) {
             if (params.layers && !includedSources[id]) continue;
             sourceResults.push(
                 queryRenderedFeatures(
                     this.sourceCaches[id],
                     this._layers,
-                    queryGeometry.worldCoordinate,
+                    queryCoordinates,
                     params,
                     transform)
             );
@@ -906,7 +957,7 @@ class Style extends Evented {
                 queryRenderedSymbols(
                     this._layers,
                     this.sourceCaches,
-                    queryGeometry.viewport,
+                    queryGeometry,
                     params,
                     this.placement.collisionIndex,
                     this.placement.retainedQueryData)
@@ -1030,7 +1081,7 @@ class Style extends Evented {
 
             if (!layerTiles[styleLayer.source]) {
                 const sourceCache = this.sourceCaches[styleLayer.source];
-                layerTiles[styleLayer.source] = sourceCache.getRenderableIds()
+                layerTiles[styleLayer.source] = sourceCache.getRenderableIds(true)
                     .map((id) => sourceCache.getTileByID(id))
                     .sort((a, b) => (b.tileID.overscaledZ - a.tileID.overscaledZ) || (a.tileID.isLessThan(b.tileID) ? -1 : 1));
             }
@@ -1084,6 +1135,12 @@ class Style extends Evented {
         // needsRender is false when we have just finished a placement that didn't change the visibility of any symbols
         const needsRerender = !this.pauseablePlacement.isDone() || this.placement.hasTransitions(browser.now());
         return needsRerender;
+    }
+
+    _releaseSymbolFadeTiles() {
+        for (const id in this.sourceCaches) {
+            this.sourceCaches[id].releaseSymbolFadeTiles();
+        }
     }
 
     // Callbacks from web workers

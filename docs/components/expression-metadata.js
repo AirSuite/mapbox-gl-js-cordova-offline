@@ -5,99 +5,21 @@ import CompoundExpression from '../../src/style-spec/expression/compound_express
 // registers compound expressions
 import '../../src/style-spec/expression/definitions/index';
 
+const comparisonSignatures = [{
+    type: 'boolean',
+    parameters: ['value', 'value']
+}, {
+    type: 'boolean',
+    parameters: ['value', 'value', 'collator']
+}];
+
 const types = {
-    '==': [{
-        type: 'boolean',
-        parameters: ['string', 'string']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'string', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['number', 'number']
-    }, {
-        type: 'boolean',
-        parameters: ['boolean', 'boolean']
-    }, {
-        type: 'boolean',
-        parameters: ['null', 'null']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'value', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['number', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['boolean', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['null', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'string']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'string', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'number']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'boolean']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'null']
-    }],
-    '!=': [{
-        type: 'boolean',
-        parameters: ['string', 'string']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'string', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['number', 'number']
-    }, {
-        type: 'boolean',
-        parameters: ['boolean', 'boolean']
-    }, {
-        type: 'boolean',
-        parameters: ['null', 'null']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['string', 'value', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['number', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['boolean', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['null', 'value']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'string']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'string', 'collator']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'number']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'boolean']
-    }, {
-        type: 'boolean',
-        parameters: ['value', 'null']
-    }],
+    '==': comparisonSignatures,
+    '!=': comparisonSignatures,
+    '<': comparisonSignatures,
+    '<=': comparisonSignatures,
+    '>': comparisonSignatures,
+    '>=': comparisonSignatures,
     string: [{
         type: 'string',
         parameters: ['value']
@@ -143,13 +65,21 @@ const types = {
         type: 'object',
         parameters: ['value', { repeat: [ 'fallback: value' ] }]
     }],
-    'to-number': [{
-        type: 'number',
-        parameters: ['value', { repeat: [ 'fallback: value' ] }]
+    'to-boolean': [{
+        type: 'boolean',
+        parameters: ['value']
     }],
     'to-color': [{
         type: 'color',
         parameters: ['value', { repeat: [ 'fallback: value' ] }]
+    }],
+    'to-number': [{
+        type: 'number',
+        parameters: ['value', { repeat: [ 'fallback: value' ] }]
+    }],
+    'to-string': [{
+        type: 'string',
+        parameters: ['value']
     }],
     at: [{
         type: 'ItemType',
@@ -179,6 +109,24 @@ const types = {
             'input: number',
             'stop_input_1: number, stop_output_1: OutputType',
             'stop_input_n: number, stop_output_n: OutputType, ...'
+        ]
+    }],
+    'interpolate-hcl': [{
+        type: 'Color',
+        parameters: [
+            'interpolation: ["linear"] | ["exponential", base] | ["cubic-bezier", x1, y1, x2, y2 ]',
+            'input: number',
+            'stop_input_1: number, stop_output_1: Color',
+            'stop_input_n: number, stop_output_n: Color, ...'
+        ]
+    }],
+    'interpolate-lab': [{
+        type: 'Color',
+        parameters: [
+            'interpolation: ["linear"] | ["exponential", base] | ["cubic-bezier", x1, y1, x2, y2 ]',
+            'input: number',
+            'stop_input_1: number, stop_output_1: Color',
+            'stop_input_n: number, stop_output_n: Color, ...'
         ]
     }],
     length: [{
@@ -212,6 +160,14 @@ const types = {
     collator: [{
         type: 'collator',
         parameters: [ '{ "case-sensitive": boolean, "diacritic-sensitive": boolean, "locale": string }' ]
+    }],
+    format: [{
+        type: 'formatted',
+        parameters: [
+            'input_1: string, options_1: { "font-scale": number, "text-font": array<string> }',
+            '...',
+            'input_n: string, options_n: { "font-scale": number, "text-font": array<string> }'
+        ]
     }]
 };
 

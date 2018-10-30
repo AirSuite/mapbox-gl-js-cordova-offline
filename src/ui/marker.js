@@ -12,6 +12,7 @@ import type Map from './map';
 import type Popup from './popup';
 import type {LngLatLike} from "../geo/lng_lat";
 import type {MapMouseEvent, MapTouchEvent} from './events';
+import type {PointLike} from '@mapbox/point-geometry';
 
 type Options = {
     element?: HTMLElement,
@@ -35,6 +36,7 @@ type Options = {
  *   .setLngLat([30.5, 50.5])
  *   .addTo(map);
  * @see [Add custom icons with Markers](https://www.mapbox.com/mapbox-gl-js/example/custom-marker-icons/)
+ * @see [Create a draggable Marker](https://www.mapbox.com/mapbox-gl-js/example/drag-a-marker/)
  */
 export default class Marker extends Evented {
     _map: Map;
@@ -219,6 +221,8 @@ export default class Marker extends Evented {
             this._map.off('moveend', this._update);
             this._map.off('mousedown', this._addDragHandler);
             this._map.off('touchstart', this._addDragHandler);
+            this._map.off('mouseup', this._onUp);
+            this._map.off('touchend', this._onUp);
             delete this._map;
         }
         DOM.remove(this._element);

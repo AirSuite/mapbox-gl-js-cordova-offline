@@ -5,10 +5,10 @@ import Tile from '../../../src/source/tile';
 import { OverscaledTileID } from '../../../src/source/tile_id';
 import Transform from '../../../src/geo/transform';
 import LngLat from '../../../src/geo/lng_lat';
-import Coordinate from '../../../src/geo/coordinate';
 import { Event, ErrorEvent, Evented } from '../../../src/util/evented';
 import { extend } from '../../../src/util/util';
 import browser from '../../../src/util/browser';
+import MercatorCoordinate from '../../../src/geo/mercator_coordinate';
 
 // Add a mocked source type for use in these tests
 function MockSourceType(id, sourceOptions, _dispatcher, eventedParent) {
@@ -1231,8 +1231,8 @@ test('SourceCache#tilesIn', (t) => {
         const sourceCache = createSourceCache({ noLoad: true });
         sourceCache.onAdd();
         t.same(sourceCache.tilesIn([
-            new Coordinate(0.5, 0.25, 1),
-            new Coordinate(1.5, 0.75, 1)
+            new MercatorCoordinate(0.25, 0.125),
+            new MercatorCoordinate(0.75, 0.375)
         ]), []);
 
         t.end();
@@ -1263,8 +1263,8 @@ test('SourceCache#tilesIn', (t) => {
                 ]);
 
                 const tiles = sourceCache.tilesIn([
-                    new Coordinate(0.5, 0.25, 1),
-                    new Coordinate(1.5, 0.75, 1)
+                    new MercatorCoordinate(0.25, 0.125),
+                    new MercatorCoordinate(0.75, 0.375)
                 ], 1);
 
                 tiles.sort((a, b) => { return a.tile.tileID.canonical.x - b.tile.tileID.canonical.x; });
@@ -1314,8 +1314,8 @@ test('SourceCache#tilesIn', (t) => {
                 ]);
 
                 const tiles = sourceCache.tilesIn([
-                    new Coordinate(0.5, 0.25, 1),
-                    new Coordinate(1.5, 0.75, 1)
+                    new MercatorCoordinate(0.25, 0.125),
+                    new MercatorCoordinate(0.75, 0.375)
                 ], 1);
 
                 tiles.sort((a, b) => { return a.tile.tileID.canonical.x - b.tile.tileID.canonical.x; });
@@ -1443,13 +1443,8 @@ test('SourceCache#findLoadedParent', (t) => {
 
         sourceCache._tiles[tile.tileID.key] = tile;
 
-        const retain = {};
-        const expectedRetain = {};
-        expectedRetain[tile.tileID.key] = tile.tileID;
-
-        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 3, 3), 0, retain), undefined);
-        t.deepEqual(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 0, 0), 0, retain), tile);
-        t.deepEqual(retain, expectedRetain);
+        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 3, 3), 0), undefined);
+        t.deepEqual(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 0, 0), 0), tile);
         t.end();
     });
 
@@ -1464,13 +1459,8 @@ test('SourceCache#findLoadedParent', (t) => {
         const tile = new Tile(new OverscaledTileID(1, 0, 1, 0, 0), 512, 22);
         sourceCache._cache.add(tile.tileID, tile);
 
-        const retain = {};
-        const expectedRetain = {};
-        expectedRetain[tile.tileID.key] = tile.tileID;
-
-        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 3, 3), 0, retain), undefined);
-        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 0, 0), 0, retain), tile);
-        t.deepEqual(retain, expectedRetain);
+        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 3, 3), 0), undefined);
+        t.equal(sourceCache.findLoadedParent(new OverscaledTileID(2, 0, 2, 0, 0), 0), tile);
         t.equal(sourceCache._cache.order.length, 1);
 
         t.end();
