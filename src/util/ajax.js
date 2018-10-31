@@ -153,7 +153,8 @@ function makeXMLHttpRequest(requestParameters: RequestParameters, callback: Resp
     return { cancel: () => xhr.abort() };
 }
 
-const makeRequest = window.fetch && window.Request && window.AbortController ? makeFetchRequest : makeXMLHttpRequest;
+
+const makeRequest = window.fetch && window.Request && window.AbortController ? makeXMLHttpRequest : makeXMLHttpRequest;
 
 export const getJSON = function(requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
     return makeRequest(extend(requestParameters, { type: 'json' }), callback);
