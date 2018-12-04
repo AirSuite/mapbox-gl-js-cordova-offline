@@ -25,7 +25,7 @@ import WorkerPool from './util/worker_pool';
 const exported = {
     version,
     supported,
-    setRTLTextPlugin: setRTLTextPlugin,
+    setRTLTextPlugin,
     Map,
     NavigationControl,
     GeolocateControl,
@@ -50,20 +50,42 @@ const exported = {
      * mapboxgl.accessToken = myAccessToken;
      * @see [Display a map](https://www.mapbox.com/mapbox-gl-js/examples/)
      */
-    get accessToken() {
+    get accessToken(): ?string {
         return config.ACCESS_TOKEN;
     },
 
     set accessToken(token: string) {
         config.ACCESS_TOKEN = token;
     },
+    /**
+     * Gets and sets the map's default API URL for requesting tiles, styles, sprites, and glyphs
+     *
+     * @var {string} url
+     * @example
+     * mapboxgl.baseApiUrl = 'https://api.mapbox.com';
+     */
+    get baseApiUrl(): ?string {
+        return config.API_URL;
+    },
 
-    get workerCount() {
+    set baseApiUrl(url: string) {
+        config.API_URL = url;
+    },
+
+    get workerCount(): number {
         return WorkerPool.workerCount;
     },
 
     set workerCount(count: number) {
         WorkerPool.workerCount = count;
+    },
+
+    get maxParallelImageRequests(): number {
+        return config.MAX_PARALLEL_IMAGE_REQUESTS;
+    },
+
+    set maxParallelImageRequests(numRequests: number) {
+        config.MAX_PARALLEL_IMAGE_REQUESTS = numRequests;
     },
 
     workerUrl: ''
