@@ -8,6 +8,7 @@ import loadTileJSON from './load_tilejson';
 import { normalizeTileURL as normalizeURL, postTurnstileEvent, postMapLoadEvent } from '../util/mapbox';
 import TileBounds from './tile_bounds';
 import Texture from '../render/texture';
+import webpSupported from '../util/webp_supported';
 
 import type {Source} from './source';
 import type {OverscaledTileID} from './tile_id';
@@ -128,6 +129,14 @@ class RasterTileSource extends Evented implements Source {
               tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
                   var tileData = res.rows.item(0).tile_data64;
+                  if (tileData != undefined){
+                      if (!webpSupported.supported){
+                          //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                          tileData = WEBPtoPNG(tileData);
+                      }else{
+                          tileData = "data:image/png;base64," + tileData;
+                      }
+                  }
                   tile.request = getmbtileImage(tileData, done.bind(this));
               }.bind(this), function(tx, e) {
                   console.log('Database Error: ' + e.message);

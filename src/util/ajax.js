@@ -265,7 +265,7 @@ export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElem
           .then(res => res.blob())
           .then(blob => img.src = URL.createObjectURL(blob));
           */
-          img.src = 'data:image/png;base64,'+imgData;
+          img.src = imgData;
         }
 
         return {
