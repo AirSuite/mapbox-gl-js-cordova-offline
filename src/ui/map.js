@@ -25,6 +25,7 @@ import { RGBAImage } from '../util/image';
 import { Event, ErrorEvent } from '../util/evented';
 import { MapMouseEvent } from './events';
 import TaskQueue from '../util/task_queue';
+import webpSupported from '../util/webp_supported';
 
 import type {PointLike} from '@mapbox/point-geometry';
 import type {LngLatLike} from '../geo/lng_lat';
@@ -197,6 +198,7 @@ const defaultOptions = {
  * @param {number} [options.bearing=0] The initial bearing (rotation) of the map, measured in degrees counter-clockwise from north. If `bearing` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `0`.
  * @param {number} [options.pitch=0] The initial pitch (tilt) of the map, measured in degrees away from the plane of the screen (0-60). If `pitch` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `0`.
  * @param {LngLatBoundsLike} [options.bounds] The initial bounds of the map. If `bounds` is specified, it overrides `center` and `zoom` constructor options.
+ * @param {Object} [options.fitBoundsOptions] A [`fitBounds`](#Map#fitBounds) options object to use _only_ when fitting the initial `bounds` provided above.
  * @param {boolean} [options.renderWorldCopies=true]  If `true`, multiple copies of the world will be rendered, when zoomed out.
  * @param {number} [options.maxTileCacheSize=null]  The maximum number of tiles stored in the tile cache for a given source. If omitted, the cache will be dynamically sized based on the current viewport.
  * @param {string} [options.localIdeographFontFamily=null] If specified, defines a CSS font-family
@@ -360,6 +362,7 @@ class Map extends Camera {
         }
 
         this.on('move', () => this._update(false));
+        this.on('moveend', () => this._update(false));
         this.on('zoom', () => this._update(true));
 
         if (typeof window !== 'undefined') {
@@ -381,7 +384,7 @@ class Map extends Camera {
 
             if (options.bounds) {
                 this.resize();
-                this.fitBounds(options.bounds, { duration: 0 });
+                this.fitBounds(options.bounds, extend({}, options.fitBoundsOptions, { duration: 0 }));
             }
         }
 
@@ -1539,6 +1542,8 @@ class Map extends Camera {
         }
 
         this.painter = new Painter(gl, this.transform);
+
+        webpSupported.testSupport(gl);
     }
 
     _contextLost(event: *) {
@@ -1664,6 +1669,7 @@ class Map extends Camera {
             showOverdrawInspector: this._showOverdrawInspector,
             rotating: this.isRotating(),
             zooming: this.isZooming(),
+            moving: this.isMoving(),
             fadeDuration: this._fadeDuration
         });
 
