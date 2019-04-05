@@ -117,33 +117,49 @@ class RasterTileSource extends Evented implements Source {
           //console.log(Rurl);
           var database = this.id;
           if (window.openDatabases[database] === undefined) {
-              window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                  name: database + '.mbtiles',
-                  location: 2,
-                  createFromLocation: 0,
-                  androidDatabaseImplementation: 1
-              });
+            if (window.AppType == "CORDOVA"){
+                  window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                      name: database + '.mbtiles',
+                      location: 2,
+                      createFromLocation: 0,
+                      androidDatabaseImplementation: 1
+                  });
+              }
+              if (window.AppType == "ELECTRON"){
+                  window.openDatabases[database] = new sqlite3.Database(app.getPath("userData") + '/' + database + '.mbtiles', sqlite3.OPEN_READONLY);
+              }
           }
+          if (window.AppType == "CORDOVA"){
+              window.openDatabases[database].transaction(function(tx) {
+                  tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
-          window.openDatabases[database].transaction(function(tx) {
-              tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-
-                  var tileData = res.rows.item(0).tile_data64;
-                  if (tileData != undefined){
-                      if (!webpSupported.supported){
-                          //Because Safari doesn't support WEBP we need to convert it tiles PNG
-                          tileData = WEBPtoPNG(tileData);
-                      }else{
-                          tileData = "data:image/png;base64," + tileData;
+                      var tileData = res.rows.item(0).tile_data64;
+                      if (tileData != undefined){
+                          if (!webpSupported.supported){
+                              //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                              tileData = WEBPtoPNG(tileData);
+                          }else{
+                              tileData = "data:image/png;base64," + tileData;
+                          }
                       }
-                  }
-                  tile.request = getmbtileImage(tileData, done.bind(this));
-              }.bind(this), function(tx, e) {
-                  console.log('Database Error: ' + e.message);
-              });
-          }.bind(this));
+                      tile.request = getmbtileImage(tileData, done.bind(this));
+                  }.bind(this), function(tx, e) {
+                      console.log('Database Error: ' + e.message);
+                  });
+              }.bind(this));
+            }
         }
-
+        if (window.AppType == "ELECTRON"){
+            window.openDatabases[database].parallelize(function(){
+                window.openDatabases[database].all('SELECT tile_data) FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                    var tileData;
+                    if (res != undefined) {
+                      if (res.length > 0) tileData = res[0].tile_data;
+                    }
+                    tile.request = getUint8ArrayImage(tileData, done.bind(this));
+                }.bind(this));
+            }.bind(this));
+        }
         function done(err, img) {
             delete tile.request;
 

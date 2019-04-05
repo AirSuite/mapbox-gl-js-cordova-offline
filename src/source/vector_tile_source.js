@@ -134,30 +134,49 @@ class VectorTileSource extends Evented implements Source {
               y = (1 << z) - 1 - y;
               var database = params.source;
               if (window.openDatabases[database] === undefined) {
-                  window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                      name: database + '.mbtiles',
-                      location: 2,
-                      createFromLocation: 0,
-                      androidDatabaseImplementation: 1
-                  });
+                if (window.AppType == "CORDOVA"){
+                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                        name: database + '.mbtiles',
+                        location: 2,
+                        createFromLocation: 0,
+                        androidDatabaseImplementation: 1
+                    });
+                }
+                if (window.AppType == "ELECTRON"){
+                    window.openDatabases[database] = new sqlite3.Database(app.getPath("userData") + '/' + database + '.mbtiles', sqlite3.OPEN_READONLY);
+                }
               }
-
-              window.openDatabases[database].transaction(function(tx) {
-                  tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-                      var tileData = res.rows.item(0).tile_data64,
-                          tileDataDecoded = window.atob(tileData),
-                          tileDataDecodedLength = tileDataDecoded.length,
-                          tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
-                      for (var i = 0; i < tileDataDecodedLength; ++i) {
-                          tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
-                      }
-                      var tileDataInflated = Pako.inflate(tileDataTypedArray);
-                      params.tileData = tileDataInflated;
-                      tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
-                  }.bind(this), function(tx, e) {
-                      console.log('Database Error: ' + e.message);
-                  });
-              }.bind(this));
+              if (window.AppType == "CORDOVA"){
+                  window.openDatabases[database].transaction(function(tx) {
+                      tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                          var tileData = res.rows.item(0).tile_data64,
+                              tileDataDecoded = window.atob(tileData),
+                              tileDataDecodedLength = tileDataDecoded.length,
+                              tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                          for (var i = 0; i < tileDataDecodedLength; ++i) {
+                              tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                          }
+                          var tileDataInflated = Pako.inflate(tileDataTypedArray);
+                          params.tileData = tileDataInflated;
+                          tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
+                      }.bind(this), function(tx, e) {
+                          console.log('Database Error: ' + e.message);
+                      });
+                  }.bind(this));
+              }
+              if (window.AppType == "ELECTRON"){
+                  window.openDatabases[database].parallelize(function() {
+                    window.openDatabases[database].all('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                        var tileData
+                        if (res != undefined) {
+                          if (res.length > 0) tileData = res[0].tile_data;
+                        }
+                        var tileDataInflated = Pako.inflate(tileData);
+                        params.tileData = tileDataInflated;
+                        tile.workerID = tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
+                    }.bind(this));
+                  }.bind(this));
+              }
           }
       } else if (tile.state === 'loading') {
           // schedule tile reloading after it has been loaded
