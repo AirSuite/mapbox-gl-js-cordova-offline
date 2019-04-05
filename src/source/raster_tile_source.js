@@ -2,7 +2,7 @@
 
 import { extend, pick } from '../util/util';
 
-import { getImage, getmbtileImage, ResourceType } from '../util/ajax';
+import { getImage, getmbtileImage, getUint8ArrayImage, ResourceType } from '../util/ajax';
 import { Event, ErrorEvent, Evented } from '../util/evented';
 import loadTileJSON from './load_tilejson';
 import { normalizeTileURL as normalizeURL, postTurnstileEvent, postMapLoadEvent } from '../util/mapbox';
@@ -148,18 +148,19 @@ class RasterTileSource extends Evented implements Source {
                   });
               }.bind(this));
             }
-        }
-        if (window.AppType == "ELECTRON"){
-            window.openDatabases[database].parallelize(function(){
-                window.openDatabases[database].all('SELECT tile_data) FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-                    var tileData;
-                    if (res != undefined) {
-                      if (res.length > 0) tileData = res[0].tile_data;
-                    }
-                    tile.request = getUint8ArrayImage(tileData, done.bind(this));
+            if (window.AppType == "ELECTRON"){
+                window.openDatabases[database].parallelize(function(){
+                    window.openDatabases[database].all('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                        var tileData;
+                        if (res != undefined) {
+                          if (res.length > 0) tileData = res[0].tile_data;
+                        }
+                        tile.request = getUint8ArrayImage(tileData, done.bind(this));
+                    }.bind(this));
                 }.bind(this));
-            }.bind(this));
+            }
         }
+
         function done(err, img) {
             delete tile.request;
 

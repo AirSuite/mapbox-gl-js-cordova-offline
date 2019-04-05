@@ -275,10 +275,12 @@ export const getUint8ArrayImage = function(imgData, callback: Callback<HTMLImage
         URL.revokeObjectURL(img.src);
     };
     img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
-    const blob: Blob = new window.Blob([imgData], { type: 'image/png' });
-    (img: any).cacheControl = cacheControl;
-    (img: any).expires = expires;
-    img.src = data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
+    if (imgData == undefined){
+      img.src = transparentPngUrl;
+    }else{
+      const blob: Blob = new window.Blob([imgData], { type: 'image/png' });
+      img.src = URL.createObjectURL(blob);
+    }
     return {
        cancel:function(){console.log("Cancel getUint8ArrayImage")}
    };
@@ -294,12 +296,6 @@ export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElem
         //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
         if (imgData == undefined) img.src = transparentPngUrl;
         else {
-          //check blob performance
-          /*
-          fetch('data:image/png;base64,'+imgData)
-          .then(res => res.blob())
-          .then(blob => img.src = URL.createObjectURL(blob));
-          */
           img.src = imgData;
         }
 
