@@ -126,8 +126,9 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
 
 function makeXMLHttpRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     const xhr: XMLHttpRequest = new window.XMLHttpRequest();
-
-    xhr.open(requestParameters.method || 'GET', requestParameters.url, true);
+    var url = requestParameters.url;
+    if (url.indexOf(' ') >= 0) url = encodeURI(url);
+    xhr.open(requestParameters.method || 'GET', url, true);
     if (requestParameters.type === 'arrayBuffer') {
         xhr.responseType = 'arraybuffer';
     }
@@ -265,6 +266,30 @@ export const getImage = function(requestParameters: RequestParameters, callback:
             advanceImageRequestQueue();
         }
     };
+};
+
+export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElement>): Cancelable {
+        const img = new window.Image();
+        //const URL = window.URL || window.webkitURL;
+        img.onload = () => {
+            callback(null, img);
+            //URL.revokeObjectURL(img.src);
+        };
+        //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
+        if (imgData == undefined) img.src = transparentPngUrl;
+        else {
+          //check blob performance
+          /*
+          fetch('data:image/png;base64,'+imgData)
+          .then(res => res.blob())
+          .then(blob => img.src = URL.createObjectURL(blob));
+          */
+          img.src = imgData;
+        }
+
+         return {
+            cancel:function(){console.log("Cancel loadmbtileImage")}
+        };
 };
 
 export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoElement>): Cancelable {
