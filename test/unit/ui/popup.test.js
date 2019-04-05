@@ -134,6 +134,43 @@ test('Popup content can be set via setHTML', (t) => {
     t.end();
 });
 
+test('Popup width maximum defaults to 240px', (t) => {
+    const map = createMap(t);
+
+    const popup = new Popup({closeButton: false})
+        .setLngLat([0, 0])
+        .addTo(map)
+        .setHTML("<span>Test</span>");
+
+    t.equal(popup.getMaxWidth(), "240px");
+    t.end();
+});
+
+test('Popup width maximum can be set via using maxWidth option', (t) => {
+    const map = createMap(t);
+
+    const popup = new Popup({closeButton: false, maxWidth: "5px"})
+        .setLngLat([0, 0])
+        .addTo(map)
+        .setHTML("<span>Test</span>");
+
+    t.equal(popup.getMaxWidth(), "5px");
+    t.end();
+});
+
+test('Popup width maximum can be set via maxWidth', (t) => {
+    const map = createMap(t);
+
+    const popup = new Popup({closeButton: false})
+        .setLngLat([0, 0])
+        .setHTML("<span>Test</span>")
+        .setMaxWidth("5px")
+        .addTo(map);
+
+    t.equal(popup.getMaxWidth(), "5px");
+    t.end();
+});
+
 test('Popup content can be set via setDOMContent', (t) => {
     const map = createMap(t);
     const content = window.document.createElement('span');
@@ -457,5 +494,18 @@ test('Popup adds classes from className option', (t) => {
     const popupContainer = map.getContainer().querySelector('.mapboxgl-popup');
     t.ok(popupContainer.classList.contains('some'));
     t.ok(popupContainer.classList.contains('classes'));
+    t.end();
+});
+
+test('Popup closes on Map#remove', (t) => {
+    const map = createMap(t);
+    const popup = new Popup()
+        .setText("Test")
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    map.remove();
+
+    t.ok(!popup.isOpen());
     t.end();
 });
