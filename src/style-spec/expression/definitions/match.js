@@ -2,13 +2,13 @@
 
 import assert from 'assert';
 
-import { typeOf } from '../values';
-import { ValueType, type Type } from '../types';
+import {typeOf} from '../values';
+import {ValueType, type Type} from '../types';
 
-import type { Expression } from '../expression';
+import type {Expression} from '../expression';
 import type ParsingContext from '../parsing_context';
 import type EvaluationContext from '../evaluation_context';
-import type { Value } from '../values';
+import type {Value} from '../values';
 
 // Map input label values to output expression index
 type Cases = {[number | string]: number};
@@ -31,7 +31,7 @@ class Match implements Expression {
         this.otherwise = otherwise;
     }
 
-    static parse(args: Array<mixed>, context: ParsingContext) {
+    static parse(args: $ReadOnlyArray<mixed>, context: ParsingContext) {
         if (args.length < 5)
             return context.error(`Expected at least 4 arguments, but found only ${args.length - 1}.`);
         if (args.length % 2 !== 1)

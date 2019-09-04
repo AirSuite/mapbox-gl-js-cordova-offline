@@ -1,11 +1,11 @@
 // @flow
 
-import { getArrayBuffer } from '../util/ajax';
+import {getArrayBuffer} from '../util/ajax';
 
 import vt from '@mapbox/vector-tile';
 import Protobuf from 'pbf';
 import WorkerTile from './worker_tile';
-import { extend } from '../util/util';
+import {extend} from '../util/util';
 import performance from '../util/performance';
 
 import type {
@@ -15,7 +15,6 @@ import type {
     TileParameters
 } from '../source/worker_source';
 
-import type {PerformanceResourceTiming} from '../types/performance_resource_timing';
 import type Actor from '../util/actor';
 import type StyleLayerIndex from '../style/style_layer_index';
 import type {Callback} from '../types/callback';

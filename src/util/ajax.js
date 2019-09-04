@@ -1,13 +1,14 @@
 // @flow
 
 import window from './window';
-import { extend } from './util';
-import { isMapboxHTTPURL } from './mapbox';
+import {extend, warnOnce} from './util';
+import {isMapboxHTTPURL, hasCacheDefeatingSku} from './mapbox';
 import config from './config';
 import assert from 'assert';
+import {cacheGet, cachePut} from './tile_request_cache';
 
-import type { Callback } from '../types/callback';
-import type { Cancelable } from '../types/cancelable';
+import type {Callback} from '../types/callback';
+import type {Cancelable} from '../types/cancelable';
 
 /**
  * The type of a resource.
@@ -25,7 +26,7 @@ const ResourceType = {
     SpriteJSON: 'SpriteJSON',
     Image: 'Image'
 };
-export { ResourceType };
+export {ResourceType};
 
 if (typeof Object.freeze == 'function') {
     Object.freeze(ResourceType);
@@ -83,12 +84,12 @@ function isWorker() {
 /* global self, WorkerGlobalScope */
 export const getReferrer = isWorker() ?
     () => self.worker && self.worker.referrer :
-    () => {
-        const origin = window.location.origin;
-        if (origin && origin !== 'null' && origin !== 'file://') {
-            return origin + window.location.pathname;
-        }
-    };
+    () => (window.location.protocol === 'blob:' ? window.parent : window).location.href;
+
+// Determines whether a URL is a file:// URL. This is obviously the case if it begins
+// with file://. Relative URLs are also file:// URLs iff the original document was loaded
+// via a file:// URL.
+const isFileURL = url => /^file:/.test(url) || (/^file:/.test(getReferrer()) && !/^\w+:/.test(url));
 
 function makeFetchRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     const controller = new window.AbortController();
@@ -100,28 +101,84 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
         referrer: getReferrer(),
         signal: controller.signal
     });
+    let complete = false;
+    let aborted = false;
+
+    const cacheIgnoringSearch = hasCacheDefeatingSku(request.url);
 
     if (requestParameters.type === 'json') {
         request.headers.set('Accept', 'application/json');
     }
 
-    window.fetch(request).then(response => {
-        if (response.ok) {
-            response[requestParameters.type || 'text']().then(result => {
-                callback(null, result, response.headers.get('Cache-Control'), response.headers.get('Expires'));
-            }).catch(err => callback(new Error(err.message)));
-        } else {
-            callback(new AJAXError(response.statusText, response.status, requestParameters.url));
-        }
-    }).catch((error) => {
-        if (error.code === 20) {
-            // silence expected AbortError
-            return;
-        }
-        callback(new Error(error.message));
-    });
+    const validateOrFetch = (err, cachedResponse, responseIsFresh) => {
+        if (aborted) return;
 
-    return { cancel: () => controller.abort() };
+        if (err) {
+            // Do fetch in case of cache error.
+            // HTTP pages in Edge trigger a security error that can be ignored.
+            if (err.message !== 'SecurityError') {
+                warnOnce(err);
+            }
+        }
+
+        if (cachedResponse && responseIsFresh) {
+            return finishRequest(cachedResponse);
+        }
+
+        if (cachedResponse) {
+            // We can't do revalidation with 'If-None-Match' because then the
+            // request doesn't have simple cors headers.
+        }
+
+        const requestTime = Date.now();
+
+        window.fetch(request).then(response => {
+            if (response.ok) {
+                const cacheableResponse = cacheIgnoringSearch ? response.clone() : null;
+                return finishRequest(response, cacheableResponse, requestTime);
+
+            } else {
+                return callback(new AJAXError(response.statusText, response.status, requestParameters.url));
+            }
+        }).catch(error => {
+            if (error.code === 20) {
+                // silence expected AbortError
+                return;
+            }
+            callback(new Error(error.message));
+        });
+    };
+
+    const finishRequest = (response, cacheableResponse, requestTime) => {
+        (
+            requestParameters.type === 'arrayBuffer' ? response.arrayBuffer() :
+            requestParameters.type === 'json' ? response.json() :
+            response.text()
+        ).then(result => {
+            if (aborted) return;
+            if (cacheableResponse && requestTime) {
+                // The response needs to be inserted into the cache after it has completely loaded.
+                // Until it is fully loaded there is a chance it will be aborted. Aborting while
+                // reading the body can cause the cache insertion to error. We could catch this error
+                // in most browsers but in Firefox it seems to sometimes crash the tab. Adding
+                // it to the cache here avoids that error.
+                cachePut(request, cacheableResponse, requestTime);
+            }
+            complete = true;
+            callback(null, result, response.headers.get('Cache-Control'), response.headers.get('Expires'));
+        }).catch(err => callback(new Error(err.message)));
+    };
+
+    if (cacheIgnoringSearch) {
+        cacheGet(request, validateOrFetch);
+    } else {
+        validateOrFetch(null, null);
+    }
+
+    return {cancel: () => {
+        aborted = true;
+        if (!complete) controller.abort();
+    }};
 }
 
 function makeXMLHttpRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
@@ -136,6 +193,7 @@ function makeXMLHttpRequest(requestParameters: RequestParameters, callback: Resp
         xhr.setRequestHeader(k, requestParameters.headers[k]);
     }
     if (requestParameters.type === 'json') {
+        xhr.responseType = 'text';
         xhr.setRequestHeader('Accept', 'application/json');
     }
     xhr.withCredentials = requestParameters.credentials === 'include';
@@ -159,7 +217,7 @@ function makeXMLHttpRequest(requestParameters: RequestParameters, callback: Resp
         }
     };
     xhr.send(requestParameters.body);
-    return { cancel: () => xhr.abort() };
+    return {cancel: () => xhr.abort()};
 }
 
 export const makeRequest = function(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
@@ -170,7 +228,7 @@ export const makeRequest = function(requestParameters: RequestParameters, callba
     //   some versions (see https://bugs.webkit.org/show_bug.cgi?id=174980#c2)
     // - Requests for resources with the file:// URI scheme don't work with the Fetch API either. In
     //   this case we unconditionally use XHR on the current thread since referrers don't matter.
-    if (!/^file:/.test(requestParameters.url)) {
+    if (!isFileURL(requestParameters.url)) {
         if (window.fetch && window.Request && window.AbortController && window.Request.prototype.hasOwnProperty('signal')) {
             return makeFetchRequest(requestParameters, callback);
         }
@@ -182,15 +240,15 @@ export const makeRequest = function(requestParameters: RequestParameters, callba
 };
 
 export const getJSON = function(requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
-    return makeRequest(extend(requestParameters, { type: 'json' }), callback);
+    return makeRequest(extend(requestParameters, {type: 'json'}), callback);
 };
 
 export const getArrayBuffer = function(requestParameters: RequestParameters, callback: ResponseCallback<ArrayBuffer>): Cancelable {
-    return makeRequest(extend(requestParameters, { type: 'arrayBuffer' }), callback);
+    return makeRequest(extend(requestParameters, {type: 'arrayBuffer'}), callback);
 };
 
 export const postData = function(requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
-    return makeRequest(extend(requestParameters, { method: 'POST' }), callback);
+    return makeRequest(extend(requestParameters, {method: 'POST'}), callback);
 };
 
 function sameOrigin(url) {
@@ -253,7 +311,7 @@ export const getImage = function(requestParameters: RequestParameters, callback:
                 URL.revokeObjectURL(img.src);
             };
             img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
-            const blob: Blob = new window.Blob([new Uint8Array(data)], { type: 'image/png' });
+            const blob: Blob = new window.Blob([new Uint8Array(data)], {type: 'image/png'});
             (img: any).cacheControl = cacheControl;
             (img: any).expires = expires;
             img.src = data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
@@ -318,5 +376,5 @@ export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVid
         s.src = urls[i];
         video.appendChild(s);
     }
-    return { cancel: () => {} };
+    return {cancel: () => {}};
 };

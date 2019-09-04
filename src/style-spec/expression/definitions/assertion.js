@@ -13,13 +13,13 @@ import {
     array
 } from '../types';
 import RuntimeError from '../runtime_error';
-import { typeOf } from '../values';
+import {typeOf} from '../values';
 
-import type { Expression } from '../expression';
+import type {Expression} from '../expression';
 import type ParsingContext from '../parsing_context';
 import type EvaluationContext from '../evaluation_context';
-import type { Value } from '../values';
-import type { Type } from '../types';
+import type {Value} from '../values';
+import type {Type} from '../types';
 
 const types = {
     string: StringType,
@@ -37,7 +37,7 @@ class Assertion implements Expression {
         this.args = args;
     }
 
-    static parse(args: Array<mixed>, context: ParsingContext): ?Expression {
+    static parse(args: $ReadOnlyArray<mixed>, context: ParsingContext): ?Expression {
         if (args.length < 2)
             return context.error(`Expected at least one argument.`);
 

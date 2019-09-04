@@ -1,6 +1,6 @@
 
 import ValidationError from '../error/validation_error';
-import { unbundle } from '../util/unbundle_jsonlint';
+import {unbundle} from '../util/unbundle_jsonlint';
 import validateObject from './validate_object';
 import validateEnum from './validate_enum';
 import validateExpression from './validate_expression';
@@ -29,13 +29,6 @@ export default function validateSource(options) {
             style: options.style,
             styleSpec
         });
-        if ('url' in value) {
-            for (const prop in value) {
-                if (['type', 'url', 'tileSize', 'mbtiles'].indexOf(prop) < 0) {
-                    errors.push(new ValidationError(`${key}.${prop}`, value[prop], `a source with a "url" property may not include a "${prop}" property`));
-                }
-            }
-        }
         return errors;
 
     case 'geojson':

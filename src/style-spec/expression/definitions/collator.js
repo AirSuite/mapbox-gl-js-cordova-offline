@@ -1,12 +1,12 @@
 // @flow
 
-import { StringType, BooleanType, CollatorType } from '../types';
+import {StringType, BooleanType, CollatorType} from '../types';
 import Collator from '../types/collator';
 
-import type { Expression } from '../expression';
+import type {Expression} from '../expression';
 import type EvaluationContext from '../evaluation_context';
 import type ParsingContext from '../parsing_context';
-import type { Type } from '../types';
+import type {Type} from '../types';
 
 export default class CollatorExpression implements Expression {
     type: Type;
@@ -21,7 +21,7 @@ export default class CollatorExpression implements Expression {
         this.diacriticSensitive = diacriticSensitive;
     }
 
-    static parse(args: Array<mixed>, context: ParsingContext): ?Expression {
+    static parse(args: $ReadOnlyArray<mixed>, context: ParsingContext): ?Expression {
         if (args.length !== 2)
             return context.error(`Expected one argument.`);
 

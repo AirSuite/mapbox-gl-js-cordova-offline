@@ -1,12 +1,12 @@
-import { test } from 'mapbox-gl-js-test';
+import {test} from '../../../util/test';
 import window from '../../../../src/util/window';
 import Map from '../../../../src/ui/map';
 import DOM from '../../../../src/util/dom';
-import simulate from 'mapbox-gl-js-test/simulate_interaction';
+import simulate from '../../../util/simulate_interaction';
 
 function createMap(t, clickTolerance) {
     t.stub(Map.prototype, '_detectMissingCSS');
-    return new Map({ container: DOM.create('div', '', window.document.body), clickTolerance: clickTolerance || 0 });
+    return new Map({container: DOM.create('div', '', window.document.body), clickTolerance: clickTolerance || 0});
 }
 
 test('DragPanHandler fires dragstart, drag, and dragend events at appropriate times in response to a mouse-triggered drag', (t) => {

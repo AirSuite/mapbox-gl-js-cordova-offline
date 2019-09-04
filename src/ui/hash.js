@@ -1,6 +1,6 @@
 // @flow
 
-import { bindAll } from '../util/util';
+import {bindAll} from '../util/util';
 import window from '../util/window';
 import throttle from '../util/throttle';
 
@@ -14,7 +14,7 @@ import type Map from './map';
  */
 class Hash {
     _map: Map;
-    _updateHash: () => TimeoutID;
+    _updateHash: () => ?TimeoutID;
 
     constructor() {
         bindAll([
