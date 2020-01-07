@@ -26,6 +26,7 @@ import type {
     WorkerTileParameters,
     WorkerTileCallback,
 } from '../source/worker_source';
+import type {PromoteIdSpecification} from '../style-spec/types';
 
 class WorkerTile {
     tileID: OverscaledTileID;
@@ -34,6 +35,7 @@ class WorkerTile {
     pixelRatio: number;
     tileSize: number;
     source: string;
+    promoteId: ?PromoteIdSpecification;
     overscaling: number;
     showCollisionBoxes: boolean;
     collectResourceTiming: boolean;
@@ -59,16 +61,17 @@ class WorkerTile {
         this.mbtiles = params.mbtiles || false;
         this.collectResourceTiming = !!params.collectResourceTiming;
         this.returnDependencies = !!params.returnDependencies;
+        this.promoteId = params.promoteId;
     }
 
-    parse(data: VectorTile, layerIndex: StyleLayerIndex, actor: Actor, callback: WorkerTileCallback) {
+    parse(data: VectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
         this.status = 'parsing';
         this.data = data;
 
         this.collisionBoxArray = new CollisionBoxArray();
         const sourceLayerCoder = new DictionaryCoder(Object.keys(data.layers).sort());
 
-        const featureIndex = new FeatureIndex(this.tileID);
+        const featureIndex = new FeatureIndex(this.tileID, this.promoteId);
         featureIndex.bucketLayerIDs = [];
 
         const buckets: {[string]: Bucket} = {};
@@ -77,7 +80,8 @@ class WorkerTile {
             featureIndex,
             iconDependencies: {},
             patternDependencies: {},
-            glyphDependencies: {}
+            glyphDependencies: {},
+            availableImages
         };
 
         const layerFamilies = layerIndex.familiesBySource[this.source];
@@ -96,7 +100,8 @@ class WorkerTile {
             const features = [];
             for (let index = 0; index < sourceLayer.length; index++) {
                 const feature = sourceLayer.feature(index);
-                features.push({feature, index, sourceLayerIndex});
+                const id = featureIndex.getId(feature, sourceLayerId);
+                features.push({feature, id, index, sourceLayerIndex});
             }
 
             for (const family of layerFamilies[sourceLayerId]) {
@@ -107,7 +112,7 @@ class WorkerTile {
                 if (layer.maxzoom && this.zoom >= layer.maxzoom) continue;
                 if (layer.visibility === 'none') continue;
 
-                recalculateLayers(family, this.zoom);
+                recalculateLayers(family, this.zoom, availableImages);
 
                 const bucket = buckets[layer.id] = layer.createBucket({
                     index: featureIndex.bucketLayerIDs.length,
@@ -145,7 +150,7 @@ class WorkerTile {
 
         const icons = Object.keys(options.iconDependencies);
         if (icons.length) {
-            actor.send('getImages', {icons}, (err, result) => {
+            actor.send('getImages', {icons, source: this.source, tileID: this.tileID, type: 'icons'}, (err, result) => {
                 if (!error) {
                     error = err;
                     iconMap = result;
@@ -158,7 +163,7 @@ class WorkerTile {
 
         const patterns = Object.keys(options.patternDependencies);
         if (patterns.length) {
-            actor.send('getImages', {icons: patterns}, (err, result) => {
+            actor.send('getImages', {icons: patterns, source: this.source, tileID: this.tileID, type: 'patterns'}, (err, result) => {
                 if (!error) {
                     error = err;
                     patternMap = result;
@@ -181,13 +186,13 @@ class WorkerTile {
                 for (const key in buckets) {
                     const bucket = buckets[key];
                     if (bucket instanceof SymbolBucket) {
-                        recalculateLayers(bucket.layers, this.zoom);
+                        recalculateLayers(bucket.layers, this.zoom, availableImages);
                         performSymbolLayout(bucket, glyphMap, glyphAtlas.positions, iconMap, imageAtlas.iconPositions, this.showCollisionBoxes);
                     } else if (bucket.hasPattern &&
                         (bucket instanceof LineBucket ||
                          bucket instanceof FillBucket ||
                          bucket instanceof FillExtrusionBucket)) {
-                        recalculateLayers(bucket.layers, this.zoom);
+                        recalculateLayers(bucket.layers, this.zoom, availableImages);
                         bucket.addFeatures(options, imageAtlas.patternPositions);
                     }
                 }
@@ -209,11 +214,11 @@ class WorkerTile {
     }
 }
 
-function recalculateLayers(layers: $ReadOnlyArray<StyleLayer>, zoom: number) {
+function recalculateLayers(layers: $ReadOnlyArray<StyleLayer>, zoom: number, availableImages: Array<string>) {
     // Layers are shared and may have been used by a WorkerTile with a different zoom.
     const parameters = new EvaluationParameters(zoom);
     for (const layer of layers) {
-        layer.recalculate(parameters);
+        layer.recalculate(parameters, availableImages);
     }
 }
 
