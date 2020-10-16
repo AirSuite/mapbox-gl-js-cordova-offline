@@ -1,10 +1,8 @@
-'use strict';
-
-const path = require('path');
-const harness = require('./harness');
-const diff = require('diff');
-const PNG = require('pngjs').PNG;
-const fs = require('fs');
+import path from 'path';
+import fs from 'fs';
+import * as diff from 'diff';
+import {PNG} from 'pngjs';
+import harness from './harness';
 
 function deepEqual(a, b) {
     if (typeof a !== typeof b)
@@ -41,7 +39,7 @@ function deepEqual(a, b) {
  * @param {queryFn} query - a function that performs the query
  * @returns {undefined} terminates the process when testing is complete
  */
-exports.run = function (implementation, options, query) {
+export function run(implementation, options, query) {
     const directory = path.join(__dirname, '../query-tests');
     harness(directory, implementation, options, (style, params, done) => {
         query(style, params, (err, data, results) => {
@@ -56,14 +54,6 @@ exports.run = function (implementation, options, query) {
 
             const expected = require(path.join(dir, 'expected.json'));
 
-            //For feature states, remove 'state' from fixtures until implemented in native https://github.com/mapbox/mapbox-gl-native/issues/11846
-            if (implementation === 'native') {
-                for (let i = 0; i < expected.length; i++) {
-                    delete expected[i].state;
-                    delete expected[i].source;
-                    delete expected[i].sourceLayer;
-                }
-            }
             params.ok = deepEqual(results, expected);
 
             if (!params.ok) {
@@ -126,7 +116,7 @@ exports.run = function (implementation, options, query) {
                 });
         });
     });
-};
+}
 
 function drawAxisAlignedLine(a, b, pixels, width, height, color) {
     const fromX = clamp(Math.min(a[0], b[0]), 0, width);

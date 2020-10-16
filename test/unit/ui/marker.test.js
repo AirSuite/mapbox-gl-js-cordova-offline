@@ -1,17 +1,17 @@
-import { test } from 'mapbox-gl-js-test';
+import {test} from '../../util/test';
 import window from '../../../src/util/window';
-import { createMap as globalCreateMap } from '../../util';
+import {createMap as globalCreateMap} from '../../util';
 import Marker from '../../../src/ui/marker';
 import Popup from '../../../src/ui/popup';
 import LngLat from '../../../src/geo/lng_lat';
 import Point from '@mapbox/point-geometry';
-import simulate from 'mapbox-gl-js-test/simulate_interaction';
+import simulate from '../../util/simulate_interaction';
 
-function createMap(t) {
+function createMap(t, options = {}) {
     const container = window.document.createElement('div');
-    Object.defineProperty(container, 'offsetWidth', {value: 512});
-    Object.defineProperty(container, 'offsetHeight', {value: 512});
-    return globalCreateMap(t, {container: container});
+    Object.defineProperty(container, 'clientWidth', {value: 512});
+    Object.defineProperty(container, 'clientHeight', {value: 512});
+    return globalCreateMap(t, {container, ...options});
 }
 
 test('Marker uses a default marker element with an appropriate offset', (t) => {
@@ -22,13 +22,42 @@ test('Marker uses a default marker element with an appropriate offset', (t) => {
 });
 
 test('Marker uses a default marker element with custom color', (t) => {
-    const marker = new Marker({ color: '#123456' });
+    const marker = new Marker({color: '#123456'});
     t.ok(marker.getElement().innerHTML.includes('#123456'));
     t.end();
 });
 
+test('Marker uses a default marker element with custom scale', (t) => {
+    const map = createMap(t);
+    const defaultMarker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map);
+    // scale smaller than default
+    const smallerMarker = new Marker({scale: 0.8})
+        .setLngLat([0, 0])
+        .addTo(map);
+    // scale larger than default
+    const largerMarker = new Marker({scale: 2})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    // initial dimensions of svg element
+    t.ok(defaultMarker.getElement().firstChild.getAttribute('height').includes('41'));
+    t.ok(defaultMarker.getElement().firstChild.getAttribute('width').includes('27'));
+
+    // (41 * 0.8) = 32.8, (27 * 0.8) = 21.6
+    t.ok(smallerMarker.getElement().firstChild.getAttribute('height').includes(`32.8`));
+    t.ok(smallerMarker.getElement().firstChild.getAttribute('width').includes(`21.6`));
+
+    // (41 * 2) = 82, (27 * 2) = 54
+    t.ok(largerMarker.getElement().firstChild.getAttribute('height').includes('82'));
+    t.ok(largerMarker.getElement().firstChild.getAttribute('width').includes('54'));
+
+    t.end();
+});
+
 test('Marker uses a default marker with custom offset', (t) => {
-    const marker = new Marker({ offset: [1, 2] });
+    const marker = new Marker({offset: [1, 2]});
     t.ok(marker.getElement());
     t.ok(marker.getOffset().equals(new Point(1, 2)));
     t.end();
@@ -120,6 +149,71 @@ test('Marker#togglePopup closes a popup that was open', (t) => {
     t.end();
 });
 
+test('Enter key on Marker opens a popup that was closed', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map)
+        .setPopup(new Popup());
+
+    // popup not initially open
+    t.notOk(marker.getPopup().isOpen());
+
+    simulate.keypress(marker.getElement(), {code: 'Enter'});
+
+    // popup open after Enter keypress
+    t.ok(marker.getPopup().isOpen());
+
+    map.remove();
+    t.end();
+});
+
+test('Space key on Marker opens a popup that was closed', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map)
+        .setPopup(new Popup());
+
+    // popup not initially open
+    t.notOk(marker.getPopup().isOpen());
+
+    simulate.keypress(marker.getElement(), {code: 'Space'});
+
+    // popup open after Enter keypress
+    t.ok(marker.getPopup().isOpen());
+
+    map.remove();
+    t.end();
+});
+
+test('Marker#setPopup sets a tabindex', (t) => {
+    const popup = new Popup();
+    const marker = new Marker()
+        .setPopup(popup);
+    t.equal(marker.getElement().getAttribute('tabindex'), "0");
+    t.end();
+});
+
+test('Marker#setPopup removes tabindex when unset', (t) => {
+    const popup = new Popup();
+    const marker = new Marker()
+        .setPopup(popup)
+        .setPopup();
+    t.notOk(marker.getElement().getAttribute('tabindex'));
+    t.end();
+});
+
+test('Marker#setPopup does not replace existing tabindex', (t) => {
+    const element = window.document.createElement('div');
+    element.setAttribute('tabindex', '5');
+    const popup = new Popup();
+    const marker = new Marker({element})
+        .setPopup(popup);
+    t.equal(marker.getElement().getAttribute('tabindex'), "5");
+    t.end();
+});
+
 test('Marker anchor defaults to center', (t) => {
     const map = createMap(t);
     const marker = new Marker()
@@ -152,7 +246,7 @@ test('Marker accepts backward-compatible constructor parameters', (t) => {
     const m1 = new Marker(element);
     t.equal(m1.getElement(), element);
 
-    const m2 = new Marker(element, { offset: [1, 2] });
+    const m2 = new Marker(element, {offset: [1, 2]});
     t.equal(m2.getElement(), element);
     t.ok(m2.getOffset().equals(new Point(1, 2)));
     t.end();
@@ -193,7 +287,7 @@ test('Popup anchors around default Marker', (t) => {
     // open the popup
     marker.togglePopup();
 
-    const mapHeight = map.getContainer().offsetHeight;
+    const mapHeight = map.getContainer().clientHeight;
     const markerTop = -marker.getPopup().options.offset.bottom[1]; // vertical distance from tip of marker to the top in pixels
     const markerRight = -marker.getPopup().options.offset.right[0]; // horizontal distance from the tip of the marker to the right in pixels
 
@@ -206,7 +300,7 @@ test('Popup anchors around default Marker', (t) => {
 
     // move marker to the top forcing the popup to below
     marker.setLngLat(map.unproject([mapHeight / 2, markerTop]));
-    t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-top'), 'popup anchors bolow marker');
+    t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-top'), 'popup anchors below marker');
 
     // move marker to the right forcing the popup to the left
     marker.setLngLat(map.unproject([mapHeight - markerRight, mapHeight / 2]));
@@ -276,7 +370,7 @@ test('Marker#setDraggable turns off drag functionality', (t) => {
     t.end();
 });
 
-test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to a mouse-triggered drag', (t) => {
+test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to mouse-triggered drag with map-inherited clickTolerance', (t) => {
     const map = createMap(t);
     const marker = new Marker({draggable: true})
         .setLngLat([0, 0])
@@ -291,20 +385,86 @@ test('Marker with draggable:true fires dragstart, drag, and dragend events at ap
     marker.on('drag',      drag);
     marker.on('dragend',   dragend);
 
-    simulate.mousedown(el);
+    simulate.mousedown(el, {clientX: 0, clientY: 0});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
 
-    simulate.mousemove(el);
-    t.equal(dragstart.callCount, 1);
-    t.equal(drag.callCount, 1);
+    simulate.mousemove(el, {clientX: 2.9, clientY: 0});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0, "drag not called yet, movement below marker's map-inherited click tolerance");
     t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    // above map's click tolerance
+    simulate.mousemove(el, {clientX: 3.1, clientY: 0});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 1, 'drag fired once click tolerance exceeded');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.mousemove(el, {clientX: 0, clientY: 0});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2, 'drag fired when moving back within clickTolerance of mousedown');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
 
     simulate.mouseup(el);
     t.equal(dragstart.callCount, 1);
-    t.equal(drag.callCount, 1);
+    t.equal(drag.callCount, 2);
     t.equal(dragend.callCount, 1);
+    t.equal(el.style.pointerEvents, 'auto');
+
+    map.remove();
+    t.end();
+});
+
+test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to mouse-triggered drag with marker-specific clickTolerance', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({draggable: true, clickTolerance: 4})
+        .setLngLat([0, 0])
+        .addTo(map);
+    const el = marker.getElement();
+
+    const dragstart = t.spy();
+    const drag      = t.spy();
+    const dragend   = t.spy();
+
+    marker.on('dragstart', dragstart);
+    marker.on('drag',      drag);
+    marker.on('dragend',   dragend);
+
+    simulate.mousedown(el, {clientX: 0, clientY: 0});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0);
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    simulate.mousemove(el, {clientX: 3.9, clientY: 0});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0, "drag not called yet, movement below marker's map-inherited click tolerance");
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    // above map's click tolerance
+    simulate.mousemove(el, {clientX: 4.1, clientY: 0});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 1, 'drag fired once click tolerance exceeded');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.mousemove(el, {clientX: 0, clientY: 0});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2, 'drag fired when moving back within clickTolerance of mousedown');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.mouseup(el);
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2);
+    t.equal(dragend.callCount, 1);
+    t.equal(el.style.pointerEvents, 'auto');
 
     map.remove();
     t.end();
@@ -325,12 +485,12 @@ test('Marker with draggable:false does not fire dragstart, drag, and dragend eve
     marker.on('drag',      drag);
     marker.on('dragend',   dragend);
 
-    simulate.mousedown(el);
+    simulate.mousedown(el, {clientX: 0, clientY: 0});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
 
-    simulate.mousemove(el);
+    simulate.mousemove(el, {clientX: 3, clientY: 1});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
@@ -344,7 +504,7 @@ test('Marker with draggable:false does not fire dragstart, drag, and dragend eve
     t.end();
 });
 
-test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to a touch-triggered drag', (t) => {
+test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to a touch-triggered drag with map-inherited clickTolerance', (t) => {
     const map = createMap(t);
     const marker = new Marker({draggable: true})
         .setLngLat([0, 0])
@@ -359,20 +519,86 @@ test('Marker with draggable:true fires dragstart, drag, and dragend events at ap
     marker.on('drag',      drag);
     marker.on('dragend',   dragend);
 
-    simulate.touchstart(el);
+    simulate.touchstart(el, {touches: [{clientX: 0, clientY: 0}]});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
 
-    simulate.touchmove(el);
-    t.equal(dragstart.callCount, 1);
-    t.equal(drag.callCount, 1);
+    simulate.touchmove(el, {touches: [{clientX: 2.9, clientY: 0}]});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0, "drag not called yet, movement below marker's map-inherited click tolerance");
     t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    // above map's click tolerance
+    simulate.touchmove(el, {touches: [{clientX: 3.1, clientY: 0}]});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 1, 'drag fired once click tolerance exceeded');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.touchmove(el, {touches: [{clientX: 0, clientY: 0}]});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2, 'drag fired when moving back within clickTolerance of touchstart');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
 
     simulate.touchend(el);
     t.equal(dragstart.callCount, 1);
-    t.equal(drag.callCount, 1);
+    t.equal(drag.callCount, 2);
     t.equal(dragend.callCount, 1);
+    t.equal(el.style.pointerEvents, 'auto');
+
+    map.remove();
+    t.end();
+});
+
+test('Marker with draggable:true fires dragstart, drag, and dragend events at appropriate times in response to a touch-triggered drag with marker-specific clickTolerance', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({draggable: true, clickTolerance: 4})
+        .setLngLat([0, 0])
+        .addTo(map);
+    const el = marker.getElement();
+
+    const dragstart = t.spy();
+    const drag      = t.spy();
+    const dragend   = t.spy();
+
+    marker.on('dragstart', dragstart);
+    marker.on('drag',      drag);
+    marker.on('dragend',   dragend);
+
+    simulate.touchstart(el, {touches: [{clientX: 0, clientY: 0}]});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0);
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    simulate.touchmove(el, {touches: [{clientX: 3.9, clientY: 0}]});
+    t.equal(dragstart.callCount, 0);
+    t.equal(drag.callCount, 0, "drag not called yet, movement below marker's map-inherited click tolerance");
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, '');
+
+    // above map's click tolerance
+    simulate.touchmove(el, {touches: [{clientX: 4.1, clientY: 0}]});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 1, 'drag fired once click tolerance exceeded');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.touchmove(el, {touches: [{clientX: 0, clientY: 0}]});
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2, 'drag fired when moving back within clickTolerance of touchstart');
+    t.equal(dragend.callCount, 0);
+    t.equal(el.style.pointerEvents, 'none', 'cancels pointer events while dragging');
+
+    simulate.touchend(el);
+    t.equal(dragstart.callCount, 1);
+    t.equal(drag.callCount, 2);
+    t.equal(dragend.callCount, 1);
+    t.equal(el.style.pointerEvents, 'auto');
 
     map.remove();
     t.end();
@@ -393,12 +619,12 @@ test('Marker with draggable:false does not fire dragstart, drag, and dragend eve
     marker.on('drag',      drag);
     marker.on('dragend',   dragend);
 
-    simulate.touchstart(el);
+    simulate.touchstart(el, {touches: [{clientX: 0, clientY: 0}]});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
 
-    simulate.touchmove(el);
+    simulate.touchmove(el, {touches: [{clientX: 0, clientY: 0}]});
     t.equal(dragstart.callCount, 0);
     t.equal(drag.callCount, 0);
     t.equal(dragend.callCount, 0);
@@ -424,8 +650,8 @@ test('Marker with draggable:true moves to new position in response to a mouse-tr
     simulate.mouseup(el);
 
     const endPos = map.project(marker.getLngLat());
-    t.equal(Math.floor(endPos.x), startPos.x + 10);
-    t.equal(Math.floor(endPos.y), startPos.y + 10);
+    t.equal(Math.round(endPos.x), startPos.x + 10);
+    t.equal(Math.round(endPos.y), startPos.y + 10);
 
     map.remove();
     t.end();
@@ -447,6 +673,113 @@ test('Marker with draggable:false does not move to new position in response to a
 
     t.equal(startPos.x, endPos.x);
     t.equal(startPos.y, endPos.y);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker with draggable:true does not error if removed on mousedown', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({draggable: true})
+        .setLngLat([0, 0])
+        .addTo(map);
+    const el = marker.getElement();
+    simulate.mousedown(el);
+    simulate.mousemove(el, {clientX: 10, clientY: 10});
+
+    marker.remove();
+    t.ok(map.fire('mouseup'));
+    t.end();
+});
+
+test('Marker can set rotationAlignment and pitchAlignment', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getRotationAlignment(), 'map');
+    t.equal(marker.getPitchAlignment(), 'map');
+
+    map.remove();
+    t.end();
+});
+
+test('Marker can set and update rotation', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({rotation: 45})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getRotation(), 45);
+
+    marker.setRotation(90);
+    t.equal(marker.getRotation(), 90);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker transforms rotation with the map', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({rotationAlignment: 'map'})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    const rotationRegex = /rotateZ\(-?([0-9]+)deg\)/;
+    const initialRotation = marker.getElement().style.transform.match(rotationRegex)[1];
+
+    map.setBearing(map.getBearing() + 180);
+
+    const finalRotation = marker.getElement().style.transform.match(rotationRegex)[1];
+    t.notEqual(initialRotation, finalRotation);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker transforms pitch with the map', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({pitchAlignment: 'map'})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    map.setPitch(0);
+
+    const rotationRegex = /rotateX\(-?([0-9]+)deg\)/;
+    const initialPitch = marker.getElement().style.transform.match(rotationRegex)[1];
+
+    map.setPitch(45);
+
+    const finalPitch = marker.getElement().style.transform.match(rotationRegex)[1];
+    t.notEqual(initialPitch, finalPitch);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker pitchAlignment when set to auto defaults to rotationAlignment', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({rotationAlignment: 'map', pitchAlignment: 'auto'})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getRotationAlignment(), marker.getPitchAlignment());
+
+    map.remove();
+    t.end();
+});
+
+test('Marker pitchAlignment when set to auto defaults to rotationAlignment (setter/getter)', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({pitchAlignment: 'map'})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getPitchAlignment(), 'map');
+    marker.setRotationAlignment('viewport');
+    marker.setPitchAlignment('auto');
+    t.equal(marker.getRotationAlignment(), marker.getPitchAlignment());
 
     map.remove();
     t.end();

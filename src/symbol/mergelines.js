@@ -2,9 +2,9 @@
 
 import type {SymbolFeature} from '../data/bucket/symbol_bucket';
 
-export default function (features: Array<SymbolFeature>) {
-    const leftIndex: {[string]: number} = {};
-    const rightIndex: {[string]: number} = {};
+export default function (features: Array<SymbolFeature>): Array<SymbolFeature> {
+    const leftIndex: {[_: string]: number} = {};
+    const rightIndex: {[_: string]: number} = {};
     const mergedFeatures = [];
     let mergedIndex = 0;
 
@@ -41,7 +41,7 @@ export default function (features: Array<SymbolFeature>) {
     for (let k = 0; k < features.length; k++) {
         const feature = features[k];
         const geom = feature.geometry;
-        const text = feature.text;
+        const text = feature.text ? feature.text.toString() : null;
 
         if (!text) {
             add(k);

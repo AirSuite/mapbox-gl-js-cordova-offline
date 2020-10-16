@@ -1,8 +1,8 @@
 
 import extend from '../util/extend';
-import { unbundle, deepUnbundle } from '../util/unbundle_jsonlint';
-import { isExpression } from '../expression';
-import { isFunction } from '../function';
+import {unbundle, deepUnbundle} from '../util/unbundle_jsonlint';
+import {isExpression} from '../expression';
+import {isFunction} from '../function';
 
 import validateFunction from './validate_function';
 import validateExpression from './validate_expression';
@@ -18,9 +18,11 @@ import validateLayer from './validate_layer';
 import validateSource from './validate_source';
 import validateLight from './validate_light';
 import validateString from './validate_string';
+import validateFormatted from './validate_formatted';
+import validateImage from './validate_image';
 
 const VALIDATORS = {
-    '*': function() {
+    '*'() {
         return [];
     },
     'array': validateArray,
@@ -35,9 +37,10 @@ const VALIDATORS = {
     'object': validateObject,
     'source': validateSource,
     'light': validateLight,
-    'string': validateString
+    'string': validateString,
+    'formatted': validateFormatted,
+    'resolvedImage': validateImage
 };
-
 
 // Main recursive validation function. Tracks:
 //
@@ -64,8 +67,9 @@ export default function validate(options) {
         return VALIDATORS[valueSpec.type](options);
 
     } else {
-        return validateObject(extend({}, options, {
+        const valid = validateObject(extend({}, options, {
             valueSpec: valueSpec.type ? styleSpec[valueSpec.type] : valueSpec
         }));
+        return valid;
     }
 }

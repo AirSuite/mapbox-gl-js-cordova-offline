@@ -1,14 +1,14 @@
 // @flow
 
-import { toString } from './types';
+import {toString} from './types';
 
 import ParsingContext from './parsing_context';
 import EvaluationContext from './evaluation_context';
 import assert from 'assert';
 
-import type { Expression, ExpressionRegistry } from './expression';
-import type { Type } from './types';
-import type { Value } from './values';
+import type {Expression, ExpressionRegistry} from './expression';
+import type {Type} from './types';
+import type {Value} from './values';
 
 export type Varargs = {| type: Type |};
 type Signature = Array<Type> | Varargs;
@@ -22,7 +22,7 @@ class CompoundExpression implements Expression {
     _evaluate: Evaluate;
     args: Array<Expression>;
 
-    static definitions: { [string]: Definition };
+    static definitions: {[_: string]: Definition };
 
     constructor(name: string, type: Type, evaluate: Evaluate, args: Array<Expression>) {
         this.name = name;
@@ -35,19 +35,19 @@ class CompoundExpression implements Expression {
         return this._evaluate(ctx, this.args);
     }
 
-    eachChild(fn: (Expression) => void) {
+    eachChild(fn: (_: Expression) => void) {
         this.args.forEach(fn);
     }
 
-    possibleOutputs() {
-        return [undefined];
+    outputDefined() {
+        return false;
     }
 
-    serialize() {
+    serialize(): Array<mixed> {
         return [this.name].concat(this.args.map(arg => arg.serialize()));
     }
 
-    static parse(args: Array<mixed>, context: ParsingContext): ?Expression {
+    static parse(args: $ReadOnlyArray<mixed>, context: ParsingContext): ?Expression {
         const op: string = (args[0]: any);
         const definition = CompoundExpression.definitions[op];
         if (!definition) {
@@ -67,28 +67,35 @@ class CompoundExpression implements Expression {
             signature.length === args.length - 1 // correct param count
         ));
 
-        // First parse all the args
-        const parsedArgs: Array<Expression> = [];
-        for (let i = 1; i < args.length; i++) {
-            const arg = args[i];
-            let expected;
-            if (overloads.length === 1) {
-                const params = overloads[0][0];
-                expected = Array.isArray(params) ?
-                    params[i - 1] :
-                    params.type;
-            }
-            const parsed = context.parse(arg, 1 + parsedArgs.length, expected);
-            if (!parsed) return null;
-            parsedArgs.push(parsed);
-        }
-
         let signatureContext: ParsingContext = (null: any);
 
         for (const [params, evaluate] of overloads) {
             // Use a fresh context for each attempted signature so that, if
             // we eventually succeed, we haven't polluted `context.errors`.
             signatureContext = new ParsingContext(context.registry, context.path, null, context.scope);
+
+            // First parse all the args, potentially coercing to the
+            // types expected by this overload.
+            const parsedArgs: Array<Expression> = [];
+            let argParseFailed = false;
+            for (let i = 1; i < args.length; i++) {
+                const arg = args[i];
+                const expectedType = Array.isArray(params) ?
+                    params[i - 1] :
+                    params.type;
+
+                const parsed = signatureContext.parse(arg, 1 + parsedArgs.length, expectedType);
+                if (!parsed) {
+                    argParseFailed = true;
+                    break;
+                }
+                parsedArgs.push(parsed);
+            }
+            if (argParseFailed) {
+                // Couldn't coerce args of this overload to expected type, move
+                // on to next one.
+                continue;
+            }
 
             if (Array.isArray(params)) {
                 if (params.length !== parsedArgs.length) {
@@ -111,16 +118,22 @@ class CompoundExpression implements Expression {
         assert(!signatureContext || signatureContext.errors.length > 0);
 
         if (overloads.length === 1) {
-            context.errors.push.apply(context.errors, signatureContext.errors);
+            context.errors.push(...signatureContext.errors);
         } else {
             const expected = overloads.length ? overloads : availableOverloads;
             const signatures = expected
                 .map(([params]) => stringifySignature(params))
                 .join(' | ');
-            const actualTypes = parsedArgs
-                .map(arg => toString(arg.type))
-                .join(', ');
-            context.error(`Expected arguments of type ${signatures}, but found (${actualTypes}) instead.`);
+
+            const actualTypes = [];
+            // For error message, re-parse arguments without trying to
+            // apply any coercions
+            for (let i = 1; i < args.length; i++) {
+                const parsed = context.parse(args[i], 1 + actualTypes.length);
+                if (!parsed) return null;
+                actualTypes.push(toString(parsed.type));
+            }
+            context.error(`Expected arguments of type ${signatures}, but found (${actualTypes.join(', ')}) instead.`);
         }
 
         return null;
@@ -128,7 +141,7 @@ class CompoundExpression implements Expression {
 
     static register(
         registry: ExpressionRegistry,
-        definitions: { [string]: Definition }
+        definitions: {[_: string]: Definition }
     ) {
         assert(!CompoundExpression.definitions);
         CompoundExpression.definitions = definitions;

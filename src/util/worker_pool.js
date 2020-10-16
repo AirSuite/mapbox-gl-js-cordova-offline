@@ -1,33 +1,31 @@
 // @flow
 
-import assert from 'assert';
-
 import WebWorker from './web_worker';
-
 import type {WorkerInterface} from './web_worker';
-import mapboxgl from '../';
+import browser from './browser';
+
+export const PRELOAD_POOL_ID = 'mapboxgl_preloaded_worker_pool';
 
 /**
  * Constructs a worker pool.
  * @private
  */
-class WorkerPool {
-    active: {[number]: boolean};
+export default class WorkerPool {
+    static workerCount: number;
+
+    active: {[_: number | string]: boolean};
     workers: Array<WorkerInterface>;
 
     constructor() {
         this.active = {};
     }
 
-    acquire(mapId: number): Array<WorkerInterface> {
+    acquire(mapId: number | string): Array<WorkerInterface> {
         if (!this.workers) {
             // Lazily look up the value of mapboxgl.workerCount so that
             // client code has had a chance to set it.
-            const workerCount = mapboxgl.workerCount;
-            assert(typeof workerCount === 'number' && workerCount < Infinity);
-
             this.workers = [];
-            while (this.workers.length < workerCount) {
+            while (this.workers.length < WorkerPool.workerCount) {
                 this.workers.push(new WebWorker());
             }
         }
@@ -36,15 +34,24 @@ class WorkerPool {
         return this.workers.slice();
     }
 
-    release(mapId: number) {
+    release(mapId: number | string) {
         delete this.active[mapId];
-        if (Object.keys(this.active).length === 0) {
+        if (this.numActive() === 0) {
             this.workers.forEach((w) => {
                 w.terminate();
             });
             this.workers = (null: any);
         }
     }
+
+    isPreloaded(): boolean {
+        return !!this.active[PRELOAD_POOL_ID];
+    }
+
+    numActive(): number {
+        return Object.keys(this.active).length;
+    }
 }
 
-export default WorkerPool;
+const availableLogicalProcessors = Math.floor(browser.hardwareConcurrency / 2);
+WorkerPool.workerCount = Math.max(Math.min(availableLogicalProcessors, 6), 1);

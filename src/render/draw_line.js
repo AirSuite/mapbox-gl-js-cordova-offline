@@ -1,16 +1,23 @@
 // @flow
 
-import browser from '../util/browser';
-
-import pixelsToTileUnits from '../source/pixels_to_tile_units';
 import DepthMode from '../gl/depth_mode';
+import CullFaceMode from '../gl/cull_face_mode';
 import Texture from './texture';
+import {
+    lineUniformValues,
+    linePatternUniformValues,
+    lineSDFUniformValues,
+    lineGradientUniformValues
+} from './program/line_program';
 
 import type Painter from './painter';
 import type SourceCache from '../source/source_cache';
 import type LineStyleLayer from '../style/style_layer/line_style_layer';
 import type LineBucket from '../data/bucket/line_bucket';
 import type {OverscaledTileID} from '../source/tile_id';
+import {clamp, nextPowerOfTwo} from '../util/util';
+import {renderColorRamp} from '../util/color_ramp';
+import EXTENT from '../data/extent';
 
 export default function drawLine(painter: Painter, sourceCache: SourceCache, layer: LineStyleLayer, coords: Array<OverscaledTileID>) {
     if (painter.renderPass !== 'translucent') return;
@@ -19,21 +26,31 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
     const width = layer.paint.get('line-width');
     if (opacity.constantOr(1) === 0 || width.constantOr(1) === 0) return;
 
-    const context = painter.context;
+    const depthMode = painter.depthModeForSublayer(0, DepthMode.ReadOnly);
+    const colorMode = painter.colorModeForRenderPass();
 
-    context.setDepthMode(painter.depthModeForSublayer(0, DepthMode.ReadOnly));
-    context.setColorMode(painter.colorModeForRenderPass());
+    const dasharray = layer.paint.get('line-dasharray');
+    const patternProperty = layer.paint.get('line-pattern');
+    const image = patternProperty.constantOr((1: any));
+
+    const gradient = layer.paint.get('line-gradient');
+    const crossfade = layer.getCrossfadeParameters();
 
     const programId =
-        layer.paint.get('line-dasharray') ? 'lineSDF' :
-        layer.paint.get('line-pattern') ? 'linePattern' :
-        layer.paint.get('line-gradient') ? 'lineGradient' : 'line';
+        image ? 'linePattern' :
+        dasharray ? 'lineSDF' :
+        gradient ? 'lineGradient' : 'line';
 
-    let prevTileZoom;
+    const context = painter.context;
+    const gl = context.gl;
+
     let firstTile = true;
 
     for (const coord of coords) {
         const tile = sourceCache.getTile(coord);
+
+        if (image && !tile.patternsLoaded()) continue;
+
         const bucket: ?LineBucket = (tile.getBucket(layer): any);
         if (!bucket) continue;
 
@@ -41,102 +58,68 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
         const prevProgram = painter.context.program.get();
         const program = painter.useProgram(programId, programConfiguration);
         const programChanged = firstTile || program.program !== prevProgram;
-        const tileRatioChanged = prevTileZoom !== tile.tileID.overscaledZ;
 
-        if (programChanged) {
-            programConfiguration.setUniforms(painter.context, program, layer.paint, {zoom: painter.transform.zoom});
-        }
-        drawLineTile(program, painter, tile, bucket, layer, coord, programConfiguration, programChanged, tileRatioChanged);
-        prevTileZoom = tile.tileID.overscaledZ;
-        firstTile = false;
-    }
-}
-
-function drawLineTile(program, painter, tile, bucket, layer, coord, programConfiguration, programChanged, tileRatioChanged) {
-    const context = painter.context;
-    const gl = context.gl;
-    const dasharray = layer.paint.get('line-dasharray');
-    const image = layer.paint.get('line-pattern');
-
-    let posA, posB, imagePosA, imagePosB;
-
-    if (programChanged || tileRatioChanged) {
-        const tileRatio = 1 / pixelsToTileUnits(tile, 1, painter.transform.tileZoom);
-
-        if (dasharray) {
-            posA = painter.lineAtlas.getDash(dasharray.from, layer.layout.get('line-cap') === 'round');
-            posB = painter.lineAtlas.getDash(dasharray.to, layer.layout.get('line-cap') === 'round');
-
-            const widthA = posA.width * dasharray.fromScale;
-            const widthB = posB.width * dasharray.toScale;
-
-            gl.uniform2f(program.uniforms.u_patternscale_a, tileRatio / widthA, -posA.height / 2);
-            gl.uniform2f(program.uniforms.u_patternscale_b, tileRatio / widthB, -posB.height / 2);
-            gl.uniform1f(program.uniforms.u_sdfgamma, painter.lineAtlas.width / (Math.min(widthA, widthB) * 256 * browser.devicePixelRatio) / 2);
-
-        } else if (image) {
-            imagePosA = painter.imageManager.getPattern(image.from);
-            imagePosB = painter.imageManager.getPattern(image.to);
-            if (!imagePosA || !imagePosB) return;
-
-            gl.uniform2f(program.uniforms.u_pattern_size_a, imagePosA.displaySize[0] * image.fromScale / tileRatio, imagePosA.displaySize[1]);
-            gl.uniform2f(program.uniforms.u_pattern_size_b, imagePosB.displaySize[0] * image.toScale / tileRatio, imagePosB.displaySize[1]);
-
-            const {width, height} = painter.imageManager.getPixelSize();
-            gl.uniform2fv(program.uniforms.u_texsize, [width, height]);
+        const constantPattern = patternProperty.constantOr(null);
+        if (constantPattern && tile.imageAtlas) {
+            const atlas = tile.imageAtlas;
+            const posTo = atlas.patternPositions[constantPattern.to.toString()];
+            const posFrom = atlas.patternPositions[constantPattern.from.toString()];
+            if (posTo && posFrom) programConfiguration.setConstantPatternPositions(posTo, posFrom);
         }
 
-        gl.uniform2f(program.uniforms.u_gl_units_to_pixels, 1 / painter.transform.pixelsToGLUnits[0], 1 / painter.transform.pixelsToGLUnits[1]);
-    }
+        const uniformValues = image ? linePatternUniformValues(painter, tile, layer, crossfade) :
+            dasharray ? lineSDFUniformValues(painter, tile, layer, dasharray, crossfade) :
+            gradient ? lineGradientUniformValues(painter, tile, layer, bucket.lineClipsArray.length) :
+            lineUniformValues(painter, tile, layer);
 
-    if (programChanged) {
-
-        if (dasharray) {
-            gl.uniform1i(program.uniforms.u_image, 0);
+        if (image) {
+            context.activeTexture.set(gl.TEXTURE0);
+            tile.imageAtlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            programConfiguration.updatePaintBuffers(crossfade);
+        } else if (dasharray && (programChanged || painter.lineAtlas.dirty)) {
             context.activeTexture.set(gl.TEXTURE0);
             painter.lineAtlas.bind(context);
-
-            gl.uniform1f(program.uniforms.u_tex_y_a, (posA: any).y);
-            gl.uniform1f(program.uniforms.u_tex_y_b, (posB: any).y);
-            gl.uniform1f(program.uniforms.u_mix, dasharray.t);
-
-        } else if (image) {
-            gl.uniform1i(program.uniforms.u_image, 0);
+        } else if (gradient) {
+            const layerGradient = bucket.gradients[layer.id];
+            let gradientTexture = layerGradient.texture;
+            if (layer.gradientVersion !== layerGradient.version) {
+                let textureResolution = 256;
+                if (layer.stepInterpolant) {
+                    const sourceMaxZoom = sourceCache.getSource().maxzoom;
+                    const potentialOverzoom = coord.canonical.z === sourceMaxZoom ?
+                        Math.ceil(1 << (painter.transform.maxZoom - coord.canonical.z)) : 1;
+                    const lineLength = bucket.maxLineLength / EXTENT;
+                    // Logical pixel tile size is 512px, and 1024px right before current zoom + 1
+                    const maxTilePixelSize = 1024;
+                    // Maximum possible texture coverage heuristic, bound by hardware max texture size
+                    const maxTextureCoverage = lineLength * maxTilePixelSize * potentialOverzoom;
+                    textureResolution = clamp(nextPowerOfTwo(maxTextureCoverage), 256, context.maxTextureSize);
+                }
+                layerGradient.gradient = renderColorRamp({
+                    expression: layer.gradientExpression(),
+                    evaluationKey: 'lineProgress',
+                    resolution: textureResolution,
+                    image: layerGradient.gradient || undefined,
+                    clips: bucket.lineClipsArray
+                });
+                if (layerGradient.texture) {
+                    layerGradient.texture.update(layerGradient.gradient);
+                } else {
+                    layerGradient.texture = new Texture(context, layerGradient.gradient, gl.RGBA);
+                }
+                layerGradient.version = layer.gradientVersion;
+                gradientTexture = layerGradient.texture;
+            }
             context.activeTexture.set(gl.TEXTURE0);
-            painter.imageManager.bind(context);
-
-            gl.uniform2fv(program.uniforms.u_pattern_tl_a, (imagePosA: any).tl);
-            gl.uniform2fv(program.uniforms.u_pattern_br_a, (imagePosA: any).br);
-            gl.uniform2fv(program.uniforms.u_pattern_tl_b, (imagePosB: any).tl);
-            gl.uniform2fv(program.uniforms.u_pattern_br_b, (imagePosB: any).br);
-            gl.uniform1f(program.uniforms.u_fade, image.t);
+            gradientTexture.bind(layer.stepInterpolant ? gl.NEAREST : gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
+
+        program.draw(context, gl.TRIANGLES, depthMode,
+            painter.stencilModeForClipping(coord), colorMode, CullFaceMode.disabled, uniformValues,
+            layer.id, bucket.layoutVertexBuffer, bucket.indexBuffer, bucket.segments,
+            layer.paint, painter.transform.zoom, programConfiguration, bucket.layoutVertexBuffer2);
+
+        firstTile = false;
+        // once refactored so that bound texture state is managed, we'll also be able to remove this firstTile/programChanged logic
     }
-
-    context.setStencilMode(painter.stencilModeForClipping(coord));
-
-    const posMatrix = painter.translatePosMatrix(coord.posMatrix, tile, layer.paint.get('line-translate'), layer.paint.get('line-translate-anchor'));
-    gl.uniformMatrix4fv(program.uniforms.u_matrix, false, posMatrix);
-
-    gl.uniform1f(program.uniforms.u_ratio, 1 / pixelsToTileUnits(tile, 1, painter.transform.zoom));
-
-    if (layer.paint.get('line-gradient')) {
-        context.activeTexture.set(gl.TEXTURE0);
-
-        let gradientTexture = layer.gradientTexture;
-        if (!layer.gradient) return;
-        if (!gradientTexture) gradientTexture = layer.gradientTexture = new Texture(context, layer.gradient, gl.RGBA);
-        gradientTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
-
-        gl.uniform1i(program.uniforms.u_image, 0);
-    }
-
-    program.draw(
-        context,
-        gl.TRIANGLES,
-        layer.id,
-        bucket.layoutVertexBuffer,
-        bucket.indexBuffer,
-        bucket.segments,
-        programConfiguration);
 }

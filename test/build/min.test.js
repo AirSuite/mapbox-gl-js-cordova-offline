@@ -1,14 +1,15 @@
-import {test} from 'mapbox-gl-js-test';
+import {test} from '../util/test';
 import fs from 'fs';
 import path from 'path';
 import reference from '../../src/style-spec/reference/latest';
-import { Linter } from 'eslint';
-import { scripts } from '../../package.json';
+import {Linter} from 'eslint';
+import {scripts} from '../../package.json';
 
 const minBundle = fs.readFileSync('dist/mapbox-gl.js', 'utf8');
 
 test('production build removes asserts', (t) => {
     t.assert(minBundle.indexOf('canary assert') === -1);
+    t.assert(minBundle.indexOf('canary debug run') === -1);
     t.end();
 });
 
@@ -33,6 +34,11 @@ test('can be browserified', (t) => {
         t.ifError(err);
         t.end();
     });
+});
+
+test('evaluates without errors', (t) => {
+    t.doesNotThrow(() => require(path.join(__dirname, '../../dist/mapbox-gl.js')));
+    t.end();
 });
 
 test('distributed in plain ES5 code', (t) => {

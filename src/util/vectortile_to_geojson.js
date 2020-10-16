@@ -1,4 +1,5 @@
 // @flow
+import type {GeoJSONGeometry} from '@mapbox/geojson-types';
 
 class Feature {
     type: 'Feature';
@@ -8,7 +9,7 @@ class Feature {
 
     _vectorTileFeature: VectorTileFeature;
 
-    constructor(vectorTileFeature: VectorTileFeature, z: number, x: number, y: number) {
+    constructor(vectorTileFeature: VectorTileFeature, z: number, x: number, y: number, id: string | number | void) {
         this.type = 'Feature';
 
         this._vectorTileFeature = vectorTileFeature;
@@ -17,10 +18,7 @@ class Feature {
         (vectorTileFeature: any)._y = y;
 
         this.properties = vectorTileFeature.properties;
-
-        if (vectorTileFeature.id != null) {
-            this.id = vectorTileFeature.id;
-        }
+        this.id = id;
     }
 
     get geometry(): ?GeoJSONGeometry {

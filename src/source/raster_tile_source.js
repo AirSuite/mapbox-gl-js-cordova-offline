@@ -1,13 +1,16 @@
 // @flow
 
-import { extend, pick } from '../util/util';
+import {extend, pick} from '../util/util';
 
-import { getImage, getmbtileImage, ResourceType } from '../util/ajax';
+import { getImage, getmbtileImage, getUint8ArrayImage, ResourceType } from '../util/ajax';
 import { Event, ErrorEvent, Evented } from '../util/evented';
 import loadTileJSON from './load_tilejson';
-import { normalizeTileURL as normalizeURL } from '../util/mapbox';
+import {postTurnstileEvent, postMapLoadEvent} from '../util/mapbox';
 import TileBounds from './tile_bounds';
 import Texture from '../render/texture';
+import webpSupported from '../util/webp_supported';
+
+import {cacheEntryPossiblyAdded} from '../util/tile_request_cache';
 
 import type {Source} from './source';
 import type {OverscaledTileID} from './tile_id';
@@ -16,6 +19,10 @@ import type Dispatcher from '../util/dispatcher';
 import type Tile from './tile';
 import type {Callback} from '../types/callback';
 import type {Cancelable} from '../types/cancelable';
+import type {
+    RasterSourceSpecification,
+    RasterDEMSourceSpecification
+} from '../style-spec/types';
 
 class RasterTileSource extends Evented implements Source {
     type: 'raster' | 'raster-dem';
@@ -51,19 +58,24 @@ class RasterTileSource extends Evented implements Source {
         this.tileSize = 512;
         this._loaded = false;
 
-        this._options = extend({}, options);
+        this._options = extend({type: 'raster'}, options);
         extend(this, pick(options, ['url', 'scheme', 'tileSize']));
     }
 
     load() {
+        this._loaded = false;
         this.fire(new Event('dataloading', {dataType: 'source'}));
-        this._tileJSONRequest = loadTileJSON(this._options, this.map._transformRequest, (err, tileJSON) => {
+        this._tileJSONRequest = loadTileJSON(this._options, this.map._requestManager, (err, tileJSON) => {
             this._tileJSONRequest = null;
+            this._loaded = true;
             if (err) {
                 this.fire(new ErrorEvent(err));
             } else if (tileJSON) {
                 extend(this, tileJSON);
                 if (tileJSON.bounds) this.tileBounds = new TileBounds(tileJSON.bounds, this.minzoom, this.maxzoom);
+
+                postTurnstileEvent(tileJSON.tiles);
+                postMapLoadEvent(tileJSON.tiles, this.map._getMapId(), this.map._requestManager._skuToken);
 
                 // `content` is included here to prevent a race condition where `Style#_updateSources` is called
                 // before the TileJSON arrives. this makes sure the tiles needed are loaded once TileJSON arrives
@@ -72,6 +84,10 @@ class RasterTileSource extends Evented implements Source {
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'content'}));
             }
         });
+    }
+
+    loaded(): boolean {
+        return this._loaded;
     }
 
     onAdd(map: Map) {
@@ -96,10 +112,10 @@ class RasterTileSource extends Evented implements Source {
 
     loadTile(tile: Tile, callback: Callback<void>) {
 
-		const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
+    const url = this.map._requestManager.normalizeTileURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
         if (this._options.mbtiles == undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles){
-          tile.request = getImage(this.map._transformRequest(url, ResourceType.Tile), done.bind(this));
+          tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), done.bind(this));
         }else{
           let Rurl = url.split('/'),
           z = Rurl[0],
@@ -109,23 +125,48 @@ class RasterTileSource extends Evented implements Source {
           //console.log(Rurl);
           var database = this.id;
           if (window.openDatabases[database] === undefined) {
-              window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                  name: database + '.mbtiles',
-                  location: 2,
-                  createFromLocation: 0,
-                  androidDatabaseImplementation: 2
-              });
+            if (window.AppType == "CORDOVA"){
+                  window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                      name: database + '.mbtiles',
+                      location: 2,
+                      createFromLocation: 0,
+                      androidDatabaseImplementation: 1
+                  });
+              }
+              if (window.AppType == "ELECTRON"){
+                  window.openDatabases[database] = new sqlite3.Database(app.getPath("userData") + '/' + database + '.mbtiles', sqlite3.OPEN_READONLY);
+              }
           }
+          if (window.AppType == "CORDOVA"){
+              window.openDatabases[database].transaction(function(tx) {
+                  tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
 
-          window.openDatabases[database].transaction(function(tx) {
-              tx.executeSql('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-
-                  var tileData = res.rows.item(0).tile_data;
-                  tile.request = getmbtileImage(tileData, done.bind(this));
-              }.bind(this), function(tx, e) {
-                  console.log('Database Error: ' + e.message);
-              });
-          }.bind(this));
+                      var tileData = res.rows.item(0).tile_data64;
+                      if (tileData != undefined){
+                          if (!webpSupported.supported){
+                              //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                              tileData = WEBPtoPNG(tileData);
+                          }else{
+                              tileData = "data:image/png;base64," + tileData;
+                          }
+                      }
+                      tile.request = getmbtileImage(tileData, done.bind(this));
+                  }.bind(this), function(tx, e) {
+                      console.log('Database Error: ' + e.message);
+                  });
+              }.bind(this));
+            }
+            if (window.AppType == "ELECTRON"){
+                window.openDatabases[database].parallelize(function(){
+                    window.openDatabases[database].all('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                        var tileData;
+                        if (res != undefined) {
+                          if (res.length > 0) tileData = res[0].tile_data;
+                        }
+                        tile.request = getUint8ArrayImage(tileData, done.bind(this));
+                    }.bind(this));
+                }.bind(this));
+            }
         }
 
         function done(err, img) {
@@ -146,9 +187,9 @@ class RasterTileSource extends Evented implements Source {
                 const gl = context.gl;
                 tile.texture = this.map.painter.getTileTexture(img.width);
                 if (tile.texture) {
-                    tile.texture.update(img, { useMipmap: true });
+                    tile.texture.update(img, {useMipmap: true});
                 } else {
-                    tile.texture = new Texture(context, img, gl.RGBA, { useMipmap: true });
+                    tile.texture = new Texture(context, img, gl.RGBA, {useMipmap: true});
                     tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE, gl.LINEAR_MIPMAP_NEAREST);
 
                     if (context.extTextureFilterAnisotropic) {
@@ -157,6 +198,8 @@ class RasterTileSource extends Evented implements Source {
                 }
 
                 tile.state = 'loaded';
+
+                cacheEntryPossiblyAdded(this.dispatcher);
 
                 callback(null);
             }

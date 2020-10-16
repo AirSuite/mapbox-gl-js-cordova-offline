@@ -9,6 +9,10 @@ export type ObjectTypeT = { kind: 'object' };
 export type ValueTypeT = { kind: 'value' };
 export type ErrorTypeT = { kind: 'error' };
 export type CollatorTypeT = { kind: 'collator' };
+export type FormattedTypeT = { kind: 'formatted' };
+export type ResolvedImageTypeT = { kind: 'resolvedImage' };
+
+export type EvaluationKind = 'constant' | 'source' | 'camera' | 'composite';
 
 export type Type =
     NullTypeT |
@@ -20,7 +24,9 @@ export type Type =
     ValueTypeT |
     ArrayType | // eslint-disable-line no-use-before-define
     ErrorTypeT |
-    CollatorTypeT
+    CollatorTypeT |
+    FormattedTypeT |
+    ResolvedImageTypeT
 
 export type ArrayType = {
     kind: 'array',
@@ -28,15 +34,19 @@ export type ArrayType = {
     N: ?number
 }
 
-export const NullType = { kind: 'null' };
-export const NumberType = { kind: 'number' };
-export const StringType = { kind: 'string' };
-export const BooleanType = { kind: 'boolean' };
-export const ColorType = { kind: 'color' };
-export const ObjectType = { kind: 'object' };
-export const ValueType = { kind: 'value' };
-export const ErrorType = { kind: 'error' };
-export const CollatorType = { kind: 'collator' };
+export type NativeType = 'number' | 'string' | 'boolean' | 'null' | 'array' | 'object'
+
+export const NullType = {kind: 'null'};
+export const NumberType = {kind: 'number'};
+export const StringType = {kind: 'string'};
+export const BooleanType = {kind: 'boolean'};
+export const ColorType = {kind: 'color'};
+export const ObjectType = {kind: 'object'};
+export const ValueType = {kind: 'value'};
+export const ErrorType = {kind: 'error'};
+export const CollatorType = {kind: 'collator'};
+export const FormattedType = {kind: 'formatted'};
+export const ResolvedImageType = {kind: 'resolvedImage'};
 
 export function array(itemType: Type, N: ?number): ArrayType {
     return {
@@ -63,8 +73,10 @@ const valueMemberTypes = [
     StringType,
     BooleanType,
     ColorType,
+    FormattedType,
     ObjectType,
-    array(ValueType)
+    array(ValueType),
+    ResolvedImageType
 ];
 
 /**
@@ -78,7 +90,7 @@ export function checkSubtype(expected: Type, t: Type): ?string {
         return null;
     } else if (expected.kind === 'array') {
         if (t.kind === 'array' &&
-            !checkSubtype(expected.itemType, t.itemType) &&
+            ((t.N === 0 && t.itemType.kind === 'value') || !checkSubtype(expected.itemType, t.itemType)) &&
             (typeof expected.N !== 'number' || expected.N === t.N)) {
             return null;
         }
@@ -93,4 +105,22 @@ export function checkSubtype(expected: Type, t: Type): ?string {
     }
 
     return `Expected ${toString(expected)} but found ${toString(t)} instead.`;
+}
+
+export function isValidType(provided: Type, allowedTypes: Array<Type>): boolean {
+    return allowedTypes.some(t => t.kind === provided.kind);
+}
+
+export function isValidNativeType(provided: any, allowedTypes: Array<NativeType>): boolean {
+    return allowedTypes.some(t => {
+        if (t === 'null') {
+            return provided === null;
+        } else if (t === 'array') {
+            return Array.isArray(provided);
+        } else if (t === 'object') {
+            return provided && !Array.isArray(provided) && typeof provided === 'object';
+        } else {
+            return t === typeof provided;
+        }
+    });
 }
