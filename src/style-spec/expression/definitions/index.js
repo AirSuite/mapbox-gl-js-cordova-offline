@@ -24,8 +24,10 @@ import Assertion from './assertion';
 import Coercion from './coercion';
 import At from './at';
 import In from './in';
+import IndexOf from './index_of';
 import Match from './match';
 import Case from './case';
+import Slice from './slice';
 import Step from './step';
 import Interpolate from './interpolate';
 import Coalesce from './coalesce';
@@ -42,6 +44,7 @@ import NumberFormat from './number_format';
 import FormatExpression from './format';
 import ImageExpression from './image';
 import Length from './length';
+import Within from './within';
 
 import type {Varargs} from '../compound_expression';
 import type {ExpressionRegistry} from '../expression';
@@ -63,6 +66,7 @@ const expressions: ExpressionRegistry = {
     'format': FormatExpression,
     'image': ImageExpression,
     'in': In,
+    'index-of': IndexOf,
     'interpolate': Interpolate,
     'interpolate-hcl': Interpolate,
     'interpolate-lab': Interpolate,
@@ -73,13 +77,15 @@ const expressions: ExpressionRegistry = {
     'number': Assertion,
     'number-format': NumberFormat,
     'object': Assertion,
+    'slice': Slice,
     'step': Step,
     'string': Assertion,
     'to-boolean': Coercion,
     'to-color': Coercion,
     'to-number': Coercion,
     'to-string': Coercion,
-    'var': Var
+    'var': Var,
+    'within': Within
 };
 
 function rgba(ctx, [r, g, b, a]) {
@@ -455,7 +461,7 @@ CompoundExpression.register(expressions, {
     'filter-has-id': [
         BooleanType,
         [],
-        (ctx) => ctx.id() !== null
+        (ctx) => (ctx.id() !== null && ctx.id() !== undefined)
     ],
     'filter-type-in': [
         BooleanType,

@@ -119,7 +119,7 @@ class Hash {
     _onHashChange() {
         const loc = this._getCurrentHash();
         if (loc.length >= 3 && !loc.some(v => isNaN(v))) {
-            const bearing = this._map.dragRotate.isEnabled() && this._map.touchZoomRotate.isEnabled() ? +loc[3] : this._map.getBearing();
+            const bearing = this._map.dragRotate.isEnabled() && this._map.touchZoomRotate.isEnabled() ? +(loc[3] || 0) : this._map.getBearing();
             this._map.jumpTo({
                 center: [+loc[2], +loc[1]],
                 zoom: +loc[0],
@@ -132,9 +132,10 @@ class Hash {
     }
 
     _updateHashUnthrottled() {
-        const hash = this.getHashString();
+        // Replace if already present, else append the updated hash string
+        const location = window.location.href.replace(/(#.+)?$/, this.getHashString());
         try {
-            window.history.replaceState(window.history.state, '', hash);
+            window.history.replaceState(window.history.state, null, location);
         } catch (SecurityError) {
             // IE11 does not allow this if the page is within an iframe created
             // with iframe.contentWindow.document.write(...).

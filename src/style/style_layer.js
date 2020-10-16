@@ -10,7 +10,7 @@ import {
     emitValidationErrors
 } from './validate_style';
 import {Evented} from '../util/evented';
-import {Layout, Transitionable, Transitioning, Properties, PossiblyEvaluatedPropertyValue} from './properties';
+import {Layout, Transitionable, Transitioning, Properties, PossiblyEvaluated, PossiblyEvaluatedPropertyValue} from './properties';
 import {supportsPropertyExpression} from '../style-spec/util/properties';
 
 import type {FeatureState} from '../style-spec/expression';
@@ -69,7 +69,7 @@ class StyleLayer extends Evented {
 
         this.id = layer.id;
         this.type = layer.type;
-        this._featureFilter = () => true;
+        this._featureFilter = {filter: () => true, needGeometry: false};
 
         if (layer.type === 'custom') return;
 
@@ -100,6 +100,8 @@ class StyleLayer extends Evented {
             }
 
             this._transitioningPaint = this._transitionablePaint.untransitioned();
+            //$FlowFixMe
+            this.paint = new PossiblyEvaluated(properties.paint);
         }
     }
 
@@ -199,10 +201,10 @@ class StyleLayer extends Evented {
         }
 
         if (this._unevaluatedLayout) {
-            (this: any).layout = this._unevaluatedLayout.possiblyEvaluate(parameters, availableImages);
+            (this: any).layout = this._unevaluatedLayout.possiblyEvaluate(parameters, undefined, availableImages);
         }
 
-        (this: any).paint = this._transitioningPaint.possiblyEvaluate(parameters, availableImages);
+        (this: any).paint = this._transitioningPaint.possiblyEvaluate(parameters, undefined, availableImages);
     }
 
     serialize() {

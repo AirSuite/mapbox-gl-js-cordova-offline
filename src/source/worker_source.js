@@ -49,8 +49,8 @@ export type WorkerTileResult = {
     rawTileData?: ArrayBuffer,
     resourceTiming?: Array<PerformanceResourceTiming>,
     // Only used for benchmarking:
-    glyphMap?: {[string]: {[number]: ?StyleGlyph}} | null,
-    iconMap?: {[string]: StyleImage} | null,
+    glyphMap?: {[_: string]: {[_: number]: ?StyleGlyph}} | null,
+    iconMap?: {[_: string]: StyleImage} | null,
     glyphPositions?: GlyphPositions | null
 };
 
@@ -72,6 +72,7 @@ export type WorkerDEMTileCallback = (err: ?Error, result: ?DEMData) => void;
  * @param layerIndex
  */
 export interface WorkerSource {
+    availableImages: Array<string>,
     // Disabled due to https://github.com/facebook/flow/issues/5208
     // constructor(actor: Actor, layerIndex: StyleLayerIndex): WorkerSource;
 

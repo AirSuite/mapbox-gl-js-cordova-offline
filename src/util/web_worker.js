@@ -4,7 +4,7 @@
 // It implements a MessageBus main thread interface for use in Node environments
 // In a browser environment, this file is replaced with ./src/util/browser/web_worker.js
 // when Rollup builds the main bundle.
-// See https://github.com/mapbox/mapbox-gl-js/blob/master/package.json#L104-L108
+// See package.json#browser
 
 import Worker from '../source/worker';
 
@@ -25,7 +25,7 @@ export interface WorkerGlobalScopeInterface {
     importScripts(...urls: Array<string>): void;
 
     registerWorkerSource: (string, Class<WorkerSource>) => void,
-    registerRTLTextPlugin: (any) => void
+    registerRTLTextPlugin: (_: any) => void
 }
 
 class MessageBus implements WorkerInterface, WorkerGlobalScopeInterface {

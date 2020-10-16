@@ -106,14 +106,15 @@ class VectorTileWorkerSource implements WorkerSource {
     layerIndex: StyleLayerIndex;
     availableImages: Array<string>;
     loadVectorData: LoadVectorData;
-    loading: { [string]: WorkerTile };
-    loaded: { [string]: WorkerTile };
+    loading: {[_: string]: WorkerTile };
+    loaded: {[_: string]: WorkerTile };
 
     /**
      * @param [loadVectorData] Optional method for custom loading of a VectorTile
      * object based on parameters passed from the main-thread Source. See
      * {@link VectorTileWorkerSource#loadTile}. The default implementation simply
      * loads the pbf at `params.url`.
+     * @private
      */
     constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, loadVectorData: ?LoadVectorData) {
         this.actor = actor;
@@ -129,6 +130,7 @@ class VectorTileWorkerSource implements WorkerSource {
      * Implements {@link WorkerSource#loadTile}. Delegates to
      * {@link VectorTileWorkerSource#loadVectorData} (which by default expects
      * a `params.url` property) for fetching and producing a VectorTile object.
+     * @private
      */
     loadTile(params: WorkerTileParameters, callback: WorkerTileCallback) {
         const uid = params.uid;
@@ -184,6 +186,7 @@ class VectorTileWorkerSource implements WorkerSource {
 
     /**
      * Implements {@link WorkerSource#reloadTile}.
+     * @private
      */
     reloadTile(params: WorkerTileParameters, callback: WorkerTileCallback) {
         const loaded = this.loaded,
@@ -220,6 +223,7 @@ class VectorTileWorkerSource implements WorkerSource {
      *
      * @param params
      * @param params.uid The UID for this tile.
+     * @private
      */
     abortTile(params: TileParameters, callback: WorkerTileCallback) {
         const loading = this.loading,
@@ -236,6 +240,7 @@ class VectorTileWorkerSource implements WorkerSource {
      *
      * @param params
      * @param params.uid The UID for this tile.
+     * @private
      */
     removeTile(params: TileParameters, callback: WorkerTileCallback) {
         const loaded = this.loaded,

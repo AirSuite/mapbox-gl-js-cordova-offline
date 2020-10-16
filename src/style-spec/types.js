@@ -8,7 +8,7 @@ export type FormattedSpecification = string;
 
 export type ResolvedImageSpecification = string;
 
-export type PromoteIdSpecification = {[string]: string} | string;
+export type PromoteIdSpecification = {[_: string]: string} | string;
 
 export type FilterSpecification =
     | ['has', string]
@@ -66,7 +66,7 @@ export type StyleSpecification = {|
     "bearing"?: number,
     "pitch"?: number,
     "light"?: LightSpecification,
-    "sources": {[string]: SourceSpecification},
+    "sources": {[_: string]: SourceSpecification},
     "sprite"?: string,
     "glyphs"?: string,
     "transition"?: TransitionSpecification,
@@ -88,7 +88,9 @@ export type VectorSourceSpecification = {
     "scheme"?: "xyz" | "tms",
     "minzoom"?: number,
     "maxzoom"?: number,
-    "attribution"?: string
+    "attribution"?: string,
+    "promoteId"?: PromoteIdSpecification,
+    "volatile"?: boolean
 }
 
 export type RasterSourceSpecification = {
@@ -100,7 +102,8 @@ export type RasterSourceSpecification = {
     "maxzoom"?: number,
     "tileSize"?: number,
     "scheme"?: "xyz" | "tms",
-    "attribution"?: string
+    "attribution"?: string,
+    "volatile"?: boolean
 }
 
 export type RasterDEMSourceSpecification = {
@@ -113,7 +116,7 @@ export type RasterDEMSourceSpecification = {
     "tileSize"?: number,
     "attribution"?: string,
     "encoding"?: "terrarium" | "mapbox",
-    "promoteId"?: PromoteIdSpecification
+    "volatile"?: boolean
 }
 
 export type GeoJSONSourceSpecification = {|
@@ -122,10 +125,12 @@ export type GeoJSONSourceSpecification = {|
     "maxzoom"?: number,
     "attribution"?: string,
     "buffer"?: number,
+    "filter"?: mixed,
     "tolerance"?: number,
     "cluster"?: boolean,
     "clusterRadius"?: number,
     "clusterMaxZoom"?: number,
+    "clusterMinPoints"?: number,
     "clusterProperties"?: mixed,
     "lineMetrics"?: boolean,
     "generateId"?: boolean,

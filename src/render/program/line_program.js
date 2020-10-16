@@ -4,7 +4,7 @@ import {
     Uniform1i,
     Uniform1f,
     Uniform2f,
-    Uniform4f,
+    Uniform3f,
     UniformMatrix4f
 } from '../uniform_binding';
 import pixelsToTileUnits from '../../source/pixels_to_tile_units';
@@ -32,7 +32,8 @@ export type LineGradientUniformsType = {|
     'u_ratio': Uniform1f,
     'u_device_pixel_ratio': Uniform1f,
     'u_units_to_pixels': Uniform2f,
-    'u_image': Uniform1i
+    'u_image': Uniform1i,
+    'u_image_height': Uniform1f,
 |};
 
 export type LinePatternUniformsType = {|
@@ -42,7 +43,7 @@ export type LinePatternUniformsType = {|
     'u_device_pixel_ratio': Uniform1f,
     'u_units_to_pixels': Uniform2f,
     'u_image': Uniform1i,
-    'u_scale': Uniform4f,
+    'u_scale': Uniform3f,
     'u_fade': Uniform1f
 |};
 
@@ -72,7 +73,8 @@ const lineGradientUniforms = (context: Context, locations: UniformLocations): Li
     'u_ratio': new Uniform1f(context, locations.u_ratio),
     'u_device_pixel_ratio': new Uniform1f(context, locations.u_device_pixel_ratio),
     'u_units_to_pixels': new Uniform2f(context, locations.u_units_to_pixels),
-    'u_image': new Uniform1i(context, locations.u_image)
+    'u_image': new Uniform1i(context, locations.u_image),
+    'u_image_height': new Uniform1f(context, locations.u_image_height),
 });
 
 const linePatternUniforms = (context: Context, locations: UniformLocations): LinePatternUniformsType => ({
@@ -82,7 +84,7 @@ const linePatternUniforms = (context: Context, locations: UniformLocations): Lin
     'u_device_pixel_ratio': new Uniform1f(context, locations.u_device_pixel_ratio),
     'u_image': new Uniform1i(context, locations.u_image),
     'u_units_to_pixels': new Uniform2f(context, locations.u_units_to_pixels),
-    'u_scale': new Uniform4f(context, locations.u_scale),
+    'u_scale': new Uniform3f(context, locations.u_scale),
     'u_fade': new Uniform1f(context, locations.u_fade)
 });
 
@@ -121,10 +123,12 @@ const lineUniformValues = (
 const lineGradientUniformValues = (
     painter: Painter,
     tile: Tile,
-    layer: LineStyleLayer
+    layer: LineStyleLayer,
+    imageHeight: number
 ): UniformValues<LineGradientUniformsType> => {
     return extend(lineUniformValues(painter, tile, layer), {
-        'u_image': 0
+        'u_image': 0,
+        'u_image_height': imageHeight,
     });
 };
 
@@ -143,8 +147,7 @@ const linePatternUniformValues = (
         'u_ratio': 1 / pixelsToTileUnits(tile, 1, transform.zoom),
         'u_device_pixel_ratio': browser.devicePixelRatio,
         'u_image': 0,
-        // this assumes all images in the icon atlas texture have the same pixel ratio
-        'u_scale': [browser.devicePixelRatio, tileZoomRatio, crossfade.fromScale, crossfade.toScale],
+        'u_scale': [tileZoomRatio, crossfade.fromScale, crossfade.toScale],
         'u_fade': crossfade.t,
         'u_units_to_pixels': [
             1 / transform.pixelsToGLUnits[0],
