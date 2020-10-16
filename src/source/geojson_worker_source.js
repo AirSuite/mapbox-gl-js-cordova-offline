@@ -32,7 +32,8 @@ export type LoadGeoJSONParameters = {
     cluster: boolean,
     superclusterOptions?: Object,
     geojsonVtOptions?: Object,
-    clusterProperties?: Object
+    clusterProperties?: Object,
+    filter?: Array<mixed>
 };
 
 export type LoadGeoJSON = (params: LoadGeoJSONParameters, callback: ResponseCallback<Object>) => void;
@@ -94,7 +95,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
     loadGeoJSON: LoadGeoJSON;
     _state: SourceState;
     _pendingCallback: Callback<{
-        resourceTiming?: {[string]: Array<PerformanceResourceTiming>},
+        resourceTiming?: {[_: string]: Array<PerformanceResourceTiming>},
         abandoned?: boolean }>;
     _pendingLoadDataParams: LoadGeoJSONParameters;
     _geoJSONIndex: GeoJSONIndex
@@ -103,6 +104,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      * @param [loadGeoJSON] Optional method for custom loading/parsing of
      * GeoJSON based on parameters passed from the main-thread Source.
      * See {@link GeoJSONWorkerSource#loadGeoJSON}.
+     * @private
      */
     constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, loadGeoJSON: ?LoadGeoJSON) {
         super(actor, layerIndex, availableImages, loadGeoJSONTile);
@@ -126,9 +128,10 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      *
      * @param params
      * @param callback
+     * @private
      */
     loadData(params: LoadGeoJSONParameters, callback: Callback<{
-        resourceTiming?: {[string]: Array<PerformanceResourceTiming>},
+        resourceTiming?: {[_: string]: Array<PerformanceResourceTiming>},
         abandoned?: boolean }>) {
         if (this._pendingCallback) {
             // Tell the foreground the previous call has been abandoned
@@ -172,6 +175,15 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
                 rewind(data, true);
 
                 try {
+                    if (params.filter) {
+                        const compiled = createExpression(params.filter, {type: 'boolean', 'property-type': 'data-driven', overridable: false, transition: false});
+                        if (compiled.result === 'error')
+                            throw new Error(compiled.value.map(err => `${err.key}: ${err.message}`).join(', '));
+
+                        const features = data.features.filter(feature => compiled.value.evaluate({zoom: 0}, feature));
+                        data = {type: 'FeatureCollection', features};
+                    }
+
                     this._geoJSONIndex = params.cluster ?
                         new Supercluster(getSuperclusterOptions(params)).load(data.features) :
                         geojsonvt(data, params.geojsonVtOptions);
@@ -233,6 +245,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
     *
     * @param params
     * @param params.uid The UID for this tile.
+    * @private
     */
     reloadTile(params: WorkerTileParameters, callback: WorkerTileCallback) {
         const loaded = this.loaded,
@@ -255,6 +268,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      * @param params
      * @param [params.url] A URL to the remote GeoJSON data.
      * @param [params.data] Literal GeoJSON data. Must be provided if `params.url` is not.
+     * @private
      */
     loadGeoJSON(params: LoadGeoJSONParameters, callback: ResponseCallback<Object>) {
         // Because of same origin issues, urls must either include an explicit
@@ -283,15 +297,27 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
     }
 
     getClusterExpansionZoom(params: {clusterId: number}, callback: Callback<number>) {
-        callback(null, this._geoJSONIndex.getClusterExpansionZoom(params.clusterId));
+        try {
+            callback(null, this._geoJSONIndex.getClusterExpansionZoom(params.clusterId));
+        } catch (e) {
+            callback(e);
+        }
     }
 
     getClusterChildren(params: {clusterId: number}, callback: Callback<Array<GeoJSONFeature>>) {
-        callback(null, this._geoJSONIndex.getChildren(params.clusterId));
+        try {
+            callback(null, this._geoJSONIndex.getChildren(params.clusterId));
+        } catch (e) {
+            callback(e);
+        }
     }
 
     getClusterLeaves(params: {clusterId: number, limit: number, offset: number}, callback: Callback<Array<GeoJSONFeature>>) {
-        callback(null, this._geoJSONIndex.getLeaves(params.clusterId, params.limit, params.offset));
+        try {
+            callback(null, this._geoJSONIndex.getLeaves(params.clusterId, params.limit, params.offset));
+        } catch (e) {
+            callback(e);
+        }
     }
 }
 

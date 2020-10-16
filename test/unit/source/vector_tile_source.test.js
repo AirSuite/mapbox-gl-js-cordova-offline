@@ -22,7 +22,8 @@ function createSource(options, transformCallback) {
     source.onAdd({
         transform: {showCollisionBoxes: false},
         _getMapId: () => 1,
-        _requestManager: new RequestManager(transformCallback)
+        _requestManager: new RequestManager(transformCallback),
+        style: {sourceCaches: {id: {clearTiles: () => {}}}}
     });
 
     source.on('error', (e) => {
@@ -200,6 +201,33 @@ test('VectorTileSource', (t) => {
         window.server.respond();
     });
 
+    t.test('canonicalizes tile URLs in inline TileJSON', (t) => {
+        const source = createSource({
+            minzoom: 1,
+            maxzoom: 10,
+            attribution: "Mapbox",
+            tiles: ["https://api.mapbox.com/v4/user.map/{z}/{x}/{y}.png?access_token=key"]
+        });
+        const transformSpy = t.spy(source.map._requestManager, 'transformRequest');
+        source.on('data', (e) => {
+            if (e.sourceDataType === 'metadata') {
+                t.deepEqual(source.tiles, ["mapbox://tiles/user.map/{z}/{x}/{y}.png?access_token=key"]);
+                const tile = {
+                    tileID: new OverscaledTileID(10, 0, 10, 5, 5),
+                    state: 'loading',
+                    loadVectorData () {},
+                    setExpiryData() {}
+                };
+                source.loadTile(tile, () => {});
+                t.ok(transformSpy.calledOnce);
+                t.equal(transformSpy.getCall(0).args[0], `https://api.mapbox.com/v4/user.map/10/5/5.png?sku=${source.map._requestManager._skuToken}&access_token=key`);
+                t.equal(transformSpy.getCall(0).args[1], 'Tile');
+                t.end();
+            }
+        });
+
+    });
+
     t.test('reloads a loading tile properly', (t) => {
         const source = createSource({
             tiles: ["http://example.com/{z}/{x}/{y}.png"]
@@ -323,6 +351,36 @@ test('VectorTileSource', (t) => {
         const source = createSource({url: "/source.json"});
         source.onRemove();
         t.equal(window.server.lastRequest.aborted, true);
+        t.end();
+    });
+
+    t.test('supports url property updates', (t) => {
+        const source = createSource({
+            url: "http://localhost:2900/source.json"
+        });
+        source.setUrl("http://localhost:2900/source2.json");
+        t.deepEqual(source.serialize(), {
+            type: 'vector',
+            url: "http://localhost:2900/source2.json"
+        });
+        t.end();
+    });
+
+    t.test('supports tiles property updates', (t) => {
+        const source = createSource({
+            minzoom: 1,
+            maxzoom: 10,
+            attribution: "Mapbox",
+            tiles: ["http://example.com/{z}/{x}/{y}.png"]
+        });
+        source.setTiles(["http://example2.com/{z}/{x}/{y}.png"]);
+        t.deepEqual(source.serialize(), {
+            type: 'vector',
+            minzoom: 1,
+            maxzoom: 10,
+            attribution: "Mapbox",
+            tiles: ["http://example2.com/{z}/{x}/{y}.png"]
+        });
         t.end();
     });
 

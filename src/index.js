@@ -23,6 +23,7 @@ import {Debug} from './util/debug';
 import {isSafari} from './util/util';
 import {setRTLTextPlugin, getRTLTextPluginStatus} from './source/rtl_text_plugin';
 import WorkerPool from './util/worker_pool';
+import {prewarm, clearPrewarmedResources} from './util/global_worker_pool';
 import {clearTileCache} from './util/tile_request_cache';
 import {PerformanceUtils} from './util/performance';
 
@@ -46,11 +47,45 @@ const exported = {
     MercatorCoordinate,
     Evented,
     config,
+    /**
+     * Initializes resources like WebWorkers that can be shared across maps to lower load
+     * times in some situations. `mapboxgl.workerUrl` and `mapboxgl.workerCount`, if being
+     * used, must be set before `prewarm()` is called to have an effect.
+     *
+     * By default, the lifecycle of these resources is managed automatically, and they are
+     * lazily initialized when a Map is first created. By invoking `prewarm()`, these
+     * resources will be created ahead of time, and will not be cleared when the last Map
+     * is removed from the page. This allows them to be re-used by new Map instances that
+     * are created later. They can be manually cleared by calling
+     * `mapboxgl.clearPrewarmedResources()`. This is only necessary if your web page remains
+     * active but stops using maps altogether.
+     *
+     * This is primarily useful when using GL-JS maps in a single page app, wherein a user
+     * would navigate between various views that can cause Map instances to constantly be
+     * created and destroyed.
+     *
+     * @function prewarm
+     * @example
+     * mapboxgl.prewarm()
+     */
+    prewarm,
+    /**
+     * Clears up resources that have previously been created by `mapboxgl.prewarm()`.
+     * Note that this is typically not necessary. You should only call this function
+     * if you expect the user of your app to not return to a Map view at any point
+     * in your application.
+     *
+     * @function clearPrewarmedResources
+     * @example
+     * mapboxgl.clearPrewarmedResources()
+     */
+    clearPrewarmedResources,
 
     /**
      * Gets and sets the map's [access token](https://www.mapbox.com/help/define-access-token/).
      *
      * @var {string} accessToken
+     * @returns {string} The currently set access token.
      * @example
      * mapboxgl.accessToken = myAccessToken;
      * @see [Display a map](https://www.mapbox.com/mapbox-gl-js/examples/)
@@ -67,6 +102,7 @@ const exported = {
      * Gets and sets the map's default API URL for requesting tiles, styles, sprites, and glyphs
      *
      * @var {string} baseApiUrl
+     * @returns {string} The current base API URL.
      * @example
      * mapboxgl.baseApiUrl = 'https://api.mapbox.com';
      */
@@ -84,6 +120,7 @@ const exported = {
      * Make sure to set this property before creating any map instances for it to have effect.
      *
      * @var {string} workerCount
+     * @returns {number} Number of workers currently configured.
      * @example
      * mapboxgl.workerCount = 2;
      */
@@ -100,6 +137,7 @@ const exported = {
      * which affects performance in raster-heavy maps. 16 by default.
      *
      * @var {string} maxParallelImageRequests
+     * @returns {number} Number of parallel requests currently configured.
      * @example
      * mapboxgl.maxParallelImageRequests = 10;
      */
@@ -125,6 +163,8 @@ const exported = {
      *
      * @function clearStorage
      * @param {Function} callback Called with an error argument if there is an error.
+     * @example
+     * mapboxgl.clearStorage();
      */
     clearStorage(callback?: (err: ?Error) => void) {
         clearTileCache(callback);
@@ -153,7 +193,10 @@ Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPer
  *   be dramatically worse than expected (e.g. a software WebGL renderer would be used).
  * @return {boolean}
  * @example
- * mapboxgl.supported() // = true
+ * // Show an alert if the browser does not support Mapbox GL
+ * if (!mapboxgl.supported()) {
+ *   alert('Your browser does not support Mapbox GL');
+ * }
  * @see [Check for browser support](https://www.mapbox.com/mapbox-gl-js/example/check-for-support/)
  */
 

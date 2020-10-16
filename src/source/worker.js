@@ -30,11 +30,11 @@ import type {PluginState} from './rtl_text_plugin';
 export default class Worker {
     self: WorkerGlobalScopeInterface;
     actor: Actor;
-    layerIndexes: { [string]: StyleLayerIndex };
-    availableImages: { [string]: Array<string> };
-    workerSourceTypes: { [string]: Class<WorkerSource> };
-    workerSources: { [string]: { [string]: { [string]: WorkerSource } } };
-    demWorkerSources: { [string]: { [string]: RasterDEMTileWorkerSource } };
+    layerIndexes: {[_: string]: StyleLayerIndex };
+    availableImages: {[_: string]: Array<string> };
+    workerSourceTypes: {[_: string]: Class<WorkerSource> };
+    workerSources: {[_: string]: {[_: string]: {[_: string]: WorkerSource } } };
+    demWorkerSources: {[_: string]: {[_: string]: RasterDEMTileWorkerSource } };
     referrer: ?string;
 
     constructor(self: WorkerGlobalScopeInterface) {
@@ -77,6 +77,12 @@ export default class Worker {
 
     setImages(mapId: string, images: Array<string>, callback: WorkerTileCallback) {
         this.availableImages[mapId] = images;
+        for (const workerSource in this.workerSources[mapId]) {
+            const ws = this.workerSources[mapId][workerSource];
+            for (const source in ws) {
+                ws[source].availableImages = images;
+            }
+        }
         callback();
     }
 
