@@ -12,6 +12,7 @@ import type Texture from '../../render/texture';
 import type Framebuffer from '../../gl/framebuffer';
 import type {PaintProps} from './heatmap_style_layer_properties';
 import type {LayerSpecification} from '../../style-spec/types';
+import ProgramConfiguration from '../../data/program_configuration';
 
 class HeatmapStyleLayer extends StyleLayer {
 
@@ -67,6 +68,14 @@ class HeatmapStyleLayer extends StyleLayer {
 
     hasOffscreenPass() {
         return this.paint.get('heatmap-opacity') !== 0 && this.visibility !== 'none';
+    }
+
+    getProgramIds() {
+        return ['heatmap', 'heatmapTexture'];
+    }
+
+    getProgramConfiguration(zoom: number): ProgramConfiguration {
+        return new ProgramConfiguration(this, zoom);
     }
 }
 

@@ -76,6 +76,7 @@ export default class Marker extends Evented {
     _pitchAlignment: string;
     _rotationAlignment: string;
     _originalTabIndex: ?string; // original tabindex of _element
+    _occlusionTimer: ?TimeoutID;
 
     constructor(options?: Options, legacyOptions?: Options) {
         super();
@@ -439,6 +440,30 @@ export default class Marker extends Evented {
         return this;
     }
 
+    _updateOcclusion() {
+        if (!this._occlusionTimer) {
+            this._occlusionTimer = setTimeout(this._onOcclusionTimer.bind(this), 60);
+        }
+    }
+
+    _onOcclusionTimer() {
+        const tr = this._map.transform;
+        const pos = this._pos ? this._pos.sub(this._transformedOffset()) : null;
+        if (pos && pos.x >= 0 && pos.x < tr.width && pos.y >= 0 && pos.y < tr.height) {
+            // calculate if occluded.
+            const raycastLoc = this._map.unproject(pos);
+            const camera = this._map.getFreeCameraOptions();
+            if (camera.position) {
+                const cameraPos = camera.position.toLngLat();
+                const raycastDistance = cameraPos.distanceTo(raycastLoc);
+                const posDistance = cameraPos.distanceTo(this._lngLat);
+                const occluded = raycastDistance < posDistance * 0.9;
+                this._element.classList.toggle('mapboxgl-marker-occluded', occluded);
+            }
+        }
+        this._occlusionTimer = null;
+    }
+
     _update(e?: {type: 'move' | 'moveend'}) {
         if (!this._map) return;
 
@@ -446,7 +471,9 @@ export default class Marker extends Evented {
             this._lngLat = smartWrap(this._lngLat, this._pos, this._map.transform);
         }
 
-        this._pos = this._map.project(this._lngLat)._add(this._offset);
+        this._pos = this._map.project(this._lngLat)._add(this._transformedOffset());
+
+        if (this._map.transform.elevation) this._updateOcclusion();
 
         let rotation = "";
         if (this._rotationAlignment === "viewport" || this._rotationAlignment === "auto") {
@@ -470,6 +497,20 @@ export default class Marker extends Evented {
         }
 
         DOM.setTransform(this._element, `${anchorTranslate[this._anchor]} translate(${this._pos.x}px, ${this._pos.y}px) ${pitch} ${rotation}`);
+    }
+
+    /**
+     * This is initially added to fix the behavior of default symbols only, in order
+     * to prevent any regression for custom symbols in client code.
+     * @private
+     */
+    _transformedOffset() {
+        if (!this._defaultMarker) return this._offset;
+        const tr = this._map.transform;
+        const offset = this._offset.mult(this._scale);
+        if (this._rotationAlignment === "map") offset._rotate(tr.angle);
+        if (this._pitchAlignment === "map") offset.y *= Math.cos(tr._pitch);
+        return offset;
     }
 
     /**
@@ -570,7 +611,7 @@ export default class Marker extends Evented {
             // to calculate the new marker position.
             // If we don't do this, the marker 'jumps' to the click position
             // creating a jarring UX effect.
-            this._positionDelta = e.point.sub(this._pos).add(this._offset);
+            this._positionDelta = e.point.sub(this._pos).add(this._transformedOffset());
 
             this._pointerdownPos = e.point;
 

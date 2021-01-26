@@ -1,7 +1,7 @@
 // @flow
 
 import assert from 'assert';
-import supported from '@mapbox/mapbox-gl-supported';
+import {supported} from '@mapbox/mapbox-gl-supported';
 
 import {version} from '../package.json';
 import Map from './ui/map';
@@ -25,7 +25,10 @@ import {setRTLTextPlugin, getRTLTextPluginStatus} from './source/rtl_text_plugin
 import WorkerPool from './util/worker_pool';
 import {prewarm, clearPrewarmedResources} from './util/global_worker_pool';
 import {clearTileCache} from './util/tile_request_cache';
+import {WorkerPerformanceUtils} from './util/worker_performance_utils';
 import {PerformanceUtils} from './util/performance';
+import {FreeCameraOptions} from './ui/free_camera';
+import browser from './util/browser';
 
 const exported = {
     version,
@@ -45,6 +48,7 @@ const exported = {
     LngLatBounds,
     Point,
     MercatorCoordinate,
+    FreeCameraOptions,
     Evented,
     config,
     /**
@@ -170,11 +174,38 @@ const exported = {
         clearTileCache(callback);
     },
 
-    workerUrl: ''
+    workerUrl: '',
+
+    /**
+     * Provides an interface for external module bundlers such as Webpack or Rollup to package
+     * mapbox-gl's WebWorker into a separate class and integrate it with the library.
+     *
+     * Takes precedence over `mapboxgl.workerUrl`.
+     *
+     * @var {Object} workerClass
+     * @returns {Object|null} a Class object, an instance of which exposes the `Worker` interface.
+     * @example
+     * import mapboxgl from 'mapbox-gl/dist/mapbox-gl-csp.js'
+     * import MapboxGLWorker from 'mapbox-gl/dist/mapbox-gl-csp-worker.js'
+     *
+     * mapboxgl.workerClass = MapboxGLWorker;
+     */
+    workerClass: null,
+
+    /**
+     * Sets the time used by GL JS internally for all animations. Useful for generating videos from GL JS.
+     * @var {number} time
+     */
+    setNow: browser.setNow,
+
+    /**
+     * Restores the internal animation timing to follow regular computer time (`performance.now()`).
+     */
+    restoreNow: browser.restoreNow
 };
 
 //This gets automatically stripped out in production builds.
-Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPerformanceMetrics});
+Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPerformanceMetrics, getPerformanceMetricsAsync: WorkerPerformanceUtils.getPerformanceMetricsAsync});
 
 /**
  * The version of Mapbox GL JS in use as specified in `package.json`,

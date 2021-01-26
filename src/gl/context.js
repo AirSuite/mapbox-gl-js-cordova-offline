@@ -67,6 +67,8 @@ class Context {
     extRenderToTextureHalfFloat: any;
     extTimerQuery: any;
 
+    extTextureFilterAnisotropicForceOff: boolean;
+
     constructor(gl: WebGLRenderingContext) {
         this.gl = gl;
         this.extVertexArrayObject = this.gl.getExtension('OES_vertex_array_object');
@@ -111,6 +113,7 @@ class Context {
         if (this.extTextureFilterAnisotropic) {
             this.extTextureFilterAnisotropicMax = gl.getParameter(this.extTextureFilterAnisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
         }
+        this.extTextureFilterAnisotropicForceOff = false;
 
         this.extTextureHalfFloat = gl.getExtension('OES_texture_half_float');
         if (this.extTextureHalfFloat) {
@@ -211,7 +214,7 @@ class Context {
         return new Framebuffer(this, width, height, hasDepth);
     }
 
-    clear({color, depth}: ClearArgs) {
+    clear({color, depth, stencil}: ClearArgs) {
         const gl = this.gl;
         let mask = 0;
 
@@ -232,12 +235,11 @@ class Context {
             this.depthMask.set(true);
         }
 
-        // See note in Painter#clearStencil: implement this the easy way once GPU bug/workaround is fixed upstream
-        // if (typeof stencil !== 'undefined') {
-        //     mask |= gl.STENCIL_BUFFER_BIT;
-        //     this.clearStencil.set(stencil);
-        //     this.stencilMask.set(0xFF);
-        // }
+        if (typeof stencil !== 'undefined') {
+            mask |= gl.STENCIL_BUFFER_BIT;
+            this.clearStencil.set(stencil);
+            this.stencilMask.set(0xFF);
+        }
 
         gl.clear(mask);
     }

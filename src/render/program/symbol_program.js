@@ -78,6 +78,8 @@ export type symbolTextAndIconUniformsType = {|
     'u_is_halo': Uniform1i
 |};
 
+export type SymbolDefinesType = 'PITCH_WITH_MAP_TERRAIN';
+
 const symbolIconUniforms = (context: Context, locations: UniformLocations): SymbolIconUniformsType => ({
     'u_is_size_zoom_constant': new Uniform1i(context, locations.u_is_size_zoom_constant),
     'u_is_size_feature_constant': new Uniform1i(context, locations.u_is_size_feature_constant),
@@ -190,12 +192,12 @@ const symbolSDFUniformValues = (
     texSize: [number, number],
     isHalo: boolean
 ): UniformValues<SymbolSDFUniformsType> => {
-    const transform = painter.transform;
+    const {cameraToCenterDistance, _pitch} = painter.transform;
 
     return extend(symbolIconUniformValues(functionType, size,
         rotateInShader, pitchWithMap, painter, matrix, labelPlaneMatrix,
         glCoordMatrix, isText, texSize), {
-        'u_gamma_scale': (pitchWithMap ? Math.cos(transform._pitch) * transform.cameraToCenterDistance : 1),
+        'u_gamma_scale': pitchWithMap ? cameraToCenterDistance * Math.cos(painter.terrain ? 0 : _pitch) : 1,
         'u_device_pixel_ratio': browser.devicePixelRatio,
         'u_is_halo': +isHalo
     });
