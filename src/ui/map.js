@@ -112,7 +112,7 @@ const defaultMaxZoom = 22;
 
 // the default values, but also the valid range
 const defaultMinPitch = 0;
-const defaultMaxPitch = 85;
+const defaultMaxPitch = 135;
 
 const defaultOptions = {
     center: [0, 0],
