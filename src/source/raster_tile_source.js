@@ -9,7 +9,7 @@ import {postTurnstileEvent} from '../util/mapbox';
 import TileBounds from './tile_bounds';
 import Texture from '../render/texture';
 import browser from '../util/browser';
-
+import webpSupported from '../util/webp_supported';
 import {cacheEntryPossiblyAdded} from '../util/tile_request_cache';
 
 import type {Source} from './source';
