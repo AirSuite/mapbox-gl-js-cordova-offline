@@ -22,7 +22,7 @@ import type {Cancelable} from '../types/cancelable';
 import type {
     RasterSourceSpecification,
     RasterDEMSourceSpecification
-} from '../style-spec/types';
+} from '../style-spec/types.js';
 
 class RasterTileSource extends Evented implements Source {
     type: 'raster' | 'raster-dem';
@@ -179,9 +179,7 @@ class RasterTileSource extends Evented implements Source {
                 tile.state = 'errored';
                 callback(err);
             } else if (img) {
-                if (this.map._refreshExpiredTiles) tile.setExpiryData(img);
-                delete (img: any).cacheControl;
-                delete (img: any).expires;
+                if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
 
                 const context = this.map.painter.context;
                 const gl = context.gl;

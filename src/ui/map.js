@@ -1,55 +1,56 @@
 // @flow
 
 import {version} from '../../package.json';
-import {extend, bindAll, warnOnce, uniqueId} from '../util/util';
-import browser from '../util/browser';
-import window from '../util/window';
+import {extend, bindAll, warnOnce, uniqueId} from '../util/util.js';
+import browser from '../util/browser.js';
+import window from '../util/window.js';
 const {HTMLImageElement, HTMLElement, ImageBitmap} = window;
-import DOM from '../util/dom';
-import {getImage, getJSON, ResourceType} from '../util/ajax';
-import {RequestManager, getMapSessionAPI, postMapLoadEvent, AUTH_ERR_MSG} from '../util/mapbox';
-import Style from '../style/style';
-import EvaluationParameters from '../style/evaluation_parameters';
-import Painter from '../render/painter';
-import Transform from '../geo/transform';
-import Hash from './hash';
-import HandlerManager from './handler_manager';
-import Camera from './camera';
-import LngLat from '../geo/lng_lat';
-import LngLatBounds from '../geo/lng_lat_bounds';
+import DOM from '../util/dom.js';
+import {getImage, getJSON, ResourceType} from '../util/ajax.js';
+import {RequestManager, getMapSessionAPI, postMapLoadEvent, AUTH_ERR_MSG, storeAuthState, removeAuthState} from '../util/mapbox.js';
+import Style from '../style/style.js';
+import EvaluationParameters from '../style/evaluation_parameters.js';
+import Painter from '../render/painter.js';
+import Transform from '../geo/transform.js';
+import Hash from './hash.js';
+import HandlerManager from './handler_manager.js';
+import Camera from './camera.js';
+import LngLat from '../geo/lng_lat.js';
+import LngLatBounds from '../geo/lng_lat_bounds.js';
 import Point from '@mapbox/point-geometry';
-import AttributionControl from './control/attribution_control';
-import LogoControl from './control/logo_control';
+import AttributionControl from './control/attribution_control.js';
+import LogoControl from './control/logo_control.js';
 import {supported} from '@mapbox/mapbox-gl-supported';
-import {RGBAImage} from '../util/image';
-import {Event, ErrorEvent} from '../util/evented';
-import {MapMouseEvent} from './events';
-import TaskQueue from '../util/task_queue';
-import webpSupported from '../util/webp_supported';
-import {PerformanceMarkers, PerformanceUtils} from '../util/performance';
+import {RGBAImage} from '../util/image.js';
+import {Event, ErrorEvent} from '../util/evented.js';
+import {MapMouseEvent} from './events.js';
+import TaskQueue from '../util/task_queue.js';
+import webpSupported from '../util/webp_supported.js';
+import {PerformanceMarkers, PerformanceUtils} from '../util/performance.js';
 
-import {setCacheLimits} from '../util/tile_request_cache';
+import {setCacheLimits} from '../util/tile_request_cache.js';
 
 import type {PointLike} from '@mapbox/point-geometry';
-import type {RequestTransformFunction} from '../util/mapbox';
-import type {LngLatLike} from '../geo/lng_lat';
-import type {LngLatBoundsLike} from '../geo/lng_lat_bounds';
-import type {StyleOptions, StyleSetterOptions} from '../style/style';
-import type {MapEvent, MapDataEvent} from './events';
-import type {CustomLayerInterface} from '../style/style_layer/custom_style_layer';
-import type {StyleImageInterface, StyleImageMetadata} from '../style/style_image';
+import type {RequestTransformFunction} from '../util/mapbox.js';
+import type {LngLatLike} from '../geo/lng_lat.js';
+import type {LngLatBoundsLike} from '../geo/lng_lat_bounds.js';
+import type {StyleOptions, StyleSetterOptions} from '../style/style.js';
+import type {MapEvent, MapDataEvent} from './events.js';
+import type {CustomLayerInterface} from '../style/style_layer/custom_style_layer.js';
+import type {StyleImageInterface, StyleImageMetadata} from '../style/style_image.js';
+import Terrain from '../style/terrain.js';
 
-import type ScrollZoomHandler from './handler/scroll_zoom';
-import type BoxZoomHandler from './handler/box_zoom';
-import type {TouchPitchHandler} from './handler/touch_zoom_rotate';
-import type DragRotateHandler from './handler/shim/drag_rotate';
-import type DragPanHandler, {DragPanOptions} from './handler/shim/drag_pan';
-import type KeyboardHandler from './handler/keyboard';
-import type DoubleClickZoomHandler from './handler/shim/dblclick_zoom';
-import type TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate';
-import defaultLocale from './default_locale';
-import type {TaskID} from '../util/task_queue';
-import type {Cancelable} from '../types/cancelable';
+import type ScrollZoomHandler from './handler/scroll_zoom.js';
+import type BoxZoomHandler from './handler/box_zoom.js';
+import type {TouchPitchHandler} from './handler/touch_zoom_rotate.js';
+import type DragRotateHandler from './handler/shim/drag_rotate.js';
+import type DragPanHandler, {DragPanOptions} from './handler/shim/drag_pan.js';
+import type KeyboardHandler from './handler/keyboard.js';
+import type DoubleClickZoomHandler from './handler/shim/dblclick_zoom.js';
+import type TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate.js';
+import defaultLocale from './default_locale.js';
+import type {TaskID} from '../util/task_queue.js';
+import type {Cancelable} from '../types/cancelable.js';
 import type {
     LayerSpecification,
     FilterSpecification,
@@ -57,7 +58,7 @@ import type {
     LightSpecification,
     TerrainSpecification,
     SourceSpecification
-} from '../style-spec/types';
+} from '../style-spec/types.js';
 
 type ControlPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 /* eslint-disable no-use-before-define */
@@ -104,6 +105,7 @@ type MapOptions = {
     maxTileCacheSize?: number,
     transformRequest?: RequestTransformFunction,
     accessToken: string,
+    testMode: ?boolean,
     locale?: Object
 };
 
@@ -247,12 +249,14 @@ const defaultOptions = {
  *   font-family for locally overriding generation of all glyphs. Font settings from the map's style will be ignored, except for font-weight keywords (light/regular/medium/bold).
  *   If set, this option override the setting in localIdeographFontFamily
  * @param {RequestTransformFunction} [options.transformRequest=null] A callback run before the Map makes a request for an external URL. The callback can be used to modify the url, set headers, or set the credentials property for cross-origin requests.
- *   Expected to return an object with a `url` property and optionally `headers` and `credentials` properties.
+ *   Expected to return a {@link RequestParameters} object with a `url` property and optionally `headers` and `credentials` properties.
  * @param {boolean} [options.collectResourceTiming=false] If `true`, Resource Timing API information will be collected for requests made by GeoJSON and Vector Tile web workers (this information is normally inaccessible from the main Javascript thread). Information will be returned in a `resourceTiming` property of relevant `data` events.
  * @param {number} [options.fadeDuration=300] Controls the duration of the fade-in/fade-out animation for label collisions, in milliseconds. This setting affects all symbol layers. This setting does not affect the duration of runtime styling transitions or raster tile cross-fading.
  * @param {boolean} [options.crossSourceCollisions=true] If `true`, symbols from multiple sources can collide with each other during collision detection. If `false`, collision detection is run separately for the symbols in each source.
  * @param {string} [options.accessToken=null] If specified, map will use this token instead of the one defined in mapboxgl.accessToken.
- * @param {Object} [options.locale=null] A patch to apply to the default localization table for UI strings, e.g. control tooltips. The `locale` object maps namespaced UI string IDs to translated strings in the target language; see `src/ui/default_locale.js` for an example with all supported string IDs. The object may specify all UI strings (thereby adding support for a new translation) or only a subset of strings (thereby patching the default translation table).
+ * @param {Object} [options.locale=null] A patch to apply to the default localization table for UI strings, e.g. control tooltips. The `locale` object maps namespaced UI string IDs to translated strings in the target language;
+ *  see `src/ui/default_locale.js` for an example with all supported string IDs. The object may specify all UI strings (thereby adding support for a new translation) or only a subset of strings (thereby patching the default translation table).
+ * @param {boolean} [options.testMode=false] Silences errors and warnings generated due to an invalid accessToken, useful when using the library to write unit tests.
  * @example
  * var map = new mapboxgl.Map({
  *   container: 'map',
@@ -284,6 +288,7 @@ class Map extends Camera {
     _controlPositions: {[_: string]: HTMLElement};
     _interactive: ?boolean;
     _showTileBoundaries: ?boolean;
+    _showTerrainWireframe: ?boolean;
     _showQueryGeometry: ?boolean;
     _showCollisionBoxes: ?boolean;
     _showPadding: ?boolean;
@@ -325,6 +330,7 @@ class Map extends Camera {
     _removed: boolean;
     _speedIndexTiming: boolean;
     _clickTolerance: number;
+    _silenceAuthErrors: boolean;
 
     /**
      * The map's {@link ScrollZoomHandler}, which implements zooming in and out with a scroll wheel or trackpad.
@@ -419,7 +425,8 @@ class Map extends Camera {
         this._locale = extend({}, defaultLocale, options.locale);
         this._clickTolerance = options.clickTolerance;
 
-        this._requestManager = new RequestManager(options.transformRequest, options.accessToken);
+        this._requestManager = new RequestManager(options.transformRequest, options.accessToken, options.testMode);
+        this._silenceAuthErrors = !!options.testMode;
 
         if (typeof options.container === 'string') {
             this._container = window.document.getElementById(options.container);
@@ -638,6 +645,7 @@ class Map extends Camera {
     /**
      * Returns the map's geographical bounds. When the bearing or pitch is non-zero, the visible region is not
      * an axis-aligned rectangle, and the result is the smallest bounds that encompasses the visible region.
+     * If a padding is set on the map, the bounds returned are for the inset.
      * @returns {LngLatBounds} The geographical bounds of the map as {@link LngLatBounds}.
      * @example
      * var bounds = map.getBounds();
@@ -1188,11 +1196,12 @@ class Map extends Camera {
      * [Feature objects](https://tools.ietf.org/html/rfc7946#section-3.2)
      * representing visible features that satisfy the query parameters.
      *
-     * @param {PointLike|Array<PointLike>} [geometry] - The geometry of the query region:
-     * either a single point or southwest and northeast points describing a bounding box.
+     * @param {PointLike|Array<PointLike>} [geometry] - The geometry of the query region in pixels:
+     * either a single point or bottom left and top right points describing a bounding box, where the origin is at the top left.
      * Omitting this parameter (i.e. calling {@link Map#queryRenderedFeatures} with zero arguments,
-     * or with only a `options` argument) is equivalent to passing a bounding box encompassing the entire
+     * or with only an `options` argument) is equivalent to passing a bounding box encompassing the entire
      * map viewport.
+     * Only values within the existing viewport are supported.
      * @param {Object} [options] Options object.
      * @param {Array<string>} [options.layers] An array of [style layer IDs](https://docs.mapbox.com/mapbox-gl-js/style-spec/#layer-id) for the query to inspect.
      *   Only features within these layers will be returned. If this parameter is undefined, all layers will be checked.
@@ -1780,7 +1789,9 @@ class Map extends Camera {
      * @see [Add an icon to the map](https://www.mapbox.com/mapbox-gl-js/example/add-image/)
      */
     loadImage(url: string, callback: Function) {
-        getImage(this._requestManager.transformRequest(url, ResourceType.Image), callback);
+        getImage(this._requestManager.transformRequest(url, ResourceType.Image), (err, img) => {
+            callback(err, img instanceof HTMLImageElement ? browser.getImageData(img) : img);
+        });
     }
 
     /**
@@ -2148,6 +2159,15 @@ class Map extends Camera {
     }
 
     /**
+     * Returns the terrain specification or `null` if terrain isn't set on the map.
+     *
+     * @returns {Object} terrain Terrain specification properties of the style.
+     */
+    getTerrain(): Terrain | null {
+        return this.style.getTerrain();
+    }
+
+    /**
      * Sets the `state` of a feature.
      * A feature's `state` is a set of user-defined key-value pairs that are assigned to a feature at runtime.
      * When using this method, the `state` object is merged with any existing key-value pairs in the feature's state.
@@ -2162,7 +2182,7 @@ class Map extends Camera {
      *
      * @param {Object} feature Feature identifier. Feature objects returned from
      * {@link Map#queryRenderedFeatures} or event handlers can be used as feature identifiers.
-     * @param {string | number} feature.id Unique id of the feature.
+     * @param {number | string} feature.id Unique id of the feature. Can be an integer or a string, but supports string values only when the [`promoteId`](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/#vector-promoteId) option has been applied to the source or the string can be cast to an integer.
      * @param {string} feature.source The id of the vector or GeoJSON source for the feature.
      * @param {string} [feature.sourceLayer] (optional) *For vector tile sources, `sourceLayer` is required.*
      * @param {Object} state A set of key-value pairs. The values should be valid JSON types.
@@ -2194,16 +2214,16 @@ class Map extends Camera {
     // eslint-disable-next-line jsdoc/require-returns
     /**
      * Removes the `state` of a feature, setting it back to the default behavior.
-     * If only a `target.source` is specified, it will remove the state for all features from that source.
-     * If `target.id` is also specified, it will remove all keys for that feature's state.
+     * If only a `feature.source` is specified, it will remove the state for all features from that source.
+     * If `feature.id` is also specified, it will remove all keys for that feature's state.
      * If `key` is also specified, it removes only that key from that feature's state.
      * Features are identified by their `feature.id` attribute, which can be any number or string.
      *
-     * @param {Object} target Identifier of where to remove state. It can be a source, a feature, or a specific key of feature.
+     * @param {Object} feature Identifier of where to remove state. It can be a source, a feature, or a specific key of feature.
      * Feature objects returned from {@link Map#queryRenderedFeatures} or event handlers can be used as feature identifiers.
-     * @param {string | number} target.id (optional) Unique id of the feature. Optional if key is not specified.
-     * @param {string} target.source The id of the vector or GeoJSON source for the feature.
-     * @param {string} [target.sourceLayer] (optional) *For vector tile sources, `sourceLayer` is required.*
+     * @param {number | string} feature.id Unique id of the feature. Can be an integer or a string, but supports string values only when the [`promoteId`](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/#vector-promoteId) option has been applied to the source or the string can be cast to an integer.
+     * @param {string} feature.source The id of the vector or GeoJSON source for the feature.
+     * @param {string} [feature.sourceLayer] (optional) *For vector tile sources, `sourceLayer` is required.*
      * @param {string} key (optional) The key in the feature state to reset.
      *
      * @example
@@ -2238,8 +2258,8 @@ class Map extends Camera {
      * });
      *
     */
-    removeFeatureState(target: { source: string; sourceLayer?: string; id?: string | number; }, key?: string) {
-        this.style.removeFeatureState(target, key);
+    removeFeatureState(feature: { source: string; sourceLayer?: string; id?: string | number; }, key?: string) {
+        this.style.removeFeatureState(feature, key);
         return this._update();
     }
 
@@ -2252,7 +2272,7 @@ class Map extends Camera {
      *
      * @param {Object} feature Feature identifier. Feature objects returned from
      * {@link Map#queryRenderedFeatures} or event handlers can be used as feature identifiers.
-     * @param {string | number} feature.id Unique id of the feature.
+     * @param {number | string} feature.id Unique id of the feature. Can be an integer or a string, but supports string values only when the [`promoteId`](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/#vector-promoteId) option has been applied to the source or the string can be cast to an integer.
      * @param {string} feature.source The id of the vector or GeoJSON source for the feature.
      * @param {string} [feature.sourceLayer] (optional) *For vector tile sources, `sourceLayer` is required.*
      *
@@ -2394,6 +2414,8 @@ class Map extends Camera {
             this.fire(new ErrorEvent(new Error('Failed to initialize WebGL')));
             return;
         }
+
+        storeAuthState(gl, true);
 
         this.painter = new Painter(gl, this.transform);
         this.on('data', (event: MapDataEvent) => {
@@ -2550,6 +2572,7 @@ class Map extends Camera {
         // Actually draw
         this.painter.render(this.style, {
             showTileBoundaries: this.showTileBoundaries,
+            showTerrainWireframe: this.showTerrainWireframe,
             showOverdrawInspector: this._showOverdrawInspector,
             showQueryGeometry: !!this._showQueryGeometry,
             rotating: this.isRotating(),
@@ -2622,9 +2645,6 @@ class Map extends Camera {
             this._triggerFrame(false);
             if (!this.isMoving() && this.loaded()) {
                 this.fire(new Event('idle'));
-                if (this._isInitialLoad) {
-                    this._authenticate();
-                }
                 this._isInitialLoad = false;
                 // check the options to see if need to calculate the speed index
                 if (this.speedIndexTiming) {
@@ -2637,6 +2657,8 @@ class Map extends Camera {
 
         if (this._loaded && !this._fullyLoaded && !somethingDirty) {
             this._fullyLoaded = true;
+            // Following line is billing related code. Do not change. See LICENSE.txt
+            this._authenticate();
             PerformanceUtils.mark(PerformanceMarkers.fullLoad);
         }
 
@@ -2661,13 +2683,16 @@ class Map extends Camera {
             if (err) {
                 // throwing an error here will cause the callback to be called again unnecessarily
                 if (err.message === AUTH_ERR_MSG || err.status === 401) {
-                    console.error('Error: A valid Mapbox access token is required to use Mapbox GL JS. To create an account or a new access token, visit https://account.mapbox.com/');
-                    browser.setErrorState();
                     const gl = this.painter.context.gl;
+                    storeAuthState(gl, false);
                     if (this._logoControl instanceof LogoControl) {
                         this._logoControl._updateLogo();
                     }
                     if (gl) gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+                    if (!this._silenceAuthErrors) {
+                        this.fire(new ErrorEvent(new Error('A valid Mapbox access token is required to use Mapbox GL JS. To create an account or a new access token, visit https://account.mapbox.com/')));
+                    }
                 }
             }
         });
@@ -2763,14 +2788,15 @@ class Map extends Camera {
         this._container.classList.remove('mapboxgl-map');
 
         PerformanceUtils.clearMetrics();
-
+        removeAuthState(this.painter.context.gl);
         this._removed = true;
         this.fire(new Event('remove'));
     }
 
     /**
      * Trigger the rendering of a single frame. Use this method with custom layers to
-     * repaint the map when the layer changes. Calling this multiple times before the
+     * repaint the map when the layer's properties or properties associated with the
+     * layer's source change. Calling this multiple times before the
      * next frame is rendered will still result in only a single frame being rendered.
      * @example
      * map.triggerRepaint();
@@ -2825,6 +2851,26 @@ class Map extends Camera {
     set showTileBoundaries(value: boolean) {
         if (this._showTileBoundaries === value) return;
         this._showTileBoundaries = value;
+        this._update();
+    }
+
+    /**
+     * Gets and sets a Boolean indicating whether the map will render a wireframe
+     * on top of the displayed terrain. Useful for debugging.
+     *
+     * The wireframe is always red and is drawn only when terrain is active.
+     *
+     * @name showTerrainWireframe
+     * @type {boolean}
+     * @instance
+     * @memberof Map
+     * @example
+     * map.showTerrainWireframe = true;
+     */
+    get showTerrainWireframe(): boolean { return !!this._showTerrainWireframe; }
+    set showTerrainWireframe(value: boolean) {
+        if (this._showTerrainWireframe === value) return;
+        this._showTerrainWireframe = value;
         this._update();
     }
 

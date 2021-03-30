@@ -1,15 +1,15 @@
 // @flow
 
-import {Event, Evented} from '../../util/evented';
-import DOM from '../../util/dom';
-import window from '../../util/window';
-import {extend, bindAll, warnOnce} from '../../util/util';
+import {Event, Evented} from '../../util/evented.js';
+import DOM from '../../util/dom.js';
+import window from '../../util/window.js';
+import {extend, bindAll, warnOnce} from '../../util/util.js';
 import assert from 'assert';
-import LngLat from '../../geo/lng_lat';
-import Marker from '../marker';
+import LngLat from '../../geo/lng_lat.js';
+import Marker from '../marker.js';
 
-import type Map from '../map';
-import type {AnimationOptions, CameraOptions} from '../camera';
+import type Map from '../map.js';
+import type {AnimationOptions, CameraOptions} from '../camera.js';
 
 type Options = {
     positionOptions?: PositionOptions,
@@ -61,6 +61,7 @@ let noTimeout = false;
 /**
  * A `GeolocateControl` control provides a button that uses the browser's geolocation
  * API to locate the user on the map.
+ * Add this control to a map using {@link Map#addControl}.
  *
  * Not all browsers support geolocation,
  * and some users may disable the feature. Geolocation support for modern
@@ -311,8 +312,8 @@ class GeolocateControl extends Evented {
         assert(this._circleElement);
         const y = this._map._container.clientHeight / 2;
         const a = this._map.unproject([0, y]);
-        const b = this._map.unproject([1, y]);
-        const metersPerPixel = a.distanceTo(b);
+        const b = this._map.unproject([100, y]);
+        const metersPerPixel = a.distanceTo(b) / 100;
         const circleDiameter = Math.ceil(2.0 * this._accuracy / metersPerPixel);
         this._circleElement.style.width = `${circleDiameter}px`;
         this._circleElement.style.height = `${circleDiameter}px`;

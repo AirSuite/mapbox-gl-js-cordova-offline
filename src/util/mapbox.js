@@ -13,17 +13,17 @@
 * and the Mapbox Terms of Service are available at https://www.mapbox.com/tos/
 ******************************************************************************/
 
-import config from './config';
-import window from './window';
-import webpSupported from './webp_supported';
-import {createSkuToken, SKU_ID} from './sku_token';
+import config from './config.js';
+import window from './window.js';
+import webpSupported from './webp_supported.js';
+import {createSkuToken, SKU_ID} from './sku_token.js';
 import {version as sdkVersion} from '../../package.json';
-import {uuid, validateUuid, storageAvailable, b64DecodeUnicode, b64EncodeUnicode, warnOnce, extend} from './util';
-import {postData, ResourceType, getData} from './ajax';
+import {uuid, validateUuid, storageAvailable, b64DecodeUnicode, b64EncodeUnicode, warnOnce, extend} from './util.js';
+import {postData, ResourceType, getData} from './ajax.js';
 
-import type {RequestParameters} from './ajax';
-import type {Cancelable} from '../types/cancelable';
-import type {TileJSON} from '../types/tilejson';
+import type {RequestParameters} from './ajax.js';
+import type {Cancelable} from '../types/cancelable.js';
+import type {TileJSON} from '../types/tilejson.js';
 
 type ResourceTypeEnum = $Keys<typeof ResourceType>;
 export type RequestTransformFunction = (url: string, resourceType?: ResourceTypeEnum) => RequestParameters;
@@ -42,10 +42,12 @@ export class RequestManager {
     _skuTokenExpiresAt: number;
     _transformRequestFn: ?RequestTransformFunction;
     _customAccessToken: ?string;
+    _silenceAuthErrors: boolean;
 
-    constructor(transformRequestFn?: RequestTransformFunction, customAccessToken?: string) {
+    constructor(transformRequestFn?: RequestTransformFunction, customAccessToken?: string, silenceAuthErrors: ?boolean) {
         this._transformRequestFn = transformRequestFn;
         this._customAccessToken = customAccessToken;
+        this._silenceAuthErrors = !!silenceAuthErrors;
         this._createSkuToken();
     }
 
@@ -196,13 +198,15 @@ export class RequestManager {
         if (!config.REQUIRE_ACCESS_TOKEN) return formatUrl(urlObject);
 
         accessToken = accessToken || config.ACCESS_TOKEN;
-        if (!accessToken)
-            throw new Error(`An API access token is required to use Mapbox GL. ${help}`);
-        if (accessToken[0] === 's')
-            throw new Error(`Use a public access token (pk.*) with Mapbox GL, not a secret access token (sk.*). ${help}`);
+        if (!this._silenceAuthErrors) {
+            if (!accessToken)
+                throw new Error(`An API access token is required to use Mapbox GL. ${help}`);
+            if (accessToken[0] === 's')
+                throw new Error(`Use a public access token (pk.*) with Mapbox GL, not a secret access token (sk.*). ${help}`);
+        }
 
         urlObject.params = urlObject.params.filter((d) => d.indexOf('access_token') === -1);
-        urlObject.params.push(`access_token=${accessToken}`);
+        urlObject.params.push(`access_token=${accessToken || ''}`);
         return formatUrl(urlObject);
     }
 }
@@ -411,7 +415,7 @@ export class MapLoadEvent extends TelemetryEvent {
             if (customAccessToken || config.ACCESS_TOKEN) {
                 this.queueRequest({id: mapId, timestamp: Date.now()}, customAccessToken);
             } else {
-                this.errorCb(new Error('A valid Mapbox access token is required to use Mapbox GL JS. To create an account or a new access token, visit https://account.mapbox.com/'));
+                this.errorCb(new Error(AUTH_ERR_MSG));
             }
         }
     }
@@ -573,6 +577,23 @@ export const postMapLoadEvent = mapLoadEvent_.postMapLoadEvent.bind(mapLoadEvent
 
 const mapSessionAPI_ = new MapSessionAPI();
 export const getMapSessionAPI = mapSessionAPI_.getSessionAPI.bind(mapSessionAPI_);
+
+const authenticatedMaps = new Set();
+export function storeAuthState(gl: WebGLRenderingContext, state: boolean) {
+    if (state) {
+        authenticatedMaps.add(gl);
+    } else {
+        authenticatedMaps.delete(gl);
+    }
+}
+
+export function isMapAuthenticated(gl: WebGLRenderingContext): boolean {
+    return authenticatedMaps.has(gl);
+}
+
+export function removeAuthState(gl: WebGLRenderingContext) {
+    authenticatedMaps.delete(gl);
+}
 
 /***** END WARNING - REMOVAL OR MODIFICATION OF THE
 PRECEDING CODE VIOLATES THE MAPBOX TERMS OF SERVICE  ******/

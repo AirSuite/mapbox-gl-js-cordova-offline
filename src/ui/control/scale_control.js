@@ -1,9 +1,9 @@
 // @flow
 
-import DOM from '../../util/dom';
-import {extend, bindAll} from '../../util/util';
+import DOM from '../../util/dom.js';
+import {extend, bindAll} from '../../util/util.js';
 
-import type Map from '../map';
+import type Map from '../map.js';
 
 type Unit = 'imperial' | 'metric' | 'nautical';
 
@@ -19,6 +19,7 @@ const defaultOptions: Options = {
 
 /**
  * A `ScaleControl` control displays the ratio of a distance on the map to the corresponding distance on the ground.
+ * Add this control to a map using {@link Map#addControl}.
  *
  * @implements {IControl}
  * @param {Object} [options]

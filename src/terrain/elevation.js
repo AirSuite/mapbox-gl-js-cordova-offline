@@ -1,15 +1,15 @@
 // @flow
 
-import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate';
-import DEMData from '../data/dem_data';
-import SourceCache from '../source/source_cache';
-import {number as interpolate} from '../style-spec/util/interpolate';
-import EXTENT from '../data/extent';
+import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate.js';
+import DEMData from '../data/dem_data.js';
+import SourceCache from '../source/source_cache.js';
+import {number as interpolate} from '../style-spec/util/interpolate.js';
+import EXTENT from '../data/extent.js';
 import {vec3} from 'gl-matrix';
 import Point from '@mapbox/point-geometry';
-import {OverscaledTileID} from '../source/tile_id';
+import {OverscaledTileID} from '../source/tile_id.js';
 
-import type Tile from '../source/tile';
+import type Tile from '../source/tile.js';
 
 /**
  * Provides access to elevation data from raster-dem source cache.
@@ -104,6 +104,17 @@ export class Elevation {
             yOffset = yOffset % 1;
         }
         return {min: this.exaggeration() * tree.minimums[index], max: this.exaggeration() * tree.maximums[index]};
+    }
+
+    /**
+     * Get elevation minimum below MSL for the visible tiles. This function accounts
+     * for terrain exaggeration and is conservative based on the maximum DEM error,
+     * do not expect accurate values from this function.
+     * If no negative elevation is visible, this function returns 0.
+     * @returns {number} The min elevation below sea level of all visible tiles.
+     */
+    getMinElevationBelowMSL(): number {
+        throw new Error('Pure virtual method called.');
     }
 
     /**

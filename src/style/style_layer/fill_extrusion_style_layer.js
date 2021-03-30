@@ -1,23 +1,22 @@
 // @flow
 
-import StyleLayer from '../style_layer';
-import FillExtrusionBucket, {ELEVATION_SCALE} from '../../data/bucket/fill_extrusion_bucket';
-import {polygonIntersectsPolygon, polygonIntersectsMultiPolygon} from '../../util/intersection_tests';
-import {translateDistance, tilespaceTranslate} from '../query_utils';
-import properties from './fill_extrusion_style_layer_properties';
-import {Transitionable, Transitioning, PossiblyEvaluated} from '../properties';
+import StyleLayer from '../style_layer.js';
+import FillExtrusionBucket, {ELEVATION_SCALE} from '../../data/bucket/fill_extrusion_bucket.js';
+import {polygonIntersectsPolygon, polygonIntersectsMultiPolygon} from '../../util/intersection_tests.js';
+import {translateDistance, tilespaceTranslate} from '../query_utils.js';
+import properties from './fill_extrusion_style_layer_properties.js';
+import {Transitionable, Transitioning, PossiblyEvaluated} from '../properties.js';
 import Point from '@mapbox/point-geometry';
-import ProgramConfiguration from '../../data/program_configuration';
-import {vec2, vec3} from 'gl-matrix';
+import ProgramConfiguration from '../../data/program_configuration.js';
+import {vec2, vec4} from 'gl-matrix';
 
-import type {FeatureState} from '../../style-spec/expression';
-import type {BucketParameters} from '../../data/bucket';
-import type {PaintProps} from './fill_extrusion_style_layer_properties';
-import type Transform from '../../geo/transform';
-import type {LayerSpecification} from '../../style-spec/types';
-import type {TilespaceQueryGeometry} from '../query_geometry';
-import type {DEMSampler} from '../../terrain/elevation';
-import type {vec4} from 'gl-matrix';
+import type {FeatureState} from '../../style-spec/expression/index.js';
+import type {BucketParameters} from '../../data/bucket.js';
+import type {PaintProps} from './fill_extrusion_style_layer_properties.js';
+import type Transform from '../../geo/transform.js';
+import type {LayerSpecification} from '../../style-spec/types.js';
+import type {TilespaceQueryGeometry} from '../query_geometry.js';
+import type {DEMSampler} from '../../terrain/elevation.js';
 
 class FillExtrusionStyleLayer extends StyleLayer {
     _transitionablePaint: Transitionable<PaintProps>;
@@ -232,12 +231,12 @@ function projectExtrusion2D(geometry: Array<Array<Point>>, zBase: number, zTop: 
             const baseX = sX + baseXZ;
             const baseY = sY + baseYZ;
             const baseZ = sZ + baseZZ;
-            const baseW = sW + baseWZ;
+            const baseW = Math.max(sW + baseWZ, 0.00001);
 
             const topX = sX + topXZ;
             const topY = sY + topYZ;
             const topZ = sZ + topZZ;
-            const topW = sW + topWZ;
+            const topW = Math.max(sW + topWZ, 0.00001);
 
             const b = new Point(baseX / baseW, baseY / baseW);
             b.z = baseZ / baseW;
@@ -253,7 +252,7 @@ function projectExtrusion2D(geometry: Array<Array<Point>>, zBase: number, zTop: 
     return [projectedBase, projectedTop];
 }
 
-/**
+/*
  * Projects a fill extrusion vertices to screen while accounting for terrain.
  * This and its dependent functions are ported directly from `fill_extrusion.vertex.glsl`
  * with a few co-ordinate space differences.
@@ -265,7 +264,7 @@ function projectExtrusion2D(geometry: Array<Array<Point>>, zBase: number, zTop: 
 function projectExtrusion3D(geometry: Array<Array<Point>>, zBase: number, zTop: number, translation: Point, m: Float32Array, demSampler: DEMSampler, centroid: vec2, exaggeration: number, lat: number) {
     const projectedBase = [];
     const projectedTop = [];
-    const v = [0, 0, 0];
+    const v = [0, 0, 0, 1];
 
     for (const r of geometry) {
         const ringBase = [];
@@ -278,12 +277,18 @@ function projectExtrusion3D(geometry: Array<Array<Point>>, zBase: number, zTop: 
             v[0] = x;
             v[1] = y;
             v[2] = heightOffset.base;
-            const base = toPoint(vec3.transformMat4(v, v, m));
+            v[3] = 1;
+            vec4.transformMat4(v, v, m);
+            v[3] = Math.max(v[3], 0.00001);
+            const base = toPoint([v[0] / v[3], v[1] / v[3], v[2] / v[3]]);
 
             v[0] = x;
             v[1] = y;
             v[2] = heightOffset.top;
-            const top = toPoint(vec3.transformMat4(v, v, m));
+            v[3] = 1;
+            vec4.transformMat4(v, v, m);
+            v[3] = Math.max(v[3], 0.00001);
+            const top = toPoint([v[0] / v[3], v[1] / v[3], v[2] / v[3]]);
 
             ringBase.push(base);
             ringTop.push(top);
@@ -294,7 +299,7 @@ function projectExtrusion3D(geometry: Array<Array<Point>>, zBase: number, zTop: 
     return [projectedBase, projectedTop];
 }
 
-function toPoint(v: vec3): Point {
+function toPoint(v: vec4): Point {
     const p = new Point(v[0], v[1]);
     p.z = v[2];
     return p;

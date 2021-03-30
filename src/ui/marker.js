@@ -1,17 +1,17 @@
 // @flow
 
-import DOM from '../util/dom';
-import window from '../util/window';
-import LngLat from '../geo/lng_lat';
+import DOM from '../util/dom.js';
+import window from '../util/window.js';
+import LngLat from '../geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
-import smartWrap from '../util/smart_wrap';
-import {bindAll, extend} from '../util/util';
-import {type Anchor, anchorTranslate, applyAnchorClass} from './anchor';
-import {Event, Evented} from '../util/evented';
-import type Map from './map';
-import type Popup from './popup';
-import type {LngLatLike} from "../geo/lng_lat";
-import type {MapMouseEvent, MapTouchEvent} from './events';
+import smartWrap from '../util/smart_wrap.js';
+import {bindAll, extend} from '../util/util.js';
+import {type Anchor, anchorTranslate, applyAnchorClass} from './anchor.js';
+import {Event, Evented} from '../util/evented.js';
+import type Map from './map.js';
+import type Popup from './popup.js';
+import type {LngLatLike} from "../geo/lng_lat.js";
+import type {MapMouseEvent, MapTouchEvent} from './events.js';
 import type {PointLike} from '@mapbox/point-geometry';
 
 type Options = {
@@ -92,7 +92,8 @@ export default class Marker extends Evented {
             '_onUp',
             '_addDragHandler',
             '_onMapClick',
-            '_onKeyPress'
+            '_onKeyPress',
+            '_clearOcclusionTimer'
         ], this);
 
         this._anchor = options && options.anchor || 'center';
@@ -248,6 +249,7 @@ export default class Marker extends Evented {
         map.getCanvasContainer().appendChild(this._element);
         map.on('move', this._update);
         map.on('moveend', this._update);
+        map.on('remove', this._clearOcclusionTimer);
         this.setDraggable(this._draggable);
         this._update();
 
@@ -277,8 +279,10 @@ export default class Marker extends Evented {
             this._map.off('touchend', this._onUp);
             this._map.off('mousemove', this._onMove);
             this._map.off('touchmove', this._onMove);
+            this._map.off('remove', this._clearOcclusionTimer);
             delete this._map;
         }
+        this._clearOcclusionTimer();
         DOM.remove(this._element);
         if (this._popup) this._popup.remove();
         return this;
@@ -443,6 +447,13 @@ export default class Marker extends Evented {
     _updateOcclusion() {
         if (!this._occlusionTimer) {
             this._occlusionTimer = setTimeout(this._onOcclusionTimer.bind(this), 60);
+        }
+    }
+
+    _clearOcclusionTimer() {
+        if (this._occlusionTimer) {
+            clearTimeout(this._occlusionTimer);
+            this._occlusionTimer = null;
         }
     }
 

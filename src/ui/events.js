@@ -1,13 +1,13 @@
 // @flow
 
-import {Event} from '../util/evented';
+import {Event} from '../util/evented.js';
 
-import DOM from '../util/dom';
+import DOM from '../util/dom.js';
 import Point from '@mapbox/point-geometry';
-import {extend} from '../util/util';
+import {extend} from '../util/util.js';
 
-import type Map from './map';
-import type LngLat from '../geo/lng_lat';
+import type Map from './map.js';
+import type LngLat from '../geo/lng_lat.js';
 
 /**
  * `MapMouseEvent` is the event type for mouse-related map events.
@@ -809,8 +809,10 @@ export type MapEvent =
     | 'zoom'
 
     /**
-     * Fired just after the map completes a transition from one zoom level to another,
+     * Fired just after the map completes a transition from one zoom level to another
      * as the result of either user interaction or methods such as {@link Map#flyTo}.
+     * The zoom transition will usually end before rendering is finished, so if you
+     * need to wait for rendering to finish, use the {@link Map#idle} event instead.
      *
      * @event zoomend
      * @memberof Map

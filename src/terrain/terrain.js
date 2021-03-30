@@ -1,53 +1,53 @@
 // @flow
 
 import Point from '@mapbox/point-geometry';
-import SourceCache from '../source/source_cache';
-import {OverscaledTileID} from '../source/tile_id';
-import Tile from '../source/tile';
-import rasterBoundsAttributes from '../data/raster_bounds_attributes';
-import {RasterBoundsArray, TriangleIndexArray} from '../data/array_types';
-import SegmentVector from '../data/segment';
-import Texture from '../render/texture';
-import Program from '../render/program';
-import {Uniform1i, Uniform1f, Uniform2f, Uniform4f, UniformMatrix4f} from '../render/uniform_binding';
-import {prepareDEMTexture} from '../render/draw_hillshade';
-import EXTENT from '../data/extent';
-import {clamp, warnOnce} from '../util/util';
+import SourceCache from '../source/source_cache.js';
+import {OverscaledTileID} from '../source/tile_id.js';
+import Tile from '../source/tile.js';
+import rasterBoundsAttributes from '../data/raster_bounds_attributes.js';
+import {RasterBoundsArray, TriangleIndexArray, LineIndexArray} from '../data/array_types.js';
+import SegmentVector from '../data/segment.js';
+import Texture from '../render/texture.js';
+import Program from '../render/program.js';
+import {Uniform1i, Uniform1f, Uniform2f, Uniform4f, UniformMatrix4f} from '../render/uniform_binding.js';
+import {prepareDEMTexture} from '../render/draw_hillshade.js';
+import EXTENT from '../data/extent.js';
+import {clamp, warnOnce} from '../util/util.js';
 import assert from 'assert';
 import {vec3, mat4, vec4} from 'gl-matrix';
-import getWorkerPool from '../util/global_worker_pool';
-import Dispatcher from '../util/dispatcher';
-import GeoJSONSource from '../source/geojson_source';
-import ImageSource from '../source/image_source';
-import RasterDEMTileSource from '../source/raster_dem_tile_source';
-import RasterTileSource from '../source/raster_tile_source';
-import Color from '../style-spec/util/color';
-import StencilMode from '../gl/stencil_mode';
-import {DepthStencilAttachment} from '../gl/value';
-import {drawTerrainRaster, drawTerrainDepth} from './draw_terrain_raster';
-import type RasterStyleLayer from '../style/style_layer/raster_style_layer';
-import {Elevation} from './elevation';
-import Framebuffer from '../gl/framebuffer';
-import ColorMode from '../gl/color_mode';
-import DepthMode from '../gl/depth_mode';
-import CullFaceMode from '../gl/cull_face_mode';
-import {clippingMaskUniformValues} from '../render/program/clipping_mask_program';
-import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate';
-import browser from '../util/browser';
-import DEMData from '../data/dem_data';
-import rasterFade from '../render/raster_fade';
-import {create as createSource} from '../source/source';
+import getWorkerPool from '../util/global_worker_pool.js';
+import Dispatcher from '../util/dispatcher.js';
+import GeoJSONSource from '../source/geojson_source.js';
+import ImageSource from '../source/image_source.js';
+import RasterDEMTileSource from '../source/raster_dem_tile_source.js';
+import RasterTileSource from '../source/raster_tile_source.js';
+import Color from '../style-spec/util/color.js';
+import StencilMode from '../gl/stencil_mode.js';
+import {DepthStencilAttachment} from '../gl/value.js';
+import {drawTerrainRaster, drawTerrainDepth} from './draw_terrain_raster.js';
+import type RasterStyleLayer from '../style/style_layer/raster_style_layer.js';
+import {Elevation} from './elevation.js';
+import Framebuffer from '../gl/framebuffer.js';
+import ColorMode from '../gl/color_mode.js';
+import DepthMode from '../gl/depth_mode.js';
+import CullFaceMode from '../gl/cull_face_mode.js';
+import {clippingMaskUniformValues} from '../render/program/clipping_mask_program.js';
+import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate.js';
+import browser from '../util/browser.js';
+import DEMData from '../data/dem_data.js';
+import rasterFade from '../render/raster_fade.js';
+import {create as createSource} from '../source/source.js';
 
-import type Map from '../ui/map';
-import type Painter from '../render/painter';
-import type Style from '../style/style';
-import type StyleLayer from '../style/style_layer';
-import type VertexBuffer from '../gl/vertex_buffer';
-import type IndexBuffer from '../gl/index_buffer';
-import type Context from '../gl/context';
-import type {UniformLocations, UniformValues} from '../render/uniform_binding';
-import type Transform from '../geo/transform';
-import type {DEMEncoding} from '../data/dem_data';
+import type Map from '../ui/map.js';
+import type Painter from '../render/painter.js';
+import type Style from '../style/style.js';
+import type StyleLayer from '../style/style_layer.js';
+import type VertexBuffer from '../gl/vertex_buffer.js';
+import type IndexBuffer from '../gl/index_buffer.js';
+import type Context from '../gl/context.js';
+import type {UniformLocations, UniformValues} from '../render/uniform_binding.js';
+import type Transform from '../geo/transform.js';
+import type {DEMEncoding} from '../data/dem_data.js';
 
 export const GRID_DIM = 128;
 
@@ -104,8 +104,7 @@ class ProxySourceCache extends SourceCache {
             minzoom: this._source.minzoom,
             maxzoom: this._source.maxzoom,
             roundZoom: this._source.roundZoom,
-            reparseOverscaled: this._source.reparseOverscaled,
-            useElevationData: true
+            reparseOverscaled: this._source.reparseOverscaled
         });
 
         const incoming: {[string]: string} = idealTileIDs.reduce((acc, tileID) => {
@@ -173,6 +172,8 @@ export class Terrain extends Elevation {
     gridIndexBuffer: IndexBuffer;
     gridSegments: SegmentVector;
     gridNoSkirtSegments: SegmentVector;
+    wireframeSegments: SegmentVector;
+    wireframeIndexBuffer: IndexBuffer;
     proxiedCoords: {[string]: Array<ProxiedTileID>};
     proxyCoords: Array<OverscaledTileID>;
     proxyToSource: {[number]: {[string]: Array<ProxiedTileID>}};
@@ -243,6 +244,7 @@ export class Terrain extends Elevation {
         this._tilesDirty = {};
         this.style = style;
         this._useVertexMorphing = true;
+        this._exaggeration = 1;
     }
 
     set style(style: Style) {
@@ -738,6 +740,17 @@ export class Terrain extends Elevation {
         return {efficiency: (1.0 - uncacheableLayerCount / drapedLayerCount) * 100.0, firstUndrapedLayer};
     }
 
+    getMinElevationBelowMSL(): number {
+        let min = 0.0;
+        // The maximum DEM error in meters to be conservative (SRTM).
+        const maxDEMError = 30.0;
+        this._visibleDemTiles.filter(tile => tile.dem).forEach(tile => {
+            const minMaxTree = (tile.dem: any).tree;
+            min = Math.min(min, minMaxTree.minimums[0]);
+        });
+        return min === 0.0 ? min : (min - maxDEMError) * this._exaggeration;
+    }
+
     // Performs raycast against visible DEM tiles on the screen and returns the distance travelled along the ray.
     // x & y components of the position are expected to be in normalized mercator coordinates [0, 1] and z in meters.
     raycast(pos: vec3, dir: vec3, exaggeration: number): ?number {
@@ -814,15 +827,30 @@ export class Terrain extends Elevation {
     }
 
     _shouldDisableRenderCache(): boolean {
-        // Disable render caches on dynamic events due to fading.
-        const isCrossFading = id => {
+        if (!this.renderCached) {
+            return true;
+        }
+
+        // Disable render caches on dynamic events due to fading or transitioning.
+        if (this._style.light && this._style.light.hasTransition()) {
+            return true;
+        }
+
+        for (const id in this._style._sourceCaches) {
+            if (this._style._sourceCaches[id].hasTransition()) {
+                return true;
+            }
+        }
+
+        const fadingOrTransitioning = id => {
             const layer = this._style._layers[id];
-            const isHidden = !layer.isHidden(this.painter.transform.zoom);
+            const isHidden = layer.isHidden(this.painter.transform.zoom);
             const crossFade = layer.getCrossfadeParameters();
             const isFading = !!crossFade && crossFade.t !== 1;
-            return layer.type !== 'custom' && !isHidden && isFading;
+            const isTransitioning = layer.hasTransition();
+            return layer.type !== 'custom' && !isHidden && (isFading || isTransitioning);
         };
-        return !this.renderCached || this._style.order.some(isCrossFading);
+        return this._style.order.some(fadingOrTransitioning);
     }
 
     _clearRasterFadeFromRenderCache() {
@@ -1317,6 +1345,20 @@ export class Terrain extends Elevation {
         if (!sourceTiles) sourceTiles = this._tilesDirty[source] = {};
         sourceTiles[coord.key] = true;
     }
+
+    /*
+     * Lazily instantiate the wireframe index buffer and segment vector so that we don't
+     * allocate the geometry for rendering a debug wireframe until it's needed.
+     */
+    getWirefameBuffer(): [IndexBuffer, SegmentVector] {
+        if (!this.wireframeSegments) {
+            const wireframeGridIndices = createWireframeGrid(GRID_DIM + 1);
+            this.wireframeIndexBuffer = this.painter.context.createIndexBuffer(wireframeGridIndices);
+            this.wireframeSegments = SegmentVector.simpleSegment(0, 0, this.gridBuffer.length, wireframeGridIndices.length);
+        }
+        return [this.wireframeIndexBuffer, this.wireframeSegments];
+    }
+
 }
 
 function sortByDistanceToCamera(tileIDs, painter) {
@@ -1394,6 +1436,44 @@ function createGrid(count: number): [RasterBoundsArray, TriangleIndexArray, numb
         }
     });
     return [boundsArray, indexArray, skirtIndicesOffset];
+}
+
+/**
+ * Creates a grid of indices corresponding to the grid constructed by createGrid
+ * in order to render that grid as a wireframe rather than a solid  mesh. It does
+ * not create a skirt and so only goes from 1 to count + 1, e.g. for count of 2:
+ *  -------------
+ *  |    /|    /|
+ *  |  /  |  /  |
+ *  |/    |/    |
+ *  -------------
+ *  |    /|    /|
+ *  |  /  |  /  |
+ *  |/    |/    |
+ *  -------------
+ * @param {number} count Count of rows and columns
+ * @private
+ */
+function createWireframeGrid(count: number): LineIndexArray {
+    let i, j, index;
+    const indexArray = new LineIndexArray();
+    const size = count + 2;
+    // Draw two edges of a quad and its diagonal. The very last row and column have
+    // an additional line to close off the grid.
+    for (j = 1; j < count; j++) {
+        for (i = 1; i < count; i++) {
+            index = j * size + i;
+            indexArray.emplaceBack(index, index + 1);
+            indexArray.emplaceBack(index, index + size);
+            indexArray.emplaceBack(index + 1, index + size);
+
+            // Place an extra line at the end of each row
+            if (j === count - 1) indexArray.emplaceBack(index + size, index + size + 1);
+        }
+        // Place an extra line at the end of each col
+        indexArray.emplaceBack(index + 1, index + 1 + size);
+    }
+    return indexArray;
 }
 
 export type TerrainUniformsType = {|

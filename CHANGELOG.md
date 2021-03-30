@@ -1,3 +1,53 @@
+## 2.2.0
+
+### Features and improvements
+* Add `testMode` Map option that silences errors and warnings generated due to an invalid accessToken. It maybe useful when using the library to write unit tests. ([#10445](https://github.com/mapbox/mapbox-gl-js/pull/10445))
+* Improve `geojsonSource.setData(...)` performance in Safari ([#10417](https://github.com/mapbox/mapbox-gl-js/pull/10417))
+* Add `map.getTerrain()` method ([#10413](https://github.com/mapbox/mapbox-gl-js/pull/10413))
+* Add `showTerrainWireframe` map debug option for displaying terrain wireframe ([#10406](https://github.com/mapbox/mapbox-gl-js/pull/10406))
+* Document the default limit and offset of `geojsonSource.getClusterLeaves(...)` ([#10403](https://github.com/mapbox/mapbox-gl-js/pull/10403)) (h/t [henk23](https://github.com/henk23))
+* (Development) Update dev environment to native ES modules to support Node 14+ ([#10367](https://github.com/mapbox/mapbox-gl-js/pull/10367))
+
+### Bug fixes
+* Fix `map.getBounds()` to return the inset bounds when map padding is set ([#10386](https://github.com/mapbox/mapbox-gl-js/pull/10386))
+* Support flat roofs for fill-extrusions when using custom data sources with terrain ([#10347](https://github.com/mapbox/mapbox-gl-js/pull/10347))
+* Fix flickering accuracy circle in `GeolocateControl`. ([#10334](https://github.com/mapbox/mapbox-gl-js/pull/10334)) (h/t [anderswi](https://github.com/anderswi))
+* Show Mapbox logo if no style is provided for the map ([#10361](https://github.com/mapbox/mapbox-gl-js/pull/10361))
+* Switch to using alphabetic baseline for locally-rendered glyphs to avoid misalignment on fonts with large ascenders/descenders. ([#10390](https://github.com/mapbox/mapbox-gl-js/pull/10390))
+* Fix incorrect diffing of styles when using raster DEM tile sources ([#10418](https://github.com/mapbox/mapbox-gl-js/pull/10418))
+* Fix `queryRenderedFeatures(...)` for fill-extrusions partly behind the camera ([#10428](https://github.com/mapbox/mapbox-gl-js/pull/10428))
+* Fix artifacts caused by negative terrain elevation ([#10432](https://github.com/mapbox/mapbox-gl-js/pull/10432))
+* Reset WebGL culling state before drawing custom layers ([#10412](https://github.com/mapbox/mapbox-gl-js/pull/10412))
+* Fix DOM event coordinates for scaled containers ([#10096](https://github.com/mapbox/mapbox-gl-js/pull/10096)) (h/t [kawsndriy](https://github.com/kawsndriy))
+* Fix `collectResourceTiming` errors ([#10321](https://github.com/mapbox/mapbox-gl-js/pull/10321))
+
+## 2.1.1
+
+### 🐞 Bug fixes
+
+- Fixed a font glyphs performance regression on Firefox. ([10363](https://github.com/mapbox/mapbox-gl-js/pull/10363))
+
+## 2.1.0
+
+### ✨ Features and improvements
+
+- Added `localFontFamily` map option that enables local generation of all font glyphs. ([#10298](https://github.com/mapbox/mapbox-gl-js/pull/10298))
+- Introduced high resolution local glyph generation for improved rendering quality of glyphs generated using `localIdeographFontFamily` or `localFontFamily` options. ([#10298](https://github.com/mapbox/mapbox-gl-js/pull/10298))
+- Added `optimizeForTerrain` map option allowing to use terrain in _layer draw-order_ or _performance_ priority mode. This fixes terrain not always preserving layer draw-order during animations by making the behavior explicit. ([#10258](https://github.com/mapbox/mapbox-gl-js/pull/10258))
+- Improved performance by slightly shifting the horizon down, reducing the number of tiles loaded for highly-pitched maps. ([#10304](https://github.com/mapbox/mapbox-gl-js/pull/10304))
+- Improved `evented.once(eventName)` to return a promise if no listener function is provided, which allows using `async/await` with map events for a simpler and more readable code. ([#10203](https://github.com/mapbox/mapbox-gl-js/pull/10203))
+
+### 🐞 Bug fixes
+
+- Fixed querying of `fill-extrusion`s when terrain is enabled. ([#10293](https://github.com/mapbox/mapbox-gl-js/pull/10293))
+- Fixed a bug where close points were sometimes not clustered on higher zoom levels given a small clustering radius. Fixed `clusterMaxZoom` so that it is not capped by the source `maxzoom`. ([#10300](https://github.com/mapbox/mapbox-gl-js/pull/10300))
+- Fixed blurry map-aligned labels on highly pitched maps with terrain. ([#10296](https://github.com/mapbox/mapbox-gl-js/pull/10296))
+- Fixed a race condition when evaluating image expressions by ensuring sprite has loaded before parsing tiles. ([#10294](https://github.com/mapbox/mapbox-gl-js/pull/10294))
+- Fixed a bug with fullscreen `fill-extrusion` querying at low pitch. ([#10315](https://github.com/mapbox/mapbox-gl-js/pull/10315))
+- Fixed a regression with the usage of patterns with data-driven styling. ([#10284](https://github.com/mapbox/mapbox-gl-js/pull/10284))
+- Ensure `evented.listens` returns `false` when no listener is available. ([#10281](https://github.com/mapbox/mapbox-gl-js/pull/10281))
+
+
 ## 2.0.1
 
 ### ✨ Features and improvements

@@ -1,11 +1,11 @@
 // @flow
 
-import MercatorCoordinate from '../geo/mercator_coordinate';
-import {degToRad, wrap} from '../util/util';
+import MercatorCoordinate from '../geo/mercator_coordinate.js';
+import {degToRad, wrap} from '../util/util.js';
 import {vec3, vec4, quat, mat4} from 'gl-matrix';
-import type {Elevation} from '../terrain/elevation';
+import type {Elevation} from '../terrain/elevation.js';
 
-import type {LngLatLike} from '../geo/lng_lat';
+import type {LngLatLike} from '../geo/lng_lat.js';
 
 function getColumn(matrix: mat4, col: number): vec4 {
     return [matrix[col * 4], matrix[col * 4 + 1], matrix[col * 4 + 2], matrix[col * 4 + 3]];
@@ -77,7 +77,7 @@ export function orientationFromFrame(forward: vec3, up: vec3): ?quat {
 }
 
 /**
- * Various options for accessing physical properties of the underlying camera entity.
+ * Options for accessing physical properties of the underlying camera entity.
  * A direct access to these properties allows more flexible and precise controlling of the camera
  * while also being fully compatible and interchangeable with CameraOptions. All fields are optional.
  * See {@link Map#setFreeCameraOptions} and {@link Map#getFreeCameraOptions}
@@ -97,7 +97,9 @@ export function orientationFromFrame(forward: vec3, up: vec3): ?quat {
         Orientation can be set freely but certain constraints still apply
          - Orientation must be representable with only pitch and bearing.
          - Pitch has an upper limit
- */
+ * @see [Animate the camera around a point in 3D terrain](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-point/)
+ * @see [Animate the camera along a path](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-path/)
+*/
 class FreeCameraOptions {
     orientation: ?quat;
     _position: ?MercatorCoordinate;

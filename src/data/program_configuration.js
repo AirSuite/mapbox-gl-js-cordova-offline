@@ -1,40 +1,40 @@
 // @flow
 
-import {packUint8ToFloat} from '../shaders/encode_attribute';
-import Color from '../style-spec/util/color';
-import {supportsPropertyExpression} from '../style-spec/util/properties';
-import {register} from '../util/web_worker_transfer';
-import {PossiblyEvaluatedPropertyValue} from '../style/properties';
-import {StructArrayLayout1f4, StructArrayLayout2f8, StructArrayLayout4f16, PatternLayoutArray} from './array_types';
-import {clamp} from '../util/util';
-import patternAttributes from './bucket/pattern_attributes';
-import EvaluationParameters from '../style/evaluation_parameters';
-import FeaturePositionMap from './feature_position_map';
+import {packUint8ToFloat} from '../shaders/encode_attribute.js';
+import Color from '../style-spec/util/color.js';
+import {supportsPropertyExpression} from '../style-spec/util/properties.js';
+import {register} from '../util/web_worker_transfer.js';
+import {PossiblyEvaluatedPropertyValue} from '../style/properties.js';
+import {StructArrayLayout1f4, StructArrayLayout2f8, StructArrayLayout4f16, PatternLayoutArray} from './array_types.js';
+import {clamp} from '../util/util.js';
+import patternAttributes from './bucket/pattern_attributes.js';
+import EvaluationParameters from '../style/evaluation_parameters.js';
+import FeaturePositionMap from './feature_position_map.js';
 import {
     Uniform,
     Uniform1f,
     UniformColor,
     Uniform4f,
     type UniformLocations
-} from '../render/uniform_binding';
+} from '../render/uniform_binding.js';
 
-import type {CanonicalTileID} from '../source/tile_id';
-import type Context from '../gl/context';
-import type {TypedStyleLayer} from '../style/style_layer/typed_style_layer';
-import type {CrossfadeParameters} from '../style/evaluation_parameters';
-import type {StructArray, StructArrayMember} from '../util/struct_array';
-import type VertexBuffer from '../gl/vertex_buffer';
-import type {ImagePosition} from '../render/image_atlas';
+import type {CanonicalTileID} from '../source/tile_id.js';
+import type Context from '../gl/context.js';
+import type {TypedStyleLayer} from '../style/style_layer/typed_style_layer.js';
+import type {CrossfadeParameters} from '../style/evaluation_parameters.js';
+import type {StructArray, StructArrayMember} from '../util/struct_array.js';
+import type VertexBuffer from '../gl/vertex_buffer.js';
+import type {ImagePosition} from '../render/image_atlas.js';
 import type {
     Feature,
     FeatureState,
     GlobalProperties,
     SourceExpression,
     CompositeExpression
-} from '../style-spec/expression';
-import type {PossiblyEvaluated} from '../style/properties';
-import type {FeatureStates} from '../source/source_state';
-import type {FormattedSection} from '../style-spec/expression/types/formatted';
+} from '../style-spec/expression/index.js';
+import type {PossiblyEvaluated} from '../style/properties.js';
+import type {FeatureStates} from '../source/source_state.js';
+import type {FormattedSection} from '../style-spec/expression/types/formatted.js';
 import assert from 'assert';
 
 export type BinderUniform = {
@@ -54,7 +54,7 @@ function packColor(color: Color): [number, number] {
  *  `Binder` is the interface definition for the strategies for constructing,
  *  uploading, and binding paint property data as GLSL attributes. Most style-
  *  spec properties have a 1:1 relationship to shader attribute/uniforms, but
- *  some require multliple values per feature to be passed to the GPU, and in
+ *  some require multiple values per feature to be passed to the GPU, and in
  *  those cases we bind multiple attributes/uniforms.
  *
  *  It has three implementations, one for each of the three strategies we use:
@@ -73,7 +73,7 @@ function packColor(color: Color): [number, number] {
  *    uniform allows us to cheaply update the value on every frame.
  *
  *  Note that the shader source varies depending on whether we're using a uniform or
- *  attribute. We dynamically compile shaders at runtime to accomodate this.
+ *  attribute. We dynamically compile shaders at runtime to accommodate this.
  *
  * @private
  */
@@ -555,7 +555,7 @@ export default class ProgramConfiguration {
 
     setUniforms<Properties: Object>(context: Context, binderUniforms: Array<BinderUniform>, properties: PossiblyEvaluated<Properties>, globals: GlobalProperties) {
         // Uniform state bindings are owned by the Program, but we set them
-        // from within the ProgramConfiguraton's binder members.
+        // from within the ProgramConfiguration's binder members.
         for (const {name, property, binding} of binderUniforms) {
             (this.binders[property]: any).setUniform(binding, globals, properties.get(property), name);
         }

@@ -1,8 +1,8 @@
-import {test} from '../../util/test';
-import GeoJSONWorkerSource from '../../../src/source/geojson_worker_source';
-import StyleLayerIndex from '../../../src/style/style_layer_index';
-import {OverscaledTileID} from '../../../src/source/tile_id';
-import perf from '../../../src/util/performance';
+import {test} from '../../util/test.js';
+import GeoJSONWorkerSource from '../../../src/source/geojson_worker_source.js';
+import StyleLayerIndex from '../../../src/style/style_layer_index.js';
+import {OverscaledTileID} from '../../../src/source/tile_id.js';
+import perf from '../../../src/util/performance.js';
 
 const actor = {send: () => {}};
 
@@ -39,7 +39,6 @@ test('reloadTile', (t) => {
 
         function addData(callback) {
             source.loadData({source: 'sourceId', data: JSON.stringify(geoJson)}, (err) => {
-                source.coalesce({source: 'sourceId'});
                 t.equal(err, null);
                 callback();
             });
@@ -137,38 +136,6 @@ test('resourceTiming', (t) => {
         });
     });
 
-    t.test('loadData - url (resourceTiming fallback method)', (t) => {
-        const sampleMarks = [100, 350];
-        const marks = {};
-        const measures = {};
-        t.stub(perf, 'getEntriesByName').callsFake((name) => { return measures[name] || []; });
-        t.stub(perf, 'mark').callsFake((name) => {
-            marks[name] = sampleMarks.shift();
-            return null;
-        });
-        t.stub(perf, 'measure').callsFake((name, start, end) => {
-            measures[name] = measures[name] || [];
-            measures[name].push({
-                duration: marks[end] - marks[start],
-                entryType: 'measure',
-                name,
-                startTime: marks[start]
-            });
-            return null;
-        });
-        t.stub(perf, 'clearMarks').callsFake(() => { return null; });
-        t.stub(perf, 'clearMeasures').callsFake(() => { return null; });
-
-        const layerIndex = new StyleLayerIndex(layers);
-        const source = new GeoJSONWorkerSource(actor, layerIndex, [], true, (params, callback) => { return callback(null, geoJson); });
-
-        source.loadData({source: 'testSource', request: {url: 'http://localhost/nonexistent', collectResourceTiming: true}}, (err, result) => {
-            t.equal(err, null);
-            t.deepEquals(result.resourceTiming.testSource, [{"duration": 250, "entryType": "measure", "name": "http://localhost/nonexistent", "startTime": 100}], 'got expected resource timing');
-            t.end();
-        });
-    });
-
     t.test('loadData - data', (t) => {
         const layerIndex = new StyleLayerIndex(layers);
         const source = new GeoJSONWorkerSource(actor, layerIndex, [], true);
@@ -178,93 +145,6 @@ test('resourceTiming', (t) => {
             t.equal(result.resourceTiming, undefined, 'no resourceTiming property when loadData is not sent a URL');
             t.end();
         });
-    });
-
-    t.end();
-});
-
-test('loadData', (t) => {
-    const layers = [
-        {
-            id: 'layer1',
-            source: 'source1',
-            type: 'symbol',
-        },
-        {
-            id: 'layer2',
-            source: 'source2',
-            type: 'symbol',
-        }
-    ];
-
-    const geoJson = {
-        "type": "Feature",
-        "geometry": {
-            "type": "Point",
-            "coordinates": [0, 0]
-        }
-    };
-
-    const layerIndex = new StyleLayerIndex(layers);
-    function createWorker() {
-        const worker = new GeoJSONWorkerSource(actor, layerIndex, [], true);
-
-        // Making the call to loadGeoJSON asynchronous
-        // allows these tests to mimic a message queue building up
-        // (regardless of timing)
-        const originalLoadGeoJSON = worker.loadGeoJSON;
-        worker.loadGeoJSON = function(params, callback) {
-            setTimeout(() => {
-                originalLoadGeoJSON(params, callback);
-            }, 0);
-        };
-        return worker;
-    }
-
-    t.test('abandons coalesced callbacks', (t) => {
-        // Expect first call to run, second to be abandoned,
-        // and third to run in response to coalesce
-        const worker = createWorker();
-        worker.loadData({source: 'source1', data: JSON.stringify(geoJson)}, (err, result) => {
-            t.equal(err, null);
-            t.notOk(result && result.abandoned);
-            worker.coalesce({source: 'source1'});
-        });
-
-        worker.loadData({source: 'source1', data: JSON.stringify(geoJson)}, (err, result) => {
-            t.equal(err, null);
-            t.ok(result && result.abandoned);
-        });
-
-        worker.loadData({source: 'source1', data: JSON.stringify(geoJson)}, (err, result) => {
-            t.equal(err, null);
-            t.notOk(result && result.abandoned);
-            t.end();
-        });
-    });
-
-    t.test('removeSource aborts callbacks', (t) => {
-        // Expect:
-        // First loadData starts running before removeSource arrives
-        // Second loadData is pending when removeSource arrives, gets cancelled
-        // removeSource is executed immediately
-        // First loadData finishes running, sends results back to foreground
-        const worker = createWorker();
-        worker.loadData({source: 'source1', data: JSON.stringify(geoJson)}, (err, result) => {
-            t.equal(err, null);
-            t.notOk(result && result.abandoned);
-            t.end();
-        });
-
-        worker.loadData({source: 'source1', data: JSON.stringify(geoJson)}, (err, result) => {
-            t.equal(err, null);
-            t.ok(result && result.abandoned);
-        });
-
-        worker.removeSource({source: 'source1'}, (err) => {
-            t.notOk(err);
-        });
-
     });
 
     t.end();

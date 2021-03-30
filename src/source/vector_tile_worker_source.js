@@ -1,13 +1,13 @@
 // @flow
 
-import {getArrayBuffer} from '../util/ajax';
+import {getArrayBuffer} from '../util/ajax.js';
 
 import vt from '@mapbox/vector-tile';
 import Protobuf from 'pbf';
-import WorkerTile from './worker_tile';
-import {extend} from '../util/util';
-import {RequestPerformance} from '../util/performance';
-import {Evented} from '../util/evented';
+import WorkerTile from './worker_tile.js';
+import {extend} from '../util/util.js';
+import {getPerformanceMeasurement} from '../util/performance.js';
+import {Evented} from '../util/evented.js';
 
 import type {
     WorkerSource,
@@ -15,12 +15,12 @@ import type {
     RequestedTileParameters,
     WorkerTileCallback,
     TileParameters
-} from '../source/worker_source';
+} from '../source/worker_source.js';
 
-import type Actor from '../util/actor';
-import type StyleLayerIndex from '../style/style_layer_index';
-import type {Callback} from '../types/callback';
-import type Scheduler from '../util/scheduler';
+import type Actor from '../util/actor.js';
+import type StyleLayerIndex from '../style/style_layer_index.js';
+import type {Callback} from '../types/callback.js';
+import type Scheduler from '../util/scheduler.js';
 
 export type LoadVectorTileResult = {
     rawData: ArrayBuffer;
@@ -40,10 +40,10 @@ export type LoadVectorDataCallback = Callback<?LoadVectorTileResult>;
 
 export type AbortVectorData = () => void;
 export type LoadVectorData = (params: RequestedTileParameters, callback: LoadVectorDataCallback) => ?AbortVectorData;
-
 export class DedupedRequest {
     entries: { [string]: Object };
     scheduler: ?Scheduler;
+
     constructor(scheduler?: Scheduler) {
         this.entries = {};
         this.scheduler = scheduler;
@@ -209,8 +209,8 @@ class VectorTileWorkerSource extends Evented implements WorkerSource {
     loadTile(params: WorkerTileParameters, callback: WorkerTileCallback) {
         const uid = params.uid;
 
-        const perf = (params && params.request && params.request.collectResourceTiming) ?
-            new RequestPerformance(params.request) : false;
+        const requestParam = params && params.request;
+        const perf = requestParam && requestParam.collectResourceTiming;
 
         const workerTile = this.loading[uid] = new WorkerTile(params);
         if (params.mbtiles == undefined) params.mbtiles = false;
@@ -235,15 +235,6 @@ class VectorTileWorkerSource extends Evented implements WorkerSource {
             if (response.expires) cacheControl.expires = response.expires;
             if (response.cacheControl) cacheControl.cacheControl = response.cacheControl;
 
-            const resourceTiming = {};
-            if (perf) {
-                const resourceTimingData = perf.finish();
-                // it's necessary to eval the result of getEntriesByName() here via parse/stringify
-                // late evaluation in the main thread causes TypeError: illegal invocation
-                if (resourceTimingData)
-                    resourceTiming.resourceTiming = JSON.parse(JSON.stringify(resourceTimingData));
-            }
-
             // response.vectorTile will be present in the GeoJSON worker case (which inherits from this class)
             // because we stub the vector tile interface around JSON data instead of parsing it directly
             workerTile.vectorTile = response.vectorTile || new vt.VectorTile(new Protobuf(rawTileData));
@@ -251,7 +242,16 @@ class VectorTileWorkerSource extends Evented implements WorkerSource {
                 workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, (err, result) => {
                     if (err || !result) return callback(err);
 
-                    // Transferring a copy of rawTileData because the worker needs to retain its copy.
+                    const resourceTiming = {};
+                    if (perf) {
+                        // Transferring a copy of rawTileData because the worker needs to retain its copy.
+                        const resourceTimingData = getPerformanceMeasurement(requestParam);
+                        // it's necessary to eval the result of getEntriesByName() here via parse/stringify
+                        // late evaluation in the main thread causes TypeError: illegal invocation
+                        if (resourceTimingData.length > 0) {
+                            resourceTiming.resourceTiming = JSON.parse(JSON.stringify(resourceTimingData));
+                        }
+                    }
                     callback(null, extend({rawTileData: rawTileData.slice(0)}, result, cacheControl, resourceTiming));
                 });
             };

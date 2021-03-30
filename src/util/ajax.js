@@ -1,16 +1,15 @@
 // @flow
 
-import window from './window';
-import {extend, warnOnce, isWorker} from './util';
-import {isMapboxHTTPURL, hasCacheDefeatingSku} from './mapbox';
-import config from './config';
+import window from './window.js';
+import {extend, warnOnce, isWorker} from './util.js';
+import {isMapboxHTTPURL, hasCacheDefeatingSku} from './mapbox.js';
+import config from './config.js';
 import assert from 'assert';
-import {cacheGet, cachePut} from './tile_request_cache';
-import webpSupported from './webp_supported';
-import offscreenCanvasSupported from './offscreen_canvas_supported';
+import {cacheGet, cachePut} from './tile_request_cache.js';
+import webpSupported from './webp_supported.js';
 
-import type {Callback} from '../types/callback';
-import type {Cancelable} from '../types/cancelable';
+import type {Callback} from '../types/callback.js';
+import type {Cancelable} from '../types/cancelable.js';
 
 /**
  * The type of a resource.
@@ -235,7 +234,7 @@ export const makeRequest = function(requestParameters: RequestParameters, callba
     // We're trying to use the Fetch API if possible. However, in some situations we can't use it:
     // - Safari exposes window.AbortController, but it doesn't work actually abort any requests in
     //   older versions (see https://bugs.webkit.org/show_bug.cgi?id=174980#c2). In this case,
-    //   we dispatch the request to the main thread so that we can get an accruate referrer header.
+    //   we dispatch the request to the main thread so that we can get an accurate referrer header.
     // - Requests for resources with the file:// URI scheme don't work with the Fetch API either. In
     //   this case we unconditionally use XHR on the current thread since referrers don't matter.
     if (!isFileURL(requestParameters.url)) {
@@ -274,7 +273,7 @@ function sameOrigin(url) {
 
 const transparentPngUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=';
 
-function arrayBufferToImage(data: ArrayBuffer, callback: (err: ?Error, image: ?HTMLImageElement) => void, cacheControl: ?string, expires: ?string) {
+function arrayBufferToImage(data: ArrayBuffer, callback: Callback<HTMLImageElement>) {
     const img: HTMLImageElement = new window.Image();
     const URL = window.URL;
     img.onload = () => {
@@ -288,12 +287,10 @@ function arrayBufferToImage(data: ArrayBuffer, callback: (err: ?Error, image: ?H
     };
     img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
     const blob: Blob = new window.Blob([new Uint8Array(data)], {type: 'image/png'});
-    (img: any).cacheControl = cacheControl;
-    (img: any).expires = expires;
     img.src = data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
 }
 
-function arrayBufferToImageBitmap(data: ArrayBuffer, callback: (err: ?Error, image: ?ImageBitmap) => void) {
+function arrayBufferToImageBitmap(data: ArrayBuffer, callback: Callback<ImageBitmap>) {
     const blob: Blob = new window.Blob([new Uint8Array(data)], {type: 'image/png'});
     window.createImageBitmap(blob).then((imgBitmap) => {
         callback(null, imgBitmap);
@@ -309,7 +306,7 @@ export const resetImageRequestQueue = () => {
 };
 resetImageRequestQueue();
 
-export const getImage = function(requestParameters: RequestParameters, callback: Callback<HTMLImageElement | ImageBitmap>): Cancelable {
+export const getImage = function(requestParameters: RequestParameters, callback: ResponseCallback<HTMLImageElement | ImageBitmap>): Cancelable {
     if (webpSupported.supported) {
         if (!requestParameters.headers) {
             requestParameters.headers = {};
@@ -354,10 +351,10 @@ export const getImage = function(requestParameters: RequestParameters, callback:
         if (err) {
             callback(err);
         } else if (data) {
-            if (offscreenCanvasSupported()) {
-                arrayBufferToImageBitmap(data, callback);
+            if (window.createImageBitmap) {
+                arrayBufferToImageBitmap(data, (err, imgBitmap) => callback(err, imgBitmap, cacheControl, expires));
             } else {
-                arrayBufferToImage(data, callback, cacheControl, expires);
+                arrayBufferToImage(data, (err, img) => callback(err, img, cacheControl, expires));
             }
         }
     });

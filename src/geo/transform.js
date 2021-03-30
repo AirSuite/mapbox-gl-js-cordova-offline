@@ -1,21 +1,21 @@
 // @flow
 
-import LngLat from './lng_lat';
-import LngLatBounds from './lng_lat_bounds';
-import MercatorCoordinate, {mercatorXfromLng, mercatorYfromLat, mercatorZfromAltitude, latFromMercatorY} from './mercator_coordinate';
+import LngLat from './lng_lat.js';
+import LngLatBounds from './lng_lat_bounds.js';
+import MercatorCoordinate, {mercatorXfromLng, mercatorYfromLat, mercatorZfromAltitude, latFromMercatorY} from './mercator_coordinate.js';
 import Point from '@mapbox/point-geometry';
-import {wrap, clamp, radToDeg, degToRad} from '../util/util';
-import {number as interpolate} from '../style-spec/util/interpolate';
-import EXTENT from '../data/extent';
+import {wrap, clamp, radToDeg, degToRad} from '../util/util.js';
+import {number as interpolate} from '../style-spec/util/interpolate.js';
+import EXTENT from '../data/extent.js';
 import {vec4, mat4, mat2, vec3, quat} from 'gl-matrix';
 import {Aabb, Frustum, Ray} from '../util/primitives.js';
-import EdgeInsets from './edge_insets';
-import {FreeCamera, FreeCameraOptions, orientationFromFrame} from '../ui/free_camera';
+import EdgeInsets from './edge_insets.js';
+import {FreeCamera, FreeCameraOptions, orientationFromFrame} from '../ui/free_camera.js';
 import assert from 'assert';
 
-import {UnwrappedTileID, OverscaledTileID, CanonicalTileID} from '../source/tile_id';
-import type {Elevation} from '../terrain/elevation';
-import type {PaddingOptions} from './edge_insets';
+import {UnwrappedTileID, OverscaledTileID, CanonicalTileID} from '../source/tile_id.js';
+import type {Elevation} from '../terrain/elevation.js';
+import type {PaddingOptions} from './edge_insets.js';
 
 const NUM_WORLD_COPIES = 3;
 const DEFAULT_MIN_ZOOM = 0;
@@ -541,13 +541,13 @@ class Transform {
             roundZoom?: boolean,
             reparseOverscaled?: boolean,
             renderWorldCopies?: boolean,
-            useElevationData?: boolean
+            isTerrainDEM?: boolean
         }
     ): Array<OverscaledTileID> {
         let z = this.coveringZoomLevel(options);
         const actualZ = z;
 
-        const useElevationData = !!options.useElevationData;
+        const useElevationData = this.elevation && !options.isTerrainDEM;
 
         if (options.minzoom !== undefined && z < options.minzoom) return [];
         if (options.maxzoom !== undefined && z > options.maxzoom) z = options.maxzoom;
@@ -569,10 +569,13 @@ class Transform {
         // No change of LOD behavior for pitch lower than 60 and when there is no top padding: return only tile ids from the requested zoom level
         const minZoom = this.pitch <= 60.0 && this._edgeInsets.top <= this._edgeInsets.bottom && !this._elevation ? z : 0;
 
-        const maxRange = this.elevation ? this.elevation.exaggeration() * 10000 : 0;
+        // When calculating tile cover for terrain, create deep AABB for nodes, to ensure they intersect frustum: for sources,
+        // other than DEM, use minimum of visible DEM tiles and center altitude as upper bound (pitch is always less than 90°).
+        const maxRange = options.isTerrainDEM && this._elevation ? this._elevation.exaggeration() * 10000 : this._centerAltitude;
+        const minRange = options.isTerrainDEM ? -maxRange : this._elevation ? this._elevation.getMinElevationBelowMSL() : 0;
         const newRootTile = (wrap: number): any => {
             const max = maxRange;
-            const min = -maxRange;
+            const min = minRange;
             return {
                 // With elevation, this._elevation provides z coordinate values. For 2D:
                 // All tiles are on zero elevation plane => z difference is zero
@@ -591,14 +594,23 @@ class Transform {
         const maxZoom = z;
         const overscaledZ = options.reparseOverscaled ? actualZ : z;
 
-        const getAABBFromElevation = (aabb, tileID) => {
+        const getAABBFromElevation = (it) => {
             assert(this._elevation);
-            if (!this._elevation) return;  // To silence flow.
-            const minmax = this._elevation.getMinMaxForTile(tileID);
+            if (!this._elevation || !it.tileID) return; // To silence flow.
+            const minmax = this._elevation.getMinMaxForTile(it.tileID);
+            const aabb = it.aabb;
             if (minmax) {
                 aabb.min[2] = minmax.min;
                 aabb.max[2] = minmax.max;
                 aabb.center[2] = (aabb.min[2] + aabb.max[2]) / 2;
+            } else {
+                it.shouldSplit = shouldSplit(it);
+                if (!it.shouldSplit) {
+                    // At final zoom level, while corresponding DEM tile is not loaded yet,
+                    // assume center elevation. This covers ground to horizon and prevents
+                    // loading unnecessary tiles until DEM cover is fully loaded.
+                    aabb.min[2] = aabb.max[2] = aabb.center[2] = this._centerAltitude;
+                }
             }
         };
         const square = a => a * a;
@@ -629,6 +641,30 @@ class Transform {
             return r / (1 / acuteAngleThresholdSin + (Math.pow(stretchTile, k + 1) - 1) / (stretchTile - 1) - 1);
         };
 
+        const shouldSplit = (it) => {
+            if (it.zoom < minZoom) {
+                return true;
+            } else if (it.zoom === maxZoom) {
+                return false;
+            }
+            if (it.shouldSplit != null) {
+                return it.shouldSplit;
+            }
+            const dx = it.aabb.distanceX(cameraPoint);
+            const dy = it.aabb.distanceY(cameraPoint);
+            let dzSqr = cameraHeightSqr;
+
+            if (useElevationData) {
+                dzSqr = square(it.aabb.distanceZ(cameraPoint) * meterToTile);
+            }
+
+            const distanceSqr = dx * dx + dy * dy + dzSqr;
+            const distToSplit = (1 << maxZoom - it.zoom) * zoomSplitDistance;
+            const distToSplitSqr = square(distToSplit * distToSplitScale(Math.max(dzSqr, cameraHeightSqr), distanceSqr));
+
+            return distanceSqr < distToSplitSqr;
+        };
+
         if (this._renderWorldCopies) {
             // Render copy of the globe thrice on both sides
             for (let i = 1; i <= NUM_WORLD_COPIES; i++) {
@@ -655,25 +691,8 @@ class Transform {
                 fullyVisible = intersectResult === 2;
             }
 
-            let shouldSplit = true;
-            if (minZoom <= it.zoom && it.zoom < maxZoom) {
-                const dx = it.aabb.distanceX(cameraPoint);
-                const dy = it.aabb.distanceY(cameraPoint);
-                let dzSqr = cameraHeightSqr;
-
-                if (useElevationData) {
-                    dzSqr = square(it.aabb.distanceZ(cameraPoint) * meterToTile);
-                }
-
-                const distanceSqr = dx * dx + dy * dy + dzSqr;
-                const distToSplit = (1 << maxZoom - it.zoom) * zoomSplitDistance;
-                const distToSplitSqr = square(distToSplit * distToSplitScale(Math.max(dzSqr, cameraHeightSqr), distanceSqr));
-
-                shouldSplit = distanceSqr < distToSplitSqr;
-            }
-
             // Have we reached the target depth or is the tile too far away to be any split further?
-            if (it.zoom === maxZoom || !shouldSplit) {
+            if (it.zoom === maxZoom || !shouldSplit(it)) {
                 const tileZoom = it.zoom === maxZoom ? overscaledZ : it.zoom;
                 if (!!options.minzoom && options.minzoom > tileZoom) {
                     // Not within source tile range.
@@ -693,15 +712,12 @@ class Transform {
                 const childY = (y << 1) + (i >> 1);
 
                 const aabb = it.aabb.quadrant(i);
-                let tileID = null;
-                if (useElevationData && it.zoom > maxZoom - 6) {
-                    // Using elevation data for tiles helps clipping out tiles that are not visible and
-                    // precise distance calculation. it.zoom > maxZoom - 6 is an optimization as those before get subdivided
-                    // or they are so far at horizon that it doesn't matter.
-                    tileID = new OverscaledTileID(it.zoom + 1 === maxZoom ? overscaledZ : it.zoom + 1, it.wrap, it.zoom + 1, childX, childY);
-                    getAABBFromElevation(aabb, tileID);
+                const child = {aabb, zoom: it.zoom + 1, x: childX, y: childY, wrap: it.wrap, fullyVisible, tileID: undefined, shouldSplit: undefined};
+                if (useElevationData) {
+                    child.tileID = new OverscaledTileID(it.zoom + 1 === maxZoom ? overscaledZ : it.zoom + 1, it.wrap, it.zoom + 1, childX, childY);
+                    getAABBFromElevation(child);
                 }
-                stack.push({aabb, zoom: it.zoom + 1, x: childX, y: childY, wrap: it.wrap, fullyVisible, tileID});
+                stack.push(child);
             }
         }
         const cover = result.sort((a, b) => a.distanceSq - b.distanceSq).map(a => a.tileID);
@@ -984,10 +1000,10 @@ class Transform {
     getBounds(): LngLatBounds {
         if (this._terrainEnabled()) return this._getBounds3D();
         return new LngLatBounds()
-            .extend(this.pointLocation(new Point(0, 0)))
-            .extend(this.pointLocation(new Point(this.width, 0)))
-            .extend(this.pointLocation(new Point(this.width, this.height)))
-            .extend(this.pointLocation(new Point(0, this.height)));
+            .extend(this.pointLocation(new Point(this._edgeInsets.left, this._edgeInsets.top)))
+            .extend(this.pointLocation(new Point(this.width - this._edgeInsets.right, this._edgeInsets.top)))
+            .extend(this.pointLocation(new Point(this.width - this._edgeInsets.right, this.height - this._edgeInsets.bottom)))
+            .extend(this.pointLocation(new Point(this._edgeInsets.left, this.height - this._edgeInsets.bottom)));
     }
 
     _getBounds3D(): LngLatBounds {
@@ -1280,7 +1296,12 @@ class Transform {
         const groundAngle = Math.PI / 2 + this._pitch;
         const fovAboveCenter = this.fovAboveCenter;
 
-        const cameraToSeaLevelDistance = this._camera.position[2] * this.worldSize / Math.cos(this._pitch);
+        // Adjust distance to MSL by the minimum possible elevation visible on screen,
+        // this way the far plane is pushed further in the case of negative elevation.
+        const minElevationInPixels = this.elevation ?
+            this.elevation.getMinElevationBelowMSL() * pixelsPerMeter :
+            0;
+        const cameraToSeaLevelDistance = ((this._camera.position[2] * this.worldSize) - minElevationInPixels) / Math.cos(this._pitch);
         const topHalfSurfaceDistance = Math.sin(fovAboveCenter) * cameraToSeaLevelDistance / Math.sin(clamp(Math.PI - groundAngle - fovAboveCenter, 0.01, Math.PI - 0.01));
         const point = this.point;
         const x = point.x, y = point.y;

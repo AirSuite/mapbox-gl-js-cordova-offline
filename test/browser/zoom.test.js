@@ -1,11 +1,11 @@
-import {test} from '../util/test';
-import browser from './util/browser';
+import {test} from '../util/test.js';
+import browser from './util/browser.js';
 
 test("zooming", async t => {
     const {driver} = browser;
 
     await t.test("double click at the center", async t => {
-        const canvas = await browser.getMapCanvas(`${browser.basePath}/test/browser/fixtures/land.html?access_token=pk.eyJ1IjoibWFwYm94LWdsLWpzIiwiYSI6ImNram9ybGI1ajExYjQyeGxlemppb2pwYjIifQ.LGy5UGNIsXUZdYMvfYRiAQ`);
+        const canvas = await browser.getMapCanvas(`${browser.basePath}/test/browser/fixtures/land.html`);
 
         // Double-click on the center of the map.
         await driver.executeScript(browser.doubleClick, canvas);

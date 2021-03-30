@@ -1,10 +1,10 @@
 // @flow
 
-import DOM from '../../util/dom';
-import {bindAll} from '../../util/util';
-import config from '../../util/config';
+import DOM from '../../util/dom.js';
+import {bindAll} from '../../util/util.js';
+import config from '../../util/config.js';
 
-import type Map from '../map';
+import type Map from '../map.js';
 
 type Options = {
     compact?: boolean,
@@ -13,6 +13,7 @@ type Options = {
 
 /**
  * An `AttributionControl` control presents the map's [attribution information](https://docs.mapbox.com/help/how-mapbox-works/attribution/).
+ * Add this control to a map using {@link Map#addControl}.
  *
  * @implements {IControl}
  * @param {Object} [options]

@@ -1,22 +1,22 @@
-import {test} from '../../util/test';
-import {extend} from '../../../src/util/util';
-import {createMap} from '../../util';
-import DEMData from '../../../src/data/dem_data';
-import {RGBAImage} from '../../../src/util/image';
-import MercatorCoordinate from '../../../src/geo/mercator_coordinate';
-import window from '../../../src/util/window';
-import {OverscaledTileID} from '../../../src/source/tile_id';
-import styleSpec from '../../../src/style-spec/reference/latest';
-import Terrain from '../../../src/style/terrain';
-import Tile from '../../../src/source/tile';
-import {VertexMorphing} from '../../../src/terrain/draw_terrain_raster';
-import {fixedLngLat, fixedCoord, fixedPoint} from '../../util/fixed';
+import {test} from '../../util/test.js';
+import {extend} from '../../../src/util/util.js';
+import {createMap} from '../../util/index.js';
+import DEMData from '../../../src/data/dem_data.js';
+import {RGBAImage} from '../../../src/util/image.js';
+import MercatorCoordinate from '../../../src/geo/mercator_coordinate.js';
+import window from '../../../src/util/window.js';
+import {OverscaledTileID} from '../../../src/source/tile_id.js';
+import styleSpec from '../../../src/style-spec/reference/latest.js';
+import Terrain from '../../../src/style/terrain.js';
+import Tile from '../../../src/source/tile.js';
+import {VertexMorphing} from '../../../src/terrain/draw_terrain_raster.js';
+import {fixedLngLat, fixedCoord, fixedPoint} from '../../util/fixed.js';
 import Point from '@mapbox/point-geometry';
-import LngLat from '../../../src/geo/lng_lat';
-import Marker from '../../../src/ui/marker';
-import Popup from '../../../src/ui/popup';
-import simulate from '../../util/simulate_interaction';
-import {createConstElevationDEM, setMockElevationTerrain} from '../../util/dem_mock';
+import LngLat from '../../../src/geo/lng_lat.js';
+import Marker from '../../../src/ui/marker.js';
+import Popup from '../../../src/ui/popup.js';
+import simulate from '../../util/simulate_interaction.js';
+import {createConstElevationDEM, setMockElevationTerrain} from '../../util/dem_mock.js';
 
 function createStyle() {
     return {
@@ -50,6 +50,31 @@ const createGradientDEM = () => {
             if (word[1] === 256) {
                 word[1] = 0;
                 word[0] += 1;
+            }
+        }
+    }
+    return new DEMData(0, new RGBAImage({height: TILE_SIZE + 2, width: TILE_SIZE + 2}, pixels), "mapbox", false, true);
+};
+
+const createNegativeGradientDEM = () => {
+    const pixels = new Uint8Array((TILE_SIZE + 2) * (TILE_SIZE + 2) * 4);
+    // 1, 134, 160 encodes 0m.
+    const word = [1, 134, 160];
+    for (let j = 1; j < TILE_SIZE + 1; j++) {
+        for (let i = 1; i < TILE_SIZE + 1; i++) {
+            const index = (j * (TILE_SIZE + 2) + i) * 4;
+            pixels[index] = word[0];
+            pixels[index + 1] = word[1];
+            pixels[index + 2] = word[2];
+            // Decrement word for next pixel.
+            word[2] -= 1;
+            if (word[2] === 0) {
+                word[2] = 256;
+                word[1] -= 1;
+            }
+            if (word[1] === 0) {
+                word[1] = 256;
+                word[0] -= 1;
             }
         }
     }
@@ -602,6 +627,91 @@ test('Raycast projection 2D/3D', t => {
                 t.end();
             });
         });
+    });
+});
+
+test('Negative Elevation', (t) => {
+    t.beforeEach((callback) => {
+        window.useFakeXMLHttpRequest();
+        callback();
+    });
+
+    t.afterEach((callback) => {
+        window.restore();
+        callback();
+    });
+
+    const map = createMap(t, {
+        style: createStyle()
+    });
+
+    const assertAlmostEqual = (t, actual, expected, epsilon = 1e-6) => {
+        t.ok(Math.abs(actual - expected) < epsilon);
+    };
+
+    map.on('style.load', () => {
+        map.addSource('mapbox-dem', {
+            "type": "raster-dem",
+            "tiles": ['http://example.com/{z}/{x}/{y}.png'],
+            "tileSize": TILE_SIZE,
+            "maxzoom": 14
+        });
+        const cache = map.style._getSourceCache('mapbox-dem');
+        cache.used = cache._sourceLoaded = true;
+        const mockDem = (dem, cache) => {
+            cache._loadTile = (tile, callback) => {
+                tile.dem = dem;
+                tile.needsHillshadePrepare = true;
+                tile.needsDEMTextureUpload = true;
+                tile.state = 'loaded';
+                callback(null);
+            };
+        };
+        t.test('sampling with negative elevation', t => {
+            mockDem(createNegativeGradientDEM(), cache);
+            map.setTerrain({"source": "mapbox-dem"});
+            map.once('render', () => {
+                map._updateTerrain();
+                t.test('negative elevation', t => {
+                    const minElevation = map.painter.terrain.getMinElevationBelowMSL();
+                    assertAlmostEqual(t, minElevation, -1671.55);
+                    cache.clearTiles();
+                    t.end();
+                });
+                t.end();
+            });
+        });
+
+        t.test('sampling with negative elevation and exaggeration', t => {
+            mockDem(createNegativeGradientDEM(), cache);
+            map.setTerrain({"source": "mapbox-dem", "exaggeration": 1.5});
+            map.once('render', () => {
+                map._updateTerrain();
+                t.test('negative elevation with exaggeration', t => {
+                    const minElevation = map.painter.terrain.getMinElevationBelowMSL();
+                    assertAlmostEqual(t, minElevation, -2507.325);
+                    cache.clearTiles();
+                    t.end();
+                });
+                t.end();
+            });
+        });
+
+        t.test('sampling with no negative elevation', t => {
+            mockDem(createGradientDEM(), cache);
+            map.setTerrain({"source": "mapbox-dem"});
+            map.once('render', () => {
+                map._updateTerrain();
+                t.test('no negative elevation', t => {
+                    const minElevation = map.painter.terrain.getMinElevationBelowMSL();
+                    t.deepEqual(minElevation, 0);
+                    cache.clearTiles();
+                    t.end();
+                });
+                t.end();
+            });
+        });
+        t.end();
     });
 });
 

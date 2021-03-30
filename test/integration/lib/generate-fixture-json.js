@@ -1,11 +1,7 @@
-/* eslint-disable import/no-commonjs */
-const path = require('path');
-const fs = require('fs');
-const glob = require('glob');
-const localizeURLs = require('./localize-urls');
-
-exports.generateFixtureJson = generateFixtureJson;
-exports.getAllFixtureGlobs = getAllFixtureGlobs;
+import path from 'path';
+import fs from 'fs';
+import glob from 'glob';
+import localizeURLs from './localize-urls.js';
 
 /**
  * Analyzes the contents of the specified `path.join(rootDirectory, suiteDirectory)`, and inlines
@@ -16,7 +12,7 @@ exports.getAllFixtureGlobs = getAllFixtureGlobs;
  * @param {string} suiteDirectory
  * @param {boolean} includeImages
  */
-function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 'test/integration/dist', includeImages = false) {
+export function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 'test/integration/dist', includeImages = false) {
     const globs = getAllFixtureGlobs(rootDirectory, suiteDirectory);
     const jsonPaths = globs[0];
     const imagePaths = globs[1];
@@ -26,9 +22,6 @@ function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 't
     if (includeImages) {
         allPaths = allPaths.concat(glob.sync(imagePaths));
     }
-
-    //A Set that stores test names that are malformed so they can be removed later
-    const malformedTests = {};
 
     for (const fixturePath of allPaths) {
         const testName = path.dirname(fixturePath);
@@ -51,7 +44,7 @@ function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 't
             }
         } catch (e) {
             console.log(`Error parsing file: ${fixturePath}`);
-            malformedTests[testName] = true;
+            allFiles[fixturePath] = {PARSE_ERROR: true, message: e.message};
         }
     }
 
@@ -59,9 +52,6 @@ function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 't
     const result = {};
     for (const fullPath in allFiles) {
         const testName = path.dirname(fullPath).replace(rootDirectory, '');
-        //Skip if test is malformed
-        if (malformedTests[testName]) { continue; }
-
         //Lazily initialize an object to store each file wihin a particular testName
         if (result[testName] == null) {
             result[testName] = {};
@@ -84,7 +74,7 @@ function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 't
     });
 }
 
-function getAllFixtureGlobs(rootDirectory, suiteDirectory) {
+export function getAllFixtureGlobs(rootDirectory, suiteDirectory) {
     const basePath = path.join(rootDirectory, suiteDirectory);
     const jsonPaths = path.join(basePath, '/**/[!actual]*.json');
     const imagePaths = path.join(basePath, '/**/*.png');

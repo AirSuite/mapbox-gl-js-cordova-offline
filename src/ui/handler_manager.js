@@ -1,29 +1,29 @@
 // @flow
 
-import {Event} from '../util/evented';
-import DOM from '../util/dom';
-import type Map from './map';
-import HandlerInertia from './handler_inertia';
-import {MapEventHandler, BlockableMapEventHandler} from './handler/map_event';
-import BoxZoomHandler from './handler/box_zoom';
-import TapZoomHandler from './handler/tap_zoom';
-import {MousePanHandler, MouseRotateHandler, MousePitchHandler} from './handler/mouse';
-import TouchPanHandler from './handler/touch_pan';
-import {TouchZoomHandler, TouchRotateHandler, TouchPitchHandler} from './handler/touch_zoom_rotate';
-import KeyboardHandler from './handler/keyboard';
-import ScrollZoomHandler from './handler/scroll_zoom';
-import DoubleClickZoomHandler from './handler/shim/dblclick_zoom';
-import ClickZoomHandler from './handler/click_zoom';
-import TapDragZoomHandler from './handler/tap_drag_zoom';
-import DragPanHandler from './handler/shim/drag_pan';
-import DragRotateHandler from './handler/shim/drag_rotate';
-import TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate';
-import {bindAll, extend} from '../util/util';
-import window from '../util/window';
+import {Event} from '../util/evented.js';
+import DOM from '../util/dom.js';
+import type Map from './map.js';
+import HandlerInertia from './handler_inertia.js';
+import {MapEventHandler, BlockableMapEventHandler} from './handler/map_event.js';
+import BoxZoomHandler from './handler/box_zoom.js';
+import TapZoomHandler from './handler/tap_zoom.js';
+import {MousePanHandler, MouseRotateHandler, MousePitchHandler} from './handler/mouse.js';
+import TouchPanHandler from './handler/touch_pan.js';
+import {TouchZoomHandler, TouchRotateHandler, TouchPitchHandler} from './handler/touch_zoom_rotate.js';
+import KeyboardHandler from './handler/keyboard.js';
+import ScrollZoomHandler from './handler/scroll_zoom.js';
+import DoubleClickZoomHandler from './handler/shim/dblclick_zoom.js';
+import ClickZoomHandler from './handler/click_zoom.js';
+import TapDragZoomHandler from './handler/tap_drag_zoom.js';
+import DragPanHandler from './handler/shim/drag_pan.js';
+import DragRotateHandler from './handler/shim/drag_rotate.js';
+import TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate.js';
+import {bindAll, extend} from '../util/util.js';
+import window from '../util/window.js';
 import Point from '@mapbox/point-geometry';
 import assert from 'assert';
 import {vec3} from 'gl-matrix';
-import MercatorCoordinate, {altitudeFromMercatorZ} from '../geo/mercator_coordinate';
+import MercatorCoordinate, {altitudeFromMercatorZ} from '../geo/mercator_coordinate.js';
 
 export type InputEvent = MouseEvent | TouchEvent | KeyboardEvent | WheelEvent;
 
@@ -352,7 +352,8 @@ class HandlerManager {
         this._updatingCamera = true;
         assert(e.timeStamp !== undefined);
 
-        const inputEvent = e.type === 'renderFrame' ? undefined : ((e: any): InputEvent);
+        const isRenderFrame = e.type === 'renderFrame';
+        const inputEvent = isRenderFrame ? undefined : ((e: any): InputEvent);
 
         /*
          * We don't call e.preventDefault() for any events by default.
@@ -364,7 +365,9 @@ class HandlerManager {
         const activeHandlers = {};
 
         const mapTouches = e.touches ? this._getMapTouches(((e: any): TouchEvent).touches) : undefined;
-        const points = mapTouches ? DOM.touchPos(this._el, mapTouches) : DOM.mousePos(this._el, ((e: any): MouseEvent));
+        const points = mapTouches ? DOM.touchPos(this._el, mapTouches) :
+            isRenderFrame ? undefined : // renderFrame event doesn't have any points
+            DOM.mousePos(this._el, ((e: any): MouseEvent));
 
         for (const {handlerName, handler, allowed} of this._handlers) {
             if (!handler.isEnabled()) continue;

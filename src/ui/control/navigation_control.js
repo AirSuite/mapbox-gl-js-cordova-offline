@@ -1,11 +1,11 @@
 // @flow
 
-import DOM from '../../util/dom';
-import {extend, bindAll} from '../../util/util';
-import {MouseRotateHandler, MousePitchHandler} from '../handler/mouse';
-import window from '../../util/window';
+import DOM from '../../util/dom.js';
+import {extend, bindAll} from '../../util/util.js';
+import {MouseRotateHandler, MousePitchHandler} from '../handler/mouse.js';
+import window from '../../util/window.js';
 
-import type Map from '../map';
+import type Map from '../map.js';
 
 type Options = {
     showCompass?: boolean,
@@ -21,6 +21,7 @@ const defaultOptions: Options = {
 
 /**
  * A `NavigationControl` control contains zoom buttons and a compass.
+ * Add this control to a map using {@link Map#addControl}.
  *
  * @implements {IControl}
  * @param {Object} [options]
