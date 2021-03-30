@@ -169,7 +169,7 @@ class RasterTileSource extends Evented implements Source {
             }
         }
 
-        function done(err, img) {
+        function done(err, img, cacheControl, expires) {
             delete tile.request;
 
             if (tile.aborted) {
