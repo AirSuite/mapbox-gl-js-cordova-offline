@@ -147,7 +147,7 @@ export function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVec
           request.cancel();
           callback();
       };
-    });
+    };
     if (params.data) {
         // if we already got the result earlier (on the main thread), return it directly
         this.deduped.entries[key] = {result: [null, params.data]};
