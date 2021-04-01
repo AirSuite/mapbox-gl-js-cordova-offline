@@ -126,23 +126,13 @@ export function loadVectorTile(params: RequestedTileParameters, callback: LoadVe
     const callbackMetadata = {type: 'parseTile', isSymbolTile: params.isSymbolTile, zoom: params.tileZoom};
     return this.deduped.request(key, callbackMetadata, makeRequest, callback);
 }
-/*
-//This is the old laodVectorData method here for reference from 0.38
-loadVectorData(params, callback) {
-    const xhr = ajax.getArrayBuffer(params.url, done.bind(this));
-    return function abort () { xhr.abort(); };
-    function done(err, response) {
-        if (err) { return callback(err); }
-        const vectorTile = new vt.VectorTile(new Protobuf(response.data));
-        vectorTile.rawData = response.data;
-        vectorTile.cacheControl = response.cacheControl;
-        vectorTile.expires = response.expires;
-        callback(err, vectorTile);
-    }
-}
-*/
-function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback) {
+
+export function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback, skipParse?: boolean) {
+    const key = JSON.stringify(params.request);
+    
+    const makeRequest = (callback) => {
       const arrayBuffer = params.tileData;
+    
       const request = {
         cancel:function(){console.log("Cancel loadVectorMbtile")}
       }
@@ -157,7 +147,14 @@ function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorData
           request.cancel();
           callback();
       };
+    });
+    if (params.data) {
+        // if we already got the result earlier (on the main thread), return it directly
+        this.deduped.entries[key] = {result: [null, params.data]};
+    }
 
+    const callbackMetadata = {type: 'parseTile', isSymbolTile: params.isSymbolTile, zoom: params.tileZoom};
+    return this.deduped.request(key, callbackMetadata, makeRequest, callback);
 }
 /**
  * The {@link WorkerSource} implementation that supports {@link VectorTileSource}.
