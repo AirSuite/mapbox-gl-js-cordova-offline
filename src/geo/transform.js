@@ -998,7 +998,7 @@ class Transform {
      * @returns {LngLatBounds} Returns a {@link LngLatBounds} object describing the map's geographical bounds.
      */
     getBounds(): LngLatBounds {
-        if (this._terrainEnabled()) return this._getBounds3D();
+        //if (this._terrainEnabled()) return this._getBounds3D(); //disabled this for now since it is not returning valid bounds sometimes
         return new LngLatBounds()
             .extend(this.pointLocation(new Point(this._edgeInsets.left, this._edgeInsets.top)))
             .extend(this.pointLocation(new Point(this.width - this._edgeInsets.right, this._edgeInsets.top)))
