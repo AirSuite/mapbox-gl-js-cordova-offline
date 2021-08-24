@@ -11,6 +11,7 @@ import FillBucket from '../data/bucket/fill_bucket.js';
 import FillExtrusionBucket from '../data/bucket/fill_extrusion_bucket.js';
 import {warnOnce, mapObject, values} from '../util/util.js';
 import assert from 'assert';
+import LineAtlas from '../render/line_atlas.js';
 import ImageAtlas from '../render/image_atlas.js';
 import GlyphAtlas from '../render/glyph_atlas.js';
 import EvaluationParameters from '../style/evaluation_parameters.js';
@@ -84,11 +85,15 @@ class WorkerTile {
 
         const buckets: {[_: string]: Bucket} = {};
 
+        // we initially reserve space for a 256x256 atlas, but trim it after processing all line features
+        const lineAtlas = new LineAtlas(256, 256);
+
         const options = {
             featureIndex,
             iconDependencies: {},
             patternDependencies: {},
             glyphDependencies: {},
+            lineAtlas,
             availableImages
         };
 
@@ -156,8 +161,10 @@ class WorkerTile {
             }
         }
 
+        lineAtlas.trim();
+
         let error: ?Error;
-        let glyphMap: ?{[_: string]: {[_: number]: ?StyleGlyph}};
+        let glyphMap: ?{[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}};
         let iconMap: ?{[_: string]: StyleImage};
         let patternMap: ?{[_: string]: StyleImage};
         const taskMetadata = {type: 'maybePrepare', isSymbolTile: this.isSymbolTile, zoom: this.zoom};
@@ -240,6 +247,7 @@ class WorkerTile {
                     featureIndex,
                     collisionBoxArray: this.collisionBoxArray,
                     glyphAtlasImage: glyphAtlas.image,
+                    lineAtlas,
                     imageAtlas,
                     // Only used for benchmarking:
                     glyphMap: this.returnDependencies ? glyphMap : null,

@@ -44,7 +44,11 @@ export class ErrorEvent extends Event {
 }
 
 /**
- * Methods mixed in to other classes for event capabilities.
+ * `Evented` mixes methods into other classes for event capabilities.
+ *
+ * Unless you are developing a plugin you will most likely use these methods through classes like `Map` or `Popup`.
+ *
+ * For lists of events you can listen for, see API documentation for specific classes: [`Map`](https://docs.mapbox.com/mapbox-gl-js/api/map/#map-events), [`Marker`](https://docs.mapbox.com/mapbox-gl-js/api/map/#map-events), [`Popup`](https://docs.mapbox.com/mapbox-gl-js/api/map/#map-events), and [`GeolocationControl`](https://docs.mapbox.com/mapbox-gl-js/api/map/#map-events).
  *
  * @mixin Evented
  */
@@ -61,7 +65,7 @@ export class Evented {
      * @param {Function} listener The function to be called when the event is fired.
      *   The listener function is called with the data object passed to `fire`,
      *   extended with `target` and `type` properties.
-     * @returns {Object} `this`
+     * @returns {Object} Returns itself to allow for method chaining.
      */
     on(type: *, listener: Listener): this {
         this._listeners = this._listeners || {};
@@ -75,7 +79,7 @@ export class Evented {
      *
      * @param {string} type The event type to remove listeners for.
      * @param {Function} listener The listener function to remove.
-     * @returns {Object} `this`
+     * @returns {Object} Returns itself to allow for method chaining.
      */
     off(type: *, listener: Listener) {
         _removeEventListener(type, listener, this._listeners);
@@ -90,9 +94,9 @@ export class Evented {
      * The listener will be called first time the event fires after the listener is registered.
      *
      * @param {string} type The event type to listen for.
-     * @param {Function} listener (optional) The function to be called when the event is fired once.
+     * @param {Function} listener (Optional) The function to be called when the event is fired once.
      *   If not provided, returns a Promise that will be resolved when the event is fired once.
-     * @returns {Object} `this` | Promise
+     * @returns {Object} Returns `this` | Promise.
      */
     once(type: *, listener?: Listener): this | Promise<Event> {
         if (!listener) {
@@ -120,6 +124,7 @@ export class Evented {
 
             // make sure adding or removing listeners inside other listeners won't cause an infinite loop
             const listeners = this._listeners && this._listeners[type] ? this._listeners[type].slice() : [];
+
             for (const listener of listeners) {
                 listener.call(this, event);
             }
@@ -151,8 +156,8 @@ export class Evented {
     /**
      * Returns true if this instance of Evented or any forwarded instances of Evented have a listener for the specified type.
      *
-     * @param {string} type The event type
-     * @returns {boolean} `true` if there is at least one registered listener for specified event type, `false` otherwise
+     * @param {string} type The event type.
+     * @returns {boolean} Returns `true` if there is at least one registered listener for specified event type, `false` otherwise.
      * @private
      */
     listens(type: string) {
@@ -166,7 +171,6 @@ export class Evented {
     /**
      * Bubble all events fired by this instance of Evented to this parent instance of Evented.
      *
-     * @private
      * @returns {Object} `this`
      * @private
      */

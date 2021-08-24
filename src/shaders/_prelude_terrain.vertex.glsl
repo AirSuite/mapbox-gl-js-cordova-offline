@@ -1,10 +1,16 @@
 // Also declared in data/bucket/fill_extrusion_bucket.js
-#define ELEVATION_SCALE 7.3
+#define ELEVATION_SCALE 7.0
+#define ELEVATION_OFFSET 450.0
 
 #ifdef TERRAIN
 
+#ifdef TERRAIN_DEM_FLOAT_FORMAT
+uniform highp sampler2D u_dem;
+uniform highp sampler2D u_dem_prev;
+#else
 uniform sampler2D u_dem;
 uniform sampler2D u_dem_prev;
+#endif
 uniform vec4 u_dem_unpack;
 uniform vec2 u_dem_tl;
 uniform vec2 u_dem_tl_prev;
@@ -30,20 +36,32 @@ float decodeElevation(vec4 v) {
 }
 
 float currentElevation(vec2 apos) {
+#ifdef TERRAIN_DEM_FLOAT_FORMAT
+    vec2 pos = (u_dem_size * (apos / 8192.0 * u_dem_scale + u_dem_tl) + 1.5) / (u_dem_size + 2.0);
+    return u_exaggeration * texture2D(u_dem, pos).a;
+#else
     float dd = 1.0 / (u_dem_size + 2.0);
     vec4 r = tileUvToDemSample(apos / 8192.0, u_dem_size, u_dem_scale, u_dem_tl);
     vec2 pos = r.xy;
     vec2 f = r.zw;
 
     float tl = decodeElevation(texture2D(u_dem, pos));
+#ifdef TERRAIN_DEM_NEAREST_FILTER
+    return u_exaggeration * tl;
+#endif
     float tr = decodeElevation(texture2D(u_dem, pos + vec2(dd, 0.0)));
     float bl = decodeElevation(texture2D(u_dem, pos + vec2(0.0, dd)));
     float br = decodeElevation(texture2D(u_dem, pos + vec2(dd, dd)));
 
     return u_exaggeration * mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+#endif
 }
 
 float prevElevation(vec2 apos) {
+#ifdef TERRAIN_DEM_FLOAT_FORMAT
+    vec2 pos = (u_dem_size * (apos / 8192.0 * u_dem_scale_prev + u_dem_tl_prev) + 1.5) / (u_dem_size + 2.0);
+    return u_exaggeration * texture2D(u_dem_prev, pos).a;
+#else
     float dd = 1.0 / (u_dem_size + 2.0);
     vec4 r = tileUvToDemSample(apos / 8192.0, u_dem_size, u_dem_scale_prev, u_dem_tl_prev);
     vec2 pos = r.xy;
@@ -55,6 +73,7 @@ float prevElevation(vec2 apos) {
     float br = decodeElevation(texture2D(u_dem_prev, pos + vec2(dd, dd)));
 
     return u_exaggeration * mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+#endif
 }
 
 #ifdef TERRAIN_VERTEX_MORPHING
@@ -102,6 +121,12 @@ float occlusionFade(vec4 frag) {
  // This is so that rendering changes are reflected on CPU side for feature querying.
 
 vec4 fourSample(vec2 pos, vec2 off) {
+#ifdef TERRAIN_DEM_FLOAT_FORMAT
+    float tl = texture2D(u_dem, pos).a;
+    float tr = texture2D(u_dem, pos + vec2(off.x, 0.0)).a;
+    float bl = texture2D(u_dem, pos + vec2(0.0, off.y)).a;
+    float br = texture2D(u_dem, pos + off).a;
+#else
     vec4 demtl = vec4(texture2D(u_dem, pos).xyz * 255.0, -1.0);
     float tl = dot(demtl, u_dem_unpack);
     vec4 demtr = vec4(texture2D(u_dem, pos + vec2(off.x, 0.0)).xyz * 255.0, -1.0);
@@ -110,6 +135,7 @@ vec4 fourSample(vec2 pos, vec2 off) {
     float bl = dot(dembl, u_dem_unpack);
     vec4 dembr = vec4(texture2D(u_dem, pos + off).xyz * 255.0, -1.0);
     float br = dot(dembr, u_dem_unpack);
+#endif
     return vec4(tl, tr, bl, br);
 }
 
@@ -144,7 +170,7 @@ float flatElevation(vec2 pack) {
 }
 
 float elevationFromUint16(float word) {
-    return u_exaggeration * word / ELEVATION_SCALE;
+    return u_exaggeration * (word / ELEVATION_SCALE - ELEVATION_OFFSET);
 }
 
 // END: code for fill-extrusion height offseting
