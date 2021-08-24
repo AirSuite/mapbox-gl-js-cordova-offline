@@ -1,15 +1,38 @@
 // @flow
 
-import loadGlyphRange from '../style/load_glyph_range';
+import loadGlyphRange from '../style/load_glyph_range.js';
 
 import TinySDF from '@mapbox/tiny-sdf';
-import isChar from '../util/is_char_in_unicode_block';
-import {asyncAll} from '../util/util';
-import {AlphaImage} from '../util/image';
+import isChar from '../util/is_char_in_unicode_block.js';
+import {asyncAll} from '../util/util.js';
+import {AlphaImage} from '../util/image.js';
 
-import type {StyleGlyph} from '../style/style_glyph';
-import type {RequestManager} from '../util/mapbox';
-import type {Callback} from '../types/callback';
+import type {StyleGlyph} from '../style/style_glyph.js';
+import type {RequestManager} from '../util/mapbox.js';
+import type {Callback} from '../types/callback.js';
+
+/*
+  SDF_SCALE controls the pixel density of locally generated glyphs relative
+  to "normal" SDFs which are generated at 24pt font and a "pixel ratio" of 1.
+  The GlyphManager will generate glyphs SDF_SCALE times as large,
+  but with the same glyph metrics, and the quad generation code will scale them
+  back down so they display at the same size.
+
+  The choice of SDF_SCALE is a trade-off between performance and quality.
+  Glyph generation time grows quadratically with the the scale, while quality
+  improvements drop off rapidly when the scale is higher than the pixel ratio
+  of the device. The scale of 2 buys noticeable improvements on HDPI screens
+  at acceptable cost.
+
+  The scale can be any value, but in order to avoid small distortions, these
+  pixel-based values must come out to integers:
+   - "localGlyphPadding" in GlyphAtlas
+   - Font/Canvas/Buffer size for TinySDF
+  localGlyphPadding + buffer should equal 4 * SDF_SCALE. So if you wanted to
+  use an SDF_SCALE of 1.75, you could manually set localGlyphAdding to 2 and
+  buffer to 5.
+*/
+export const SDF_SCALE = 2;
 
 type Entry = {
     // null means we've requested the range, but the glyph wasn't included in the result.
@@ -19,20 +42,38 @@ type Entry = {
     tinySDF?: TinySDF
 };
 
+export const LocalGlyphMode = {
+    none: 0,
+    ideographs: 1,
+    all: 2
+};
+
 class GlyphManager {
     requestManager: RequestManager;
-    localIdeographFontFamily: ?string;
+    localFontFamily: ?string;
+    localGlyphMode: number;
     entries: {[_: string]: Entry};
+    // Multiple fontstacks may share the same local glyphs, so keep an index
+    // into the glyphs based soley on font weight
+    localGlyphs: {[_: string]: {[id: number]: StyleGlyph | null}};
     url: ?string;
 
     // exposed as statics to enable stubbing in unit tests
     static loadGlyphRange: typeof loadGlyphRange;
     static TinySDF: Class<TinySDF>;
 
-    constructor(requestManager: RequestManager, localIdeographFontFamily: ?string) {
+    constructor(requestManager: RequestManager, localGlyphMode: number, localFontFamily: ?string) {
         this.requestManager = requestManager;
-        this.localIdeographFontFamily = localIdeographFontFamily;
+        this.localGlyphMode = localGlyphMode;
+        this.localFontFamily = localFontFamily;
         this.entries = {};
+        this.localGlyphs = {
+            // Only these four font weights are supported
+            '200': {},
+            '400': {},
+            '500': {},
+            '900': {}
+        };
     }
 
     setURL(url: ?string) {
@@ -130,17 +171,23 @@ class GlyphManager {
     }
 
     _doesCharSupportLocalGlyph(id: number): boolean {
-        /* eslint-disable new-cap */
-        return !!this.localIdeographFontFamily &&
+        if (this.localGlyphMode === LocalGlyphMode.none) {
+            return false;
+        } else if (this.localGlyphMode === LocalGlyphMode.all) {
+            return !!this.localFontFamily;
+        } else {
+            /* eslint-disable new-cap */
+            return !!this.localFontFamily &&
             (isChar['CJK Unified Ideographs'](id) ||
                 isChar['Hangul Syllables'](id) ||
                 isChar['Hiragana'](id) ||
                 isChar['Katakana'](id));
-        /* eslint-enable new-cap */
+            /* eslint-enable new-cap */
+        }
     }
 
     _tinySDF(entry: Entry, stack: string, id: number): ?StyleGlyph {
-        const family = this.localIdeographFontFamily;
+        const family = this.localFontFamily;
         if (!family) {
             return;
         }
@@ -159,20 +206,50 @@ class GlyphManager {
             } else if (/light/i.test(stack)) {
                 fontWeight = '200';
             }
-            tinySDF = entry.tinySDF = new GlyphManager.TinySDF(24, 3, 8, .25, family, fontWeight);
+            tinySDF = entry.tinySDF = new GlyphManager.TinySDF(24 * SDF_SCALE, 3 * SDF_SCALE, 8 * SDF_SCALE, .25, family, fontWeight);
         }
 
-        return {
+        if (this.localGlyphs[tinySDF.fontWeight][id]) {
+            return this.localGlyphs[tinySDF.fontWeight][id];
+        }
+
+        const {data, metrics} = tinySDF.drawWithMetrics(String.fromCharCode(id));
+        const {sdfWidth, sdfHeight, width, height, left, top, advance} = metrics;
+        /*
+        TinySDF's "top" is the distance from the alphabetic baseline to the
+         top of the glyph.
+
+        Server-generated fonts specify "top" relative to an origin above the
+         em box (the origin comes from FreeType, but I'm unclear on exactly
+         how it's derived)
+          ref: https://github.com/mapbox/sdf-glyph-foundry
+
+        Server fonts don't yet include baseline information, so we can't line
+        up exactly with them (and they don't line up with each other)
+          ref: https://github.com/mapbox/node-fontnik/pull/160
+
+        To approximately align TinySDF glyphs with server-provided glyphs, we
+        use this baseline adjustment factor calibrated to be in between DIN Pro
+        and Arial Unicode (but closer to Arial Unicode)
+        */
+        const baselineAdjustment = 27;
+
+        const glyph = this.localGlyphs[tinySDF.fontWeight][id] = {
             id,
-            bitmap: new AlphaImage({width: 30, height: 30}, tinySDF.draw(String.fromCharCode(id))),
+            bitmap: new AlphaImage({
+                width: sdfWidth,
+                height: sdfHeight
+            }, data),
             metrics: {
-                width: 24,
-                height: 24,
-                left: 0,
-                top: -8,
-                advance: 24
+                width: width / SDF_SCALE,
+                height: height / SDF_SCALE,
+                left: left / SDF_SCALE,
+                top: top / SDF_SCALE - baselineAdjustment,
+                advance: advance / SDF_SCALE,
+                localGlyph: true
             }
         };
+        return glyph;
     }
 }
 

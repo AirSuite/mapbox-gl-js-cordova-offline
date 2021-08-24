@@ -1,17 +1,17 @@
 // @flow
 
-import {extend, bindAll} from '../util/util';
-import {Event, Evented} from '../util/evented';
-import {MapMouseEvent} from '../ui/events';
-import DOM from '../util/dom';
-import LngLat from '../geo/lng_lat';
+import {extend, bindAll} from '../util/util.js';
+import {Event, Evented} from '../util/evented.js';
+import {MapMouseEvent} from '../ui/events.js';
+import DOM from '../util/dom.js';
+import LngLat from '../geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
-import window from '../util/window';
-import smartWrap from '../util/smart_wrap';
-import {type Anchor, anchorTranslate, applyAnchorClass} from './anchor';
+import window from '../util/window.js';
+import smartWrap from '../util/smart_wrap.js';
+import {type Anchor, anchorTranslate, applyAnchorClass} from './anchor.js';
 
-import type Map from './map';
-import type {LngLatLike} from '../geo/lng_lat';
+import type Map from './map.js';
+import type {LngLatLike} from '../geo/lng_lat.js';
 import type {PointLike} from '@mapbox/point-geometry';
 
 const defaultOptions = {
@@ -411,7 +411,17 @@ export default class Popup extends Evented {
      *   .addTo(map);
      */
     setDOMContent(htmlNode: Node) {
-        this._createContent();
+        if (this._content) {
+            // Clear out children first.
+            while (this._content.hasChildNodes()) {
+                if (this._content.firstChild) {
+                    this._content.removeChild(this._content.firstChild);
+                }
+            }
+        } else {
+            this._content = DOM.create('div', 'mapboxgl-popup-content', this._container);
+        }
+
         // The close button should be the last tabbable element inside the popup for a good keyboard UX.
         this._content.appendChild(htmlNode);
         this._createCloseButton();
@@ -477,14 +487,6 @@ export default class Popup extends Evented {
         if (this._container) {
             return this._container.classList.toggle(className);
         }
-    }
-
-    _createContent() {
-        if (this._content) {
-            DOM.remove(this._content);
-        }
-
-        this._content = DOM.create('div', 'mapboxgl-popup-content', this._container);
     }
 
     _createCloseButton() {

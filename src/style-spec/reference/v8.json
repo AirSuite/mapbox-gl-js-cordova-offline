@@ -57,6 +57,10 @@
         "intensity": 0.4
       }
     },
+    "terrain": {
+      "type": "terrain",
+      "doc": "A global modifier that elevates layers and markers based on a DEM data source."
+    },
     "sources": {
       "required": true,
       "type": "sources",
@@ -603,6 +607,14 @@
               "macos": "0.1.0"
             }
           }
+        },
+        "sky": {
+          "doc": "A spherical dome around the map that is always rendered behind all other layers.",
+          "sdk-support": {
+            "basic functionality": {
+              "js": "2.0.0"
+            }
+          }
         }
       },
       "doc": "Rendering type of this layer.",
@@ -654,7 +666,8 @@
     "layout_symbol",
     "layout_raster",
     "layout_hillshade",
-    "layout_background"
+    "layout_background",
+    "layout_sky"
   ],
   "layout_background": {
     "visibility": {
@@ -675,6 +688,27 @@
           "android": "2.0.1",
           "ios": "2.0.0",
           "macos": "0.1.0"
+        }
+      },
+      "property-type": "constant"
+    }
+  },
+  "layout_sky": {
+    "visibility": {
+      "type": "enum",
+      "values": {
+        "visible": {
+          "doc": "The layer is shown."
+        },
+        "none": {
+          "doc": "The layer is not shown."
+        }
+      },
+      "default": "visible",
+      "doc": "Whether this layer is displayed.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
         }
       },
       "property-type": "constant"
@@ -2699,7 +2733,7 @@
         }
       },
       "match": {
-        "doc": "Selects the output whose label value matches the input value, or the fallback value if no match is found. The input can be any expression (e.g. `[\"get\", \"building_type\"]`). Each label must be either:\n - a single literal value; or\n - an array of literal values, whose values must be all strings or all numbers (e.g. `[100, 101]` or `[\"c\", \"b\"]`). The input matches if any of the values in the array matches, similar to the `\"in\"` operator.\nEach label must be unique. If the input type does not match the type of the labels, the result will be the fallback value.",
+        "doc": "Selects the output for which the label value matches the input value, or the fallback value if no match is found. The input can be any expression (for example, `[\"get\", \"building_type\"]`). Each label must be unique, and must be either:\n - a single literal value; or\n - an array of literal values, the values of which must be all strings or all numbers (for example `[100, 101]` or `[\"c\", \"b\"]`).\n\nThe input matches if any of the values in the array matches using strict equality, similar to the `\"in\"` operator.\nIf the input type does not match the type of the labels, the result will be the fallback value.",
         "group": "Decision",
         "sdk-support": {
           "basic functionality": {
@@ -3127,6 +3161,15 @@
             "android": "6.5.0",
             "ios": "4.6.0",
             "macos": "0.12.0"
+          }
+        }
+      },
+      "sky-radial-progress": {
+        "doc": "Gets the distance of a point on the sky from the sun position. Returns 0 at sun position and 1 when the distance reaches `sky-gradient-radius`. Can only be used in the `sky-gradient` property.",
+        "group": "sky",
+        "sdk-support": {
+          "basic functionality": {
+            "js": "2.0.0"
           }
         }
       },
@@ -3738,6 +3781,33 @@
       }
     }
   },
+  "terrain" : {
+    "source": {
+      "type": "string",
+      "doc": "Name of a source of `raster_dem` type to be used for terrain elevation.",
+      "required": true
+    },
+    "exaggeration": {
+      "type": "number",
+      "property-type": "data-constant",
+      "default": 1.0,
+      "minimum": 0,
+      "maximum": 1000,
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "Exaggerates the elevation of the terrain by multiplying the data from the DEM with this value.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      }
+    }
+  },
   "paint": [
     "paint_fill",
     "paint_line",
@@ -3747,7 +3817,8 @@
     "paint_symbol",
     "paint_raster",
     "paint_hillshade",
-    "paint_background"
+    "paint_background",
+    "paint_sky"
   ],
   "paint_fill": {
     "fill-antialias": {
@@ -5852,6 +5923,225 @@
           "android": "2.0.1",
           "ios": "2.0.0",
           "macos": "0.1.0"
+        }
+      },
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    }
+  },
+  "paint_sky": {
+    "sky-type": {
+      "type": "enum",
+      "values": {
+        "gradient": {
+          "doc": "Renders the sky with a gradient that can be configured with `sky-gradient-radius` and `sky-gradient`."
+        },
+        "atmosphere": {
+          "doc": "Renders the sky with a simulated atmospheric scattering algorithm, the sun direction can be attached to the light position or explicitly set through `sky-atmosphere-sun`."
+        }
+      },
+      "default": "atmosphere",
+      "doc": "The type of the sky",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "expression": {
+        "interpolated": false,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    },
+    "sky-atmosphere-sun": {
+      "type": "array",
+      "value": "number",
+      "length": 2,
+      "units": "degrees",
+      "minimum": [0, 0],
+      "maximum": [360, 180],
+      "transition": false,
+      "doc": "Position of the sun center [a azimuthal angle, p polar angle]. The azimuthal angle indicates the position of the sun relative to 0° north, where degrees proceed clockwise. The polar angle indicates the height of the sun, where 0° is directly above, at zenith, and 90° at the horizon. When this property is ommitted, the sun center is directly inherited from the light position.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "requires": [
+        {
+          "sky-type": "atmosphere"
+        }
+      ],
+      "expression": {
+        "interpolated": false,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    },
+    "sky-atmosphere-sun-intensity": {
+      "type": "number",
+      "requires": [
+        {
+          "sky-type": "atmosphere"
+        }
+      ],
+      "default": 10,
+      "minimum": 0,
+      "maximum": 100,
+      "transition": false,
+      "doc": "Intensity of the sun as a light source in the atmosphere (on a scale from 0 to a 100). Setting higher values will brighten up the sky.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "property-type": "data-constant"
+    },
+    "sky-gradient-center": {
+      "type": "array",
+      "requires": [
+        {
+          "sky-type": "gradient"
+        }
+      ],
+      "value": "number",
+      "default": [
+        0,
+        0
+      ],
+      "length": 2,
+      "units": "degrees",
+      "minimum": [0, 0],
+      "maximum": [360, 180],
+      "transition": false,
+      "doc": "Position of the gradient center [a azimuthal angle, p polar angle]. The azimuthal angle indicates the position of the gradient center relative to 0° north, where degrees proceed clockwise. The polar angle indicates the height of the gradient center, where 0° is directly above, at zenith, and 90° at the horizon.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "expression": {
+        "interpolated": false,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    },
+    "sky-gradient-radius": {
+      "type": "number",
+      "requires": [
+        {
+          "sky-type": "gradient"
+        }
+      ],
+      "default": 90,
+      "minimum": 0,
+      "maximum": 180,
+      "transition": false,
+      "doc": "The angular distance (measured in degrees) from `sky-gradient-center` up to which the gradient extends. A value of 180 causes the gradient to wrap around to the opposite direction from `sky-gradient-center`.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "expression": {
+        "interpolated": false,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    },
+    "sky-gradient": {
+      "type": "color",
+      "default": [
+        "interpolate",
+        [
+          "linear"
+        ],
+        [
+          "sky-radial-progress"
+        ],
+        0.8,
+        "#87ceeb",
+        1,
+        "white"
+      ],
+      "doc": "Defines a radial color gradient with which to color the sky. The color values can be interpolated with an expression using `sky-radial-progress`. The range [0, 1] for the interpolant covers a radial distance (in degrees) of [0, `sky-gradient-radius`] centered at the position specified by `sky-gradient-center`.",
+      "transition": false,
+      "requires": [
+        {
+          "sky-type": "gradient"
+        }
+      ],
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        },
+        "data-driven styling": {}
+      },
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "sky-radial-progress"
+        ]
+      },
+      "property-type": "color-ramp"
+    },
+    "sky-atmosphere-halo-color": {
+      "type": "color",
+      "default": "white",
+      "doc": "A color applied to the atmosphere sun halo. The alpha channel describes how strongly the sun halo is represented in an atmosphere sky layer.",
+      "transition": false,
+      "requires": [
+        {
+          "sky-type": "atmosphere"
+        }
+      ],
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "property-type": "data-constant"
+    },
+    "sky-atmosphere-color": {
+      "type": "color",
+      "default": "white",
+      "doc": "A color used to tweak the main atmospheric scattering coefficients. Using white applies the default coefficients giving the natural blue color to the atmosphere. This color affects how heavily the corresponding wavelength is represented during scattering. The alpha channel describes the density of the atmosphere, with 1 maximum density and 0 no density.",
+      "transition": false,
+      "requires": [
+        {
+          "sky-type": "atmosphere"
+        }
+      ],
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
+        }
+      },
+      "property-type": "data-constant"
+    },
+    "sky-opacity": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "maximum": 1,
+      "doc": "The opacity of the entire sky layer.",
+      "transition": true,
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.0.0"
         }
       },
       "expression": {

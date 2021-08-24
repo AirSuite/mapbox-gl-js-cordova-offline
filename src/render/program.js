@@ -1,20 +1,22 @@
 // @flow
 
-import {prelude} from '../shaders';
+import {prelude, preludeTerrain} from '../shaders/shaders.js';
 import assert from 'assert';
-import ProgramConfiguration from '../data/program_configuration';
-import VertexArrayObject from './vertex_array_object';
-import Context from '../gl/context';
+import ProgramConfiguration from '../data/program_configuration.js';
+import VertexArrayObject from './vertex_array_object.js';
+import Context from '../gl/context.js';
+import {terrainUniforms} from '../terrain/terrain.js';
+import type {TerrainUniformsType} from '../terrain/terrain.js';
 
-import type SegmentVector from '../data/segment';
-import type VertexBuffer from '../gl/vertex_buffer';
-import type IndexBuffer from '../gl/index_buffer';
-import type DepthMode from '../gl/depth_mode';
-import type StencilMode from '../gl/stencil_mode';
-import type ColorMode from '../gl/color_mode';
-import type CullFaceMode from '../gl/cull_face_mode';
-import type {UniformBindings, UniformValues, UniformLocations} from './uniform_binding';
-import type {BinderUniform} from '../data/program_configuration';
+import type SegmentVector from '../data/segment.js';
+import type VertexBuffer from '../gl/vertex_buffer.js';
+import type IndexBuffer from '../gl/index_buffer.js';
+import type DepthMode from '../gl/depth_mode.js';
+import type StencilMode from '../gl/stencil_mode.js';
+import type ColorMode from '../gl/color_mode.js';
+import type CullFaceMode from '../gl/cull_face_mode.js';
+import type {UniformBindings, UniformValues, UniformLocations} from './uniform_binding.js';
+import type {BinderUniform} from '../data/program_configuration.js';
 
 export type DrawMode =
     | $PropertyType<WebGLRenderingContext, 'LINES'>
@@ -38,13 +40,22 @@ class Program<Us: UniformBindings> {
     fixedUniforms: Us;
     binderUniforms: Array<BinderUniform>;
     failedToCreate: boolean;
+    terrainUniforms: ?TerrainUniformsType;
+
+    static cacheKey(name: string, defines: string[], programConfiguration: ?ProgramConfiguration): string {
+        let key = `${name}${programConfiguration ? programConfiguration.cacheKey : ''}`;
+        for (const define of defines) {
+            key += `/${define}`;
+        }
+        return key;
+    }
 
     constructor(context: Context,
-            name: string,
-            source: {fragmentSource: string, vertexSource: string, staticAttributes: Array<string>, staticUniforms: Array<string>},
-            configuration: ?ProgramConfiguration,
-            fixedUniforms: (Context, UniformLocations) => Us,
-            showOverdrawInspector: boolean) {
+                name: string,
+                source: {fragmentSource: string, vertexSource: string, staticAttributes: Array<string>, staticUniforms: Array<string>},
+                configuration: ?ProgramConfiguration,
+                fixedUniforms: (Context, UniformLocations) => Us,
+                fixedDefines: string[]) {
         const gl = context.gl;
         this.program = gl.createProgram();
 
@@ -61,13 +72,11 @@ class Program<Us: UniformBindings> {
             if (allUniformsInfo.indexOf(uniform) < 0) allUniformsInfo.push(uniform);
         }
 
-        const defines = configuration ? configuration.defines() : [];
-        if (showOverdrawInspector) {
-            defines.push('#define OVERDRAW_INSPECTOR;');
-        }
+        let defines = configuration ? configuration.defines() : [];
+        defines = defines.concat(fixedDefines.map((define) => `#define ${define}`));
 
         const fragmentSource = defines.concat(prelude.fragmentSource, source.fragmentSource).join('\n');
-        const vertexSource = defines.concat(prelude.vertexSource, source.vertexSource).join('\n');
+        const vertexSource = defines.concat(prelude.vertexSource, preludeTerrain.vertexSource, source.vertexSource).join('\n');
         const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
         if (gl.isContextLost()) {
             this.failedToCreate = true;
@@ -118,9 +127,23 @@ class Program<Us: UniformBindings> {
 
         this.fixedUniforms = fixedUniforms(context, uniformLocations);
         this.binderUniforms = configuration ? configuration.getUniforms(context, uniformLocations) : [];
+        if (fixedDefines.indexOf('TERRAIN') !== -1) { this.terrainUniforms = terrainUniforms(context, uniformLocations); }
     }
 
-    draw(context: Context,
+    setTerrainUniformValues(context: Context, terrainUnformValues: UniformValues<TerrainUniformsType>) {
+        if (!this.terrainUniforms) return;
+        const uniforms: TerrainUniformsType = this.terrainUniforms;
+
+        if (this.failedToCreate) return;
+        context.program.set(this.program);
+
+        for (const name in terrainUnformValues) {
+            uniforms[name].set(terrainUnformValues[name]);
+        }
+    }
+
+    draw(
+         context: Context,
          drawMode: DrawMode,
          depthMode: $ReadOnly<DepthMode>,
          stencilMode: $ReadOnly<StencilMode>,

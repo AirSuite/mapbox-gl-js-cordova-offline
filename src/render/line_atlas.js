@@ -1,8 +1,8 @@
 // @flow
 
-import {warnOnce} from '../util/util';
+import {warnOnce} from '../util/util.js';
 
-import type Context from '../gl/context';
+import type Context from '../gl/context.js';
 
 /**
  * A LineAtlas lets us reuse rendered dashed lines
@@ -159,8 +159,20 @@ class LineAtlas {
             return null;
         }
 
+        // dasharray is empty, draws a full line (no dash or no gap length represented, default behavior)
+        if (dasharray.length === 0) {
+            // insert a single dash range in order to draw a full line
+            dasharray.push(1);
+        }
+
         let length = 0;
-        for (let i = 0; i < dasharray.length; i++) { length += dasharray[i]; }
+        for (let i = 0; i < dasharray.length; i++) {
+            if (dasharray[i] < 0) {
+                warnOnce('Negative value is found in line dasharray, replacing values with 0');
+                dasharray[i] = 0;
+            }
+            length += dasharray[i];
+        }
 
         if (length !== 0) {
             const stretch = this.width / length;

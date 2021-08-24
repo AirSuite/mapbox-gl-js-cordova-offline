@@ -1,7 +1,10 @@
-import {test} from '../util/test';
+import {test} from '../util/test.js';
 import fs from 'fs';
 import path from 'path';
 import {version} from '../../package.json';
+
+import {fileURLToPath} from 'url';
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 test('changelog', (t) => {
     const changelog = fs.readFileSync(path.join(__dirname, '../../CHANGELOG.md'), 'utf8');

@@ -1,5 +1,5 @@
 
-import isEqual from './util/deep_equal';
+import isEqual from './util/deep_equal.js';
 
 const operations = {
 
@@ -96,7 +96,12 @@ const operations = {
     /*
      * { command: 'setLighting', args: [lightProperties] }
      */
-    setLight: 'setLight'
+    setLight: 'setLight',
+
+    /*
+     * { command: 'setTerrain', args: [terrainProperties] }
+     */
+    setTerrain: 'setTerrain'
 
 };
 
@@ -375,7 +380,23 @@ function diffStyles(before, after) {
                 }
             });
         }
+
+        // Remove the terrain if the source for that terrain is being removed
+        let beforeTerrain = before.terrain;
+        if (beforeTerrain) {
+            if (sourcesRemoved[beforeTerrain.source]) {
+                commands.push({command: operations.setTerrain, args: [undefined]});
+                beforeTerrain = undefined;
+            }
+        }
+
         commands = commands.concat(removeOrAddSourceCommands);
+
+        // Even though terrain is a top-level property
+        // Its like a layer in the sense that it depends on a source being present.
+        if (!isEqual(beforeTerrain, after.terrain)) {
+            commands.push({command: operations.setTerrain, args: [after.terrain]});
+        }
 
         // Handle changes to `layers`
         diffLayers(beforeLayers, after.layers, commands);

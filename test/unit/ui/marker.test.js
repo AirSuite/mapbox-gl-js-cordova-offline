@@ -1,11 +1,11 @@
-import {test} from '../../util/test';
-import window from '../../../src/util/window';
-import {createMap as globalCreateMap} from '../../util';
-import Marker from '../../../src/ui/marker';
-import Popup from '../../../src/ui/popup';
-import LngLat from '../../../src/geo/lng_lat';
+import {test} from '../../util/test.js';
+import window from '../../../src/util/window.js';
+import {createMap as globalCreateMap} from '../../util/index.js';
+import Marker from '../../../src/ui/marker.js';
+import Popup from '../../../src/ui/popup.js';
+import LngLat from '../../../src/geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
-import simulate from '../../util/simulate_interaction';
+import simulate from '../../util/simulate_interaction.js';
 
 function createMap(t, options = {}) {
     const container = window.document.createElement('div');
@@ -780,6 +780,50 @@ test('Marker pitchAlignment when set to auto defaults to rotationAlignment (sett
     marker.setRotationAlignment('viewport');
     marker.setPitchAlignment('auto');
     t.equal(marker.getRotationAlignment(), marker.getPitchAlignment());
+
+    map.remove();
+    t.end();
+});
+
+test('Drag above horizon clamps', (t) => {
+    const map = createMap(t);
+    map.setPitch(85);
+    const marker = new Marker({draggable: true})
+        .setLngLat(map.unproject([map.transform.width / 2, map.transform.horizonLineFromTop() + 20]))
+        .addTo(map);
+    const el = marker.getElement();
+    const startPos = map.project(marker.getLngLat());
+    const atHorizon = map.project(map.unproject([map.transform.width / 2, map.transform.horizonLineFromTop()]));
+    t.true(atHorizon.y < startPos.y + 5);
+
+    simulate.mousedown(el);
+    simulate.mousemove(el, {clientX: 0, clientY: -40});
+    simulate.mouseup(el);
+
+    const endPos = map.project(marker.getLngLat());
+    t.true(Math.abs(endPos.x - startPos.x) < 0.00000000001);
+    t.equal(endPos.y, atHorizon.y);
+
+    map.remove();
+    t.end();
+});
+
+test('Drag below / behind camera', (t) => {
+    const map = createMap(t);
+    map.setPitch(85);
+    const marker = new Marker({draggable: true})
+        .setLngLat(map.unproject([map.transform.width / 2, map.transform.height - 20]))
+        .addTo(map);
+    const el = marker.getElement();
+    const startPos = map.project(marker.getLngLat());
+
+    simulate.mousedown(el);
+    simulate.mousemove(el, {clientX: 0, clientY: 40});
+    simulate.mouseup(el);
+
+    const endPos = map.project(marker.getLngLat());
+    t.true(Math.abs(endPos.x - startPos.x) < 0.00000000001);
+    t.equal(Math.round(endPos.y), Math.round(startPos.y) + 40);
 
     map.remove();
     t.end();

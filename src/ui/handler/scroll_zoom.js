@@ -1,17 +1,17 @@
 // @flow
 
 import assert from 'assert';
-import DOM from '../../util/dom';
+import DOM from '../../util/dom.js';
 
-import {ease as _ease, bindAll, bezier} from '../../util/util';
-import browser from '../../util/browser';
-import window from '../../util/window';
-import {number as interpolate} from '../../style-spec/util/interpolate';
-import LngLat from '../../geo/lng_lat';
+import {ease as _ease, bindAll, bezier} from '../../util/util.js';
+import browser from '../../util/browser.js';
+import window from '../../util/window.js';
+import {number as interpolate} from '../../style-spec/util/interpolate.js';
+import Point from '@mapbox/point-geometry';
 
-import type Map from '../map';
-import type HandlerManager from '../handler_manager';
-import type Point from '@mapbox/point-geometry';
+import type Map from '../map.js';
+import type HandlerManager from '../handler_manager.js';
+import MercatorCoordinate from '../../geo/mercator_coordinate.js';
 
 // deltaY value for mouse scroll wheel identification
 const wheelZoomDelta = 4.000244140625;
@@ -27,6 +27,8 @@ const maxScalePerFrame = 2;
 
 /**
  * The `ScrollZoomHandler` allows the user to zoom the map by scrolling.
+ * @see [Toggle interactions](https://docs.mapbox.com/mapbox-gl-js/example/toggle-interaction-handlers/)
+ * @see [Disable scroll zoom](https://docs.mapbox.com/mapbox-gl-js/example/disable-scroll-zoom/)
  */
 class ScrollZoomHandler {
     _map: Map;
@@ -35,8 +37,8 @@ class ScrollZoomHandler {
     _active: boolean;
     _zooming: boolean;
     _aroundCenter: boolean;
-    _around: Point;
     _aroundPoint: Point;
+    _aroundCoord: MercatorCoordinate;
     _type: 'wheel' | 'trackpad' | null;
     _lastValue: number;
     _timeout: ?TimeoutID; // used for delayed-handling of a single wheel movement
@@ -168,7 +170,7 @@ class ScrollZoomHandler {
             this._type = null;
             this._lastValue = value;
 
-            // Start a timeout in case this was a singular event, and dely it by up to 40ms.
+            // Start a timeout in case this was a singular event, and delay it by up to 40ms.
             this._timeout = setTimeout(this._onTimeout, 40, e);
 
         } else if (!this._type) {
@@ -200,7 +202,7 @@ class ScrollZoomHandler {
         e.preventDefault();
     }
 
-    _onTimeout(initialEvent: any) {
+    _onTimeout(initialEvent: WheelEvent) {
         this._type = 'wheel';
         this._delta -= this._lastValue;
         if (!this._active) {
@@ -208,7 +210,7 @@ class ScrollZoomHandler {
         }
     }
 
-    _start(e: any) {
+    _start(e: WheelEvent) {
         if (!this._delta) return;
 
         if (this._frameId) {
@@ -226,9 +228,10 @@ class ScrollZoomHandler {
         }
 
         const pos = DOM.mousePos(this._el, e);
+        this._aroundPoint = this._aroundCenter ? this._map.transform.centerPoint : pos;
+        this._aroundCoord = this._map.transform.pointCoordinate3D(this._aroundPoint);
+        this._targetZoom = undefined;
 
-        this._around = LngLat.convert(this._aroundCenter ? this._map.getCenter() : this._map.unproject(pos));
-        this._aroundPoint = this._map.transform.locationPoint(this._around);
         if (!this._frameId) {
             this._frameId = true;
             this._handler._triggerRenderFrame();
@@ -242,6 +245,10 @@ class ScrollZoomHandler {
         if (!this.isActive()) return;
         const tr = this._map.transform;
 
+        const startingZoom = () => {
+            return tr._terrainEnabled() ? tr.computeZoomRelativeTo(this._aroundCoord) : tr.zoom;
+        };
+
         // if we've had scroll events since the last render frame, consume the
         // accumulated delta, and update the target zoom level accordingly
         if (this._delta !== 0) {
@@ -254,22 +261,24 @@ class ScrollZoomHandler {
                 scale = 1 / scale;
             }
 
-            const fromScale = typeof this._targetZoom === 'number' ? tr.zoomScale(this._targetZoom) : tr.scale;
+            const startZoom = startingZoom();
+            const startScale = Math.pow(2.0, startZoom);
+
+            const fromScale = typeof this._targetZoom === 'number' ? tr.zoomScale(this._targetZoom) : startScale;
             this._targetZoom = Math.min(tr.maxZoom, Math.max(tr.minZoom, tr.scaleZoom(fromScale * scale)));
 
             // if this is a mouse wheel, refresh the starting zoom and easing
             // function we're using to smooth out the zooming between wheel
             // events
             if (this._type === 'wheel') {
-                this._startZoom = tr.zoom;
+                this._startZoom = startingZoom();
                 this._easing = this._smoothOutEasing(200);
             }
 
             this._delta = 0;
         }
-
         const targetZoom = typeof this._targetZoom === 'number' ?
-            this._targetZoom : tr.zoom;
+            this._targetZoom : startingZoom();
         const startZoom = this._startZoom;
         const easing = this._easing;
 
@@ -308,8 +317,9 @@ class ScrollZoomHandler {
         return {
             noInertia: true,
             needsRenderFrame: !finished,
-            zoomDelta: zoom - tr.zoom,
+            zoomDelta: zoom - startingZoom(),
             around: this._aroundPoint,
+            aroundCoord: this._aroundCoord,
             originalEvent: this._lastWheelEvent
         };
     }

@@ -5,18 +5,18 @@ import {
     charHasUprightVerticalOrientation,
     charAllowsIdeographicBreaking,
     charInComplexShapingScript
-} from '../util/script_detection';
-import verticalizePunctuation from '../util/verticalize_punctuation';
-import {plugin as rtlTextPlugin} from '../source/rtl_text_plugin';
-import ONE_EM from './one_em';
-import {warnOnce} from '../util/util';
+} from '../util/script_detection.js';
+import verticalizePunctuation from '../util/verticalize_punctuation.js';
+import {plugin as rtlTextPlugin} from '../source/rtl_text_plugin.js';
+import ONE_EM from './one_em.js';
+import {warnOnce} from '../util/util.js';
 
-import type {StyleGlyph, GlyphMetrics} from '../style/style_glyph';
-import {GLYPH_PBF_BORDER} from '../style/parse_glyph_pbf';
-import type {ImagePosition} from '../render/image_atlas';
-import {IMAGE_PADDING} from '../render/image_atlas';
-import type {Rect, GlyphPosition} from '../render/glyph_atlas';
-import Formatted, {FormattedSection} from '../style-spec/expression/types/formatted';
+import type {StyleGlyph, GlyphMetrics} from '../style/style_glyph.js';
+import {GLYPH_PBF_BORDER} from '../style/parse_glyph_pbf.js';
+import type {ImagePosition} from '../render/image_atlas.js';
+import {IMAGE_PADDING} from '../render/image_atlas.js';
+import type {Rect, GlyphPosition} from '../render/glyph_atlas.js';
+import Formatted, {FormattedSection} from '../style-spec/expression/types/formatted.js';
 
 const WritingMode = {
     horizontal: 1,
@@ -38,7 +38,8 @@ export type PositionedGlyph = {
     fontStack: string,
     sectionIndex: number,
     metrics: GlyphMetrics,
-    rect: Rect | null
+    rect: Rect | null,
+    localGlyph?: boolean
 };
 
 export type PositionedLine = {
@@ -642,7 +643,8 @@ function shapeLines(shaping: Shaping,
                     height: size[1],
                     left: IMAGE_PADDING,
                     top: -GLYPH_PBF_BORDER,
-                    advance: vertical ? size[1] : size[0]};
+                    advance: vertical ? size[1] : size[0],
+                    localGlyph: false};
 
                 // Difference between one EM and an image size.
                 // Aligns bottom of an image to a baseline level.
@@ -660,11 +662,11 @@ function shapeLines(shaping: Shaping,
             }
 
             if (!vertical) {
-                positionedGlyphs.push({glyph: codePoint, imageName, x, y: y + baselineOffset, vertical, scale: section.scale, fontStack: section.fontStack, sectionIndex, metrics, rect});
+                positionedGlyphs.push({glyph: codePoint, imageName, x, y: y + baselineOffset, vertical, scale: section.scale, localGlyph: metrics.localGlyph, fontStack: section.fontStack, sectionIndex, metrics, rect});
                 x += metrics.advance * section.scale + spacing;
             } else {
                 shaping.verticalizable = true;
-                positionedGlyphs.push({glyph: codePoint, imageName, x, y: y + baselineOffset, vertical, scale: section.scale, fontStack: section.fontStack, sectionIndex, metrics, rect});
+                positionedGlyphs.push({glyph: codePoint, imageName, x, y: y + baselineOffset, vertical, scale: section.scale, localGlyph: metrics.localGlyph, fontStack: section.fontStack, sectionIndex, metrics, rect});
                 x += verticalAdvance * section.scale + spacing;
             }
         }

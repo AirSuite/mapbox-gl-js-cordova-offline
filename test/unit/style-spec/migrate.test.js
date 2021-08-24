@@ -1,13 +1,16 @@
-import {test} from '../../util/test';
+import {test} from '../../util/test.js';
 import fs from 'fs';
 import glob from 'glob';
 import path from 'path';
-import validate from '../../../src/style-spec/validate_style';
-import v8 from '../../../src/style-spec/reference/v8';
-import migrate from '../../../src/style-spec/migrate';
+import validate from '../../../src/style-spec/validate_style.js';
+import v8 from '../../../src/style-spec/reference/v8.json';
+import migrate from '../../../src/style-spec/migrate.js';
 
 /* eslint-disable import/namespace */
-import * as spec from '../../../src/style-spec/style-spec';
+import * as spec from '../../../src/style-spec/style-spec.js';
+
+import {fileURLToPath} from 'url';
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 const UPDATE = !!process.env.UPDATE;
 
@@ -85,6 +88,41 @@ test('converts stop functions to expressions', (t) => {
         10,
         ['literal', [0.72, 0.98]]
     ]);
+    t.end();
+});
+
+test('converts categorical function on resolvedImage type to valid expression', (t) => {
+    const migrated = migrate({
+        version: 8,
+        sources: {
+            streets: {
+                url: 'mapbox://mapbox.streets',
+                type: 'vector'
+            }
+        },
+        layers: [{
+            id: '1',
+            source: 'streets',
+            'source-layer': 'labels',
+            type: 'symbol',
+            layout: {
+                'icon-image': {
+                    base: 1,
+                    type: 'categorical',
+                    property: 'type',
+                    stops: [['park', 'some-icon']]
+                }
+            }
+        }]
+    }, spec.latest.$version);
+    t.deepEqual(migrated.layers[0].layout['icon-image'], [
+        "match",
+        ["get", "type" ],
+        "park",
+        "some-icon",
+        ""
+    ]);
+    t.deepEqual(validate.parsed(migrated, v8), []);
     t.end();
 });
 

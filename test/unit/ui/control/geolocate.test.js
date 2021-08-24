@@ -1,17 +1,23 @@
-import {test} from '../../../util/test';
-import window from '../../../../src/util/window';
-import {createMap} from '../../../util';
-import GeolocateControl from '../../../../src/ui/control/geolocate_control';
+import {test} from '../../../util/test.js';
+import window from '../../../../src/util/window.js';
+import {createMap} from '../../../util/index.js';
+import GeolocateControl from '../../../../src/ui/control/geolocate_control.js';
 
-// window and navigator globals need to be set for mock-geolocation
-global.window = {};
-global.navigator = {};
-const geolocation = require('mock-geolocation'); // eslint-disable-line import/no-commonjs
-geolocation.use();
+let geolocation;
 
-// assign the mock geolocation to window
-global.window.navigator = global.navigator;
-window.navigator.geolocation = global.window.navigator.geolocation;
+test('geolocation mock loads properly', async (t) => {
+    // window and navigator globals need to be set for mock-geolocation
+    global.window = {};
+    global.navigator = {};
+    geolocation = await import('mock-geolocation');
+    geolocation.use();
+
+    // assign the mock geolocation to window
+    global.window.navigator = global.navigator;
+    window.navigator.geolocation = global.window.navigator.geolocation;
+
+    t.end();
+});
 
 // convert the coordinates of a LngLat object to a fixed number of digits
 function lngLatAsFixed(lngLat, digits) {
@@ -274,7 +280,7 @@ test('GeolocateControl watching map updates recenter on location with dot', (t) 
                 t.ok(geolocate._userLocationDotMarker._element.classList.contains('mapboxgl-user-location-dot-stale'), 'userLocation has stale class');
                 t.end();
             });
-            geolocation.changeError({code: 2, message: 'position unavaliable'});
+            geolocation.changeError({code: 2, message: 'position unavailable'});
         });
         geolocation.change({latitude: 40, longitude: 50, accuracy: 60});
     });
@@ -489,6 +495,39 @@ test('GeolocateControl accuracy circle radius matches reported accuracy', (t) =>
 
     geolocate._geolocateButton.dispatchEvent(click);
     geolocation.send({latitude: 10, longitude: 20, accuracy: 700});
+});
+
+test("GeolocateControl accuracy circle doesn't flicker in size", (t) => {
+    const map = createMap(t);
+    const geolocate = new GeolocateControl({
+        trackUserLocation: true,
+        showUserLocation: true,
+    });
+    map.addControl(geolocate);
+
+    geolocate.once('geolocate', () => {
+        t.ok(geolocate._accuracyCircleMarker._map, 'userLocation accuracy circle marker on map');
+        t.equal(geolocate._accuracy, 150);
+        map.jumpTo({
+            center: [20.123123, 10.123123]
+        });
+        map.once('zoomend', () => {
+            const circleWidth = geolocate._circleElement.style.width;
+            map.once('zoomend', () => {
+                map.once('zoomend', () => {
+                    t.equal(geolocate._circleElement.style.width, circleWidth);
+                    t.end();
+                });
+                map.zoomTo(18, {duration: 0});
+            });
+            map.panBy([123, 123], {duration:0});
+            map.zoomTo(17, {duration: 0});
+        });
+        map.zoomTo(18, {duration: 0});
+    });
+
+    geolocate._geolocateButton.dispatchEvent(new window.Event('click'));
+    geolocation.send({longitude: 20.123123, latitude: 10.123123, accuracy: 150});
 });
 
 test('GeolocateControl shown even if trackUserLocation = false', (t) => {

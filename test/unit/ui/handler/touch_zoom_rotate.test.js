@@ -1,12 +1,13 @@
-import {test} from '../../../util/test';
-import window from '../../../../src/util/window';
-import Map from '../../../../src/ui/map';
-import Marker from '../../../../src/ui/marker';
-import DOM from '../../../../src/util/dom';
-import simulate from '../../../util/simulate_interaction';
+import {test} from '../../../util/test.js';
+import window from '../../../../src/util/window.js';
+import Map from '../../../../src/ui/map.js';
+import Marker from '../../../../src/ui/marker.js';
+import DOM from '../../../../src/util/dom.js';
+import simulate from '../../../util/simulate_interaction.js';
 
 function createMap(t) {
     t.stub(Map.prototype, '_detectMissingCSS');
+    t.stub(Map.prototype, '_authenticate');
     return new Map({container: DOM.create('div', '', window.document.body)});
 }
 
@@ -283,4 +284,3 @@ test('TouchZoomRotateHandler does not zoom when touching an element not on the m
     map.remove();
     t.end();
 });
-

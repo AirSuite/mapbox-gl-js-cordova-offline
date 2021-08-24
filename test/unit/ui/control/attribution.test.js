@@ -1,14 +1,13 @@
-import {test} from '../../../util/test';
-import config from '../../../../src/util/config';
-import AttributionControl from '../../../../src/ui/control/attribution_control';
-import {createMap as globalCreateMap} from '../../../util';
-import simulate from '../../../util/simulate_interaction';
+import {test} from '../../../util/test.js';
+import config from '../../../../src/util/config.js';
+import AttributionControl from '../../../../src/ui/control/attribution_control.js';
+import {createMap as globalCreateMap} from '../../../util/index.js';
+import simulate from '../../../util/simulate_interaction.js';
 
 function createMap(t) {
-    config.ACCESS_TOKEN = 'pk.123';
-
     return globalCreateMap(t, {
         attributionControl: false,
+        accessToken: 'pk.123',
         style: {
             version: 8,
             sources: {},
@@ -247,7 +246,7 @@ test('AttributionControl hides attributions for sources that are not currently v
     map.on('load', () => {
         map.addSource('1', {type: 'geojson', data: {type: 'FeatureCollection', features: []}, attribution: 'Used'});
         map.addSource('2', {type: 'geojson', data: {type: 'FeatureCollection', features: []}, attribution: 'Not used'});
-        map.addSource('3', {type: 'geojson', data: {type: 'FeatureCollection', features: []}, attribution: 'Vibility none'});
+        map.addSource('3', {type: 'geojson', data: {type: 'FeatureCollection', features: []}, attribution: 'Visibility none'});
         map.addLayer({id: '1', type: 'fill', source: '1'});
         map.addLayer({id: '3', type: 'fill', source: '3', layout: {visibility: 'none'}});
     });
