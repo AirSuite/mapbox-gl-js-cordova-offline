@@ -1,6 +1,6 @@
 // @flow
 
-import MercatorCoordinate from '../geo/mercator_coordinate.js';
+import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate.js';
 import {degToRad, wrap} from '../util/util.js';
 import {vec3, vec4, quat, mat4} from 'gl-matrix';
 import type {Elevation} from '../terrain/elevation.js';
@@ -78,27 +78,37 @@ export function orientationFromFrame(forward: vec3, up: vec3): ?quat {
 
 /**
  * Options for accessing physical properties of the underlying camera entity.
- * A direct access to these properties allows more flexible and precise controlling of the camera
- * while also being fully compatible and interchangeable with CameraOptions. All fields are optional.
- * See {@link Map#setFreeCameraOptions} and {@link Map#getFreeCameraOptions}
+ * Direct access to these properties allows more flexible and precise controlling of the camera.
+ * These options are also fully compatible and interchangeable with CameraOptions. All fields are optional.
+ * See {@link Map#setFreeCameraOptions} and {@link Map#getFreeCameraOptions}.
  *
- * @param {MercatorCoordinate} position Position of the camera in slightly modified web mercator coordinates
+ * @param {MercatorCoordinate} position Position of the camera in slightly modified web mercator coordinates.
         - The size of 1 unit is the width of the projected world instead of the "mercator meter".
           Coordinate [0, 0, 0] is the north-west corner and [1, 1, 0] is the south-east corner.
         - Z coordinate is conformal and must respect minimum and maximum zoom values.
-        - Zoom is automatically computed from the altitude (z)
- * @param {quat} orientation Orientation of the camera represented as a unit quaternion [x, y, z, w]
-        in a left-handed coordinate space. Direction of the rotation is clockwise around the respective axis.
-        The default pose of the camera is such that the forward vector is looking up the -Z axis and
-        the up vector is aligned with north orientation of the map:
+        - Zoom is automatically computed from the altitude (z).
+ * @param {quat} orientation Orientation of the camera represented as a unit quaternion [x, y, z, w] in a left-handed coordinate space.
+        Direction of the rotation is clockwise around the respective axis.
+        The default pose of the camera is such that the forward vector is looking up the -Z axis.
+        The up vector is aligned with north orientation of the map:
           forward: [0, 0, -1]
           up:      [0, -1, 0]
           right    [1, 0, 0]
-        Orientation can be set freely but certain constraints still apply
+        Orientation can be set freely but certain constraints still apply:
          - Orientation must be representable with only pitch and bearing.
          - Pitch has an upper limit
- * @see [Animate the camera around a point in 3D terrain](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-point/)
- * @see [Animate the camera along a path](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-path/)
+ * @example
+ * const camera = map.getFreeCameraOptions();
+ *
+ * const position = [138.72649, 35.33974];
+ * const altitude = 3000;
+ *
+ * camera.position = mapboxgl.MercatorCoordinate.fromLngLat(position, altitude);
+ * camera.lookAtPoint([138.73036, 35.36197]);
+ *
+ * map.setFreeCameraOptions(camera);
+ * @see [Example: Animate the camera around a point in 3D terrain](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-point/)
+ * @see [Example: Animate the camera along a path](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-path/)
 */
 class FreeCameraOptions {
     orientation: ?quat;
@@ -123,9 +133,19 @@ class FreeCameraOptions {
      * Helper function for setting orientation of the camera by defining a focus point
      * on the map.
      *
-     * @param {LngLatLike} location Location of the focus point on the map
+     * @param {LngLatLike} location Location of the focus point on the map.
      * @param {vec3?} up Up vector of the camera is necessary in certain scenarios where bearing can't be deduced
      *      from the viewing direction.
+     * @example
+     * const camera = map.getFreeCameraOptions();
+     *
+     * const position = [138.72649, 35.33974];
+     * const altitude = 3000;
+     *
+     * camera.position = mapboxgl.MercatorCoordinate.fromLngLat(position, altitude);
+     * camera.lookAtPoint([138.73036, 35.36197]);
+     * // Apply camera changes
+     * map.setFreeCameraOptions(camera);
      */
     lookAtPoint(location: LngLatLike, up?: vec3) {
         this.orientation = null;
@@ -133,7 +153,7 @@ class FreeCameraOptions {
             return;
         }
 
-        const altitude = this._elevation ? this._elevation.getAtPoint(MercatorCoordinate.fromLngLat(location)) : 0;
+        const altitude = this._elevation ? this._elevation.getAtPointOrZero(MercatorCoordinate.fromLngLat(location)) : 0;
         const pos: MercatorCoordinate = this.position;
         const target = MercatorCoordinate.fromLngLat(location, altitude);
         const forward = [target.x - pos.x, target.y - pos.y, target.z - pos.z];
@@ -149,8 +169,15 @@ class FreeCameraOptions {
     /**
      * Helper function for setting the orientation of the camera as a pitch and a bearing.
      *
-     * @param {number} pitch Pitch angle in degrees
-     * @param {number} bearing Bearing angle in degrees
+     * @param {number} pitch Pitch angle in degrees.
+     * @param {number} bearing Bearing angle in degrees.
+     * @example
+     * const camera = map.getFreeCameraOptions();
+     *
+     * // Update camera pitch and bearing
+     * camera.setPitchBearing(80, 90);
+     * // Apply changes
+     * map.setFreeCameraOptions(camera);
      */
     setPitchBearing(pitch: number, bearing: number) {
         this.orientation = orientationFromPitchBearing(degToRad(pitch), degToRad(-bearing));
@@ -247,6 +274,20 @@ class FreeCamera {
         return cameraToWorld;
     }
 
+    getWorldToCameraPosition(worldSize: number, pixelsPerMeter: number, uniformScale: number): Float64Array {
+        const invPosition = this.position;
+
+        vec3.scale(invPosition, invPosition, -worldSize);
+        const matrix = new Float64Array(16);
+        mat4.fromScaling(matrix, [uniformScale, uniformScale, uniformScale]);
+        mat4.translate(matrix, matrix, invPosition);
+
+        // Adjust scale on z (3rd column 3rd row)
+        matrix[10] *= pixelsPerMeter;
+
+        return matrix;
+    }
+
     getWorldToCamera(worldSize: number, pixelsPerMeter: number): Float64Array {
         // transformation chain from world space to camera space:
         // 1. Height value (z) of renderables is in meters. Scale z coordinate by pixelsPerMeter
@@ -286,6 +327,12 @@ class FreeCamera {
         const matrix = new Float64Array(16);
         mat4.perspective(matrix, fovy, aspectRatio, nearZ, farZ);
         return matrix;
+    }
+
+    getDistanceToElevation(elevationMeters: number): number {
+        const z0 = elevationMeters === 0 ? 0 : mercatorZfromAltitude(elevationMeters, this.position[1]);
+        const f = this.forward();
+        return (z0 - this.position[2]) / f[2];
     }
 
     clone(): FreeCamera {

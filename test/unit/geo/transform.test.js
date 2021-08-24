@@ -117,6 +117,112 @@ test('transform', (t) => {
         t.end();
     });
 
+    t.test('maxBounds should not jump to the wrong side when crossing 180th meridian (#10447)', (t) => {
+        t.test(' to the East', (t) => {
+            const transform = new Transform();
+            transform.zoom = 6;
+            transform.resize(500, 500);
+            transform.lngRange = [160, 190];
+            transform.latRange = [-55, -23];
+
+            transform.center = new LngLat(-170, -40);
+
+            t.ok(transform.center.lng < 190);
+            t.ok(transform.center.lng > 175);
+
+            t.end();
+        });
+
+        t.test('to the West', (t) => {
+            const transform = new Transform();
+            transform.zoom = 6;
+            transform.resize(500, 500);
+            transform.lngRange = [-190, -160];
+            transform.latRange = [-55, -23];
+
+            transform.center = new LngLat(170, -40);
+
+            t.ok(transform.center.lng > -190);
+            t.ok(transform.center.lng < -175);
+
+            t.end();
+        });
+
+        t.test('longitude 0 - 360', (t) => {
+            const transform = new Transform();
+            transform.zoom = 6;
+            transform.resize(500, 500);
+            transform.lngRange = [0, 360];
+            transform.latRange = [-90, 90];
+
+            transform.center = new LngLat(-155, 0);
+
+            t.same(transform.center, new LngLat(205, 0));
+
+            t.end();
+        });
+
+        t.test('longitude -360 - 0', (t) => {
+            const transform = new Transform();
+            transform.zoom = 6;
+            transform.resize(500, 500);
+            transform.lngRange = [-360, 0];
+            transform.latRange = [-90, 90];
+
+            transform.center = new LngLat(160, 0);
+            t.same(transform.center.lng.toFixed(10), -200);
+
+            t.end();
+        });
+
+        t.end();
+
+    });
+
+    t.test('maxBounds snaps in the correct direction (no forcing to other edge when width < 360)', (t) => {
+        const transform = new Transform();
+        transform.zoom = 6;
+        transform.resize(500, 500);
+        transform.setMaxBounds(new LngLatBounds([-160, -20], [160, 20]));
+
+        transform.center = new LngLat(170, 0);
+        t.ok(transform.center.lng > 150);
+        t.ok(transform.center.lng < 160);
+
+        transform.center = new LngLat(-170, 0);
+        t.ok(transform.center.lng > -160);
+        t.ok(transform.center.lng < -150);
+
+        t.end();
+    });
+
+    t.test('maxBounds works with unwrapped values across the 180th meridian (#6985)', (t) => {
+        const transform = new Transform();
+        transform.zoom = 6;
+        transform.resize(500, 500);
+        transform.setMaxBounds(new LngLatBounds([160, -20], [-160, 20]));  //East bound is "smaller"
+
+        const wrap = val => ((val + 360) % 360);
+
+        transform.center = new LngLat(170, 0);
+        t.same(wrap(transform.center.lng), 170);
+
+        transform.center = new LngLat(-170, 0);
+        t.same(wrap(transform.center.lng), wrap(-170));
+
+        transform.center = new LngLat(150, 0);
+        let lng = wrap(transform.center.lng);
+        t.ok(lng > 160);
+        t.ok(lng < 180);
+
+        transform.center = new LngLat(-150, 0);
+        lng = wrap(transform.center.lng);
+        t.ok(lng < 360 - 160);
+        t.ok(lng > 360 - 180);
+
+        t.end();
+    });
+
     t.test('_minZoomForBounds respects latRange and lngRange', (t) => {
         t.test('it returns 0 when latRange and lngRange are undefined', (t) => {
             const transform = new Transform();
@@ -397,9 +503,76 @@ test('transform', (t) => {
         t.end();
     });
 
+    test('coveringTiles with fog culling enabled', (t) => {
+        const options = {
+            minzoom: 1,
+            maxzoom: 10,
+            tileSize: 512
+        };
+
+        const transform = new Transform();
+        transform.resize(200, 200);
+        transform.center = {lng: -0.01, lat: 0.01};
+        transform.zoom = 0;
+        transform.fogCullDistSq = 1.5;
+        transform.pitch = 85.0;
+        t.deepEqual(transform.coveringTiles(options), []);
+
+        transform.zoom = 1;
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(1, 0, 1, 0, 1),
+            new OverscaledTileID(1, 0, 1, 1, 1)]);
+
+        transform.zoom = 2.4;
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(2, 0, 2, 1, 2),
+            new OverscaledTileID(2, 0, 2, 2, 2)]);
+
+        transform.zoom = 10;
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(10, 0, 10, 511, 512),
+            new OverscaledTileID(10, 0, 10, 512, 512)]);
+
+        transform.zoom = 11;
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(10, 0, 10, 511, 511),
+            new OverscaledTileID(10, 0, 10, 512, 511),
+            new OverscaledTileID(10, 0, 10, 511, 512),
+            new OverscaledTileID(10, 0, 10, 512, 512)]);
+
+        transform.zoom = 5.1;
+        transform.bearing = 32.0;
+        transform.center = new LngLat(56.90, 48.20);
+        transform.resize(1024, 768);
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(5, 0, 5, 21, 11),
+            new OverscaledTileID(5, 0, 5, 20, 11),
+            new OverscaledTileID(5, 0, 5, 20, 10),
+            new OverscaledTileID(5, 0, 5, 21, 12),
+            new OverscaledTileID(5, 0, 5, 20, 12)
+        ]);
+
+        transform.zoom = 8;
+        transform.pitch = 60;
+        transform.bearing = 45.0;
+        transform.center = new LngLat(25.02, 60.15);
+        transform.resize(300, 50);
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(8, 0, 8, 145, 74)
+        ]);
+
+        transform.resize(50, 300);
+        t.deepEqual(transform.coveringTiles(options), [
+            new OverscaledTileID(8, 0, 8, 145, 74),
+            new OverscaledTileID(8, 0, 8, 145, 73)
+        ]);
+
+        t.end();
+    });
+
     const createCollisionElevation = (elevation) => {
         return {
-            getAtPoint(p) {
+            getAtPointOrZero(p) {
                 if (p.x === 0.5 && p.y === 0.5)
                     return 0;
                 return elevation;
@@ -416,7 +589,7 @@ test('transform', (t) => {
 
     const createConstantElevation = (elevation) => {
         return {
-            getAtPoint(_) {
+            getAtPointOrZero(_) {
                 return elevation;
             },
             getForTilePoints(tileID, points) {
@@ -431,7 +604,7 @@ test('transform', (t) => {
 
     const createRampElevation = (scale) => {
         return {
-            getAtPoint(p) {
+            getAtPointOrZero(p) {
                 return scale * (p.x + p.y - 1.0);
             },
             getForTilePoints(tileID, points) {
@@ -476,7 +649,7 @@ test('transform', (t) => {
         transform.center = {lng: 0, lat: 0};
         transform.zoom = 16;
         transform.elevation = createRampElevation(500);
-        t.equal(transform.elevation.getAtPoint(new MercatorCoordinate(1.0, 0.5)), 250);
+        t.equal(transform.elevation.getAtPointOrZero(new MercatorCoordinate(1.0, 0.5)), 250);
 
         t.equal(transform.zoom, 16);
         t.equal(transform._cameraZoom, 16);
@@ -540,7 +713,7 @@ test('transform', (t) => {
         let tilesDefaultElevation = 0;
         const tileElevation = {};
         const elevation = {
-            getAtPoint(_) {
+            getAtPointOrZero(_) {
                 return this.exaggeration() * centerElevation;
             },
             getMinMaxForTile(tileID) {
@@ -739,7 +912,7 @@ test('transform', (t) => {
 
         const transform = new Transform();
         transform.elevation = {
-            getAtPoint(_) {
+            getAtPointOrZero(_) {
                 return 2760;
             },
             getMinMaxForTile(tileID) {
@@ -1229,7 +1402,7 @@ test('transform', (t) => {
             const transform = new Transform(0, 22, 0, 85);
             transform.resize(100, 100);
             transform._elevation = {
-                getAtPoint: () => groundElevation,
+                getAtPointOrZero: () => groundElevation,
                 exaggeration: () => 1.0,
                 raycast: () => undefined,
                 getMinElevationBelowMSL: () => 0

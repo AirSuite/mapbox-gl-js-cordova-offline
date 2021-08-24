@@ -10,6 +10,7 @@ import ImageManager from '../render/image_manager.js';
 import GlyphManager, {LocalGlyphMode} from '../render/glyph_manager.js';
 import Light from './light.js';
 import Terrain from './terrain.js';
+import Fog from './fog.js';
 import LineAtlas from '../render/line_atlas.js';
 import {pick, clone, extend, deepEqual, filterObject} from '../util/util.js';
 import {getJSON, getReferrer, makeRequest, ResourceType} from '../util/ajax.js';
@@ -64,7 +65,8 @@ import type {
     StyleSpecification,
     LightSpecification,
     SourceSpecification,
-    TerrainSpecification
+    TerrainSpecification,
+    FogSpecification
 } from '../style-spec/types.js';
 import type {CustomLayerInterface} from './style_layer/custom_style_layer.js';
 import type {Validator} from './validate_style.js';
@@ -83,7 +85,8 @@ const supportedDiffOperations = pick(diffOperations, [
     'setLight',
     'setTransition',
     'setGeoJSONSourceData',
-    'setTerrain'
+    'setTerrain',
+    'setFog'
     // 'setGlyphs',
     // 'setSprite',
 ]);
@@ -122,6 +125,7 @@ class Style extends Evented {
     lineAtlas: LineAtlas;
     light: Light;
     terrain: ?Terrain;
+    fog: ?Fog;
 
     _request: ?Cancelable;
     _spriteRequest: ?Cancelable;
@@ -146,6 +150,7 @@ class Style extends Evented {
     _updatedPaintProps: {[layer: string]: true};
     _layerOrderChanged: boolean;
     _availableImages: Array<string>;
+    _markersNeedUpdate: boolean;
 
     crossTileSymbolIndex: CrossTileSymbolIndex;
     pauseablePlacement: PauseablePlacement;
@@ -185,6 +190,7 @@ class Style extends Evented {
         this._availableImages = [];
         this._order  = [];
         this._drapedFirstOrder = [];
+        this._markersNeedUpdate = false;
 
         this._resetUpdates();
 
@@ -322,6 +328,9 @@ class Style extends Evented {
         if (this.stylesheet.terrain) {
             this._createTerrain(this.stylesheet.terrain);
         }
+        if (this.stylesheet.fog) {
+            this._createFog(this.stylesheet.fog);
+        }
         this._updateDrapeFirstLayers();
 
         this.fire(new Event('data', {dataType: 'style'}));
@@ -400,6 +409,10 @@ class Style extends Evented {
             return true;
         }
 
+        if (this.fog && this.fog.hasTransition()) {
+            return true;
+        }
+
         for (const id in this._sourceCaches) {
             if (this._sourceCaches[id].hasTransition()) {
                 return true;
@@ -468,6 +481,9 @@ class Style extends Evented {
             }
 
             this.light.updateTransitions(parameters);
+            if (this.fog) {
+                this.fog.updateTransitions(parameters);
+            }
 
             this._resetUpdates();
         }
@@ -513,7 +529,15 @@ class Style extends Evented {
         if (this.terrain) {
             this.terrain.recalculate(parameters);
         }
+        if (this.fog) {
+            this.fog.recalculate(parameters);
+        }
         this.z = parameters.zoom;
+
+        if (this._markersNeedUpdate) {
+            this._updateMarkersOpacity();
+            this._markersNeedUpdate = false;
+        }
 
         if (changed) {
             this.fire(new Event('data', {dataType: 'style'}));
@@ -679,9 +703,9 @@ class Style extends Evented {
     }
 
     /**
-     * Remove a source from this stylesheet, given its id.
-     * @param {string} id id of the source to remove
-     * @throws {Error} if no source is found with the given ID
+     * Remove a source from this stylesheet, given its ID.
+     * @param {string} id ID of the source to remove.
+     * @throws {Error} If no source is found with the given ID.
      * @returns {Map} The {@link Map} object.
      */
     removeSource(id: string) {
@@ -719,9 +743,9 @@ class Style extends Evented {
     }
 
     /**
-    * Set the data of a GeoJSON source, given its id.
-    * @param {string} id id of the source
-    * @param {GeoJSON|string} data GeoJSON source
+    * Set the data of a GeoJSON source, given its ID.
+    * @param {string} id ID of the source.
+    * @param {GeoJSON|string} data GeoJSON source.
     */
     setGeoJSONSourceData(id: string, data: GeoJSON | string) {
         this._checkLoaded();
@@ -735,9 +759,9 @@ class Style extends Evented {
     }
 
     /**
-     * Get a source by id.
-     * @param {string} id id of the desired source
-     * @returns {Object} source
+     * Get a source by ID.
+     * @param {string} id ID of the desired source.
+     * @returns {Object} The source object.
      */
     getSource(id: string): Object {
         const sourceCache = this._getSourceCache(id);
@@ -748,7 +772,7 @@ class Style extends Evented {
      * Add a layer to the map style. The layer will be inserted before the layer with
      * ID `before`, or appended if `before` is omitted.
      * @param {Object | CustomLayerInterface} layerObject The style layer to add.
-     * @param {string} [before] ID of an existing layer to insert before
+     * @param {string} [before] ID of an existing layer to insert before.
      * @param {Object} options Style setter options.
      * @returns {Map} The {@link Map} object.
      */
@@ -829,8 +853,8 @@ class Style extends Evented {
     /**
      * Moves a layer to a different z-position. The layer will be inserted before the layer with
      * ID `before`, or appended if `before` is omitted.
-     * @param {string} id  ID of the layer to move
-     * @param {string} [before] ID of an existing layer to insert before
+     * @param {string} id  ID of the layer to move.
+     * @param {string} [before] ID of an existing layer to insert before.
      */
     moveLayer(id: string, before?: string) {
         this._checkLoaded();
@@ -866,7 +890,7 @@ class Style extends Evented {
      *
      * If no such layer exists, an `error` event is fired.
      *
-     * @param {string} id id of the layer to remove
+     * @param {string} id ID of the layer to remove.
      * @fires error
      */
     removeLayer(id: string) {
@@ -903,28 +927,28 @@ class Style extends Evented {
     /**
      * Return the style layer object with the given `id`.
      *
-     * @param {string} id - id of the desired layer
-     * @returns {?Object} a layer, if one with the given `id` exists
+     * @param {string} id ID of the desired layer.
+     * @returns {?Object} A layer, if one with the given `id` exists.
      */
     getLayer(id: string): Object {
         return this._layers[id];
     }
 
     /**
-     * checks if a specific layer is present within the style.
+     * Checks if a specific layer is present within the style.
      *
-     * @param {string} id - id of the desired layer
-     * @returns {boolean} a boolean specifying if the given layer is present
+     * @param {string} id ID of the desired layer.
+     * @returns {boolean} A boolean specifying if the given layer is present.
      */
     hasLayer(id: string): boolean {
         return id in this._layers;
     }
 
     /**
-     * checks if a specific layer type is present within the style.
+     * Checks if a specific layer type is present within the style.
      *
-     * @param {string} type - type of the desired layer
-     * @returns {boolean} a boolean specifying if the given layer type is present
+     * @param {string} type Type of the desired layer.
+     * @returns {boolean} A boolean specifying if the given layer type is present.
      */
     hasLayerType(type: string): boolean {
         for (const layerId in this._layers) {
@@ -984,9 +1008,9 @@ class Style extends Evented {
     }
 
     /**
-     * Get a layer's filter object
-     * @param {string} layer the layer to inspect
-     * @returns {*} the layer's filter, if any
+     * Get a layer's filter object.
+     * @param {string} layer The layer to inspect.
+     * @returns {*} The layer's filter, if any.
      */
     getFilter(layer: string) {
         return clone(this.getLayer(layer).filter);
@@ -1008,10 +1032,10 @@ class Style extends Evented {
     }
 
     /**
-     * Get a layout property's value from a given layer
-     * @param {string} layerId the layer to inspect
-     * @param {string} name the name of the layout property
-     * @returns {*} the property value
+     * Get a layout property's value from a given layer.
+     * @param {string} layerId The layer to inspect.
+     * @param {string} name The name of the layout property.
+     * @returns {*} The property value.
      */
     getLayoutProperty(layerId: string, name: string) {
         const layer = this.getLayer(layerId);
@@ -1146,6 +1170,7 @@ class Style extends Evented {
             metadata: this.stylesheet.metadata,
             light: this.stylesheet.light,
             terrain: this.stylesheet.terrain,
+            fog: this.stylesheet.fog,
             center: this.stylesheet.center,
             zoom: this.stylesheet.zoom,
             bearing: this.stylesheet.bearing,
@@ -1381,6 +1406,7 @@ class Style extends Evented {
             delete this.stylesheet.terrain;
             this.dispatcher.broadcast('enableTerrain', false);
             this._force3DLayerUpdate();
+            this._markersNeedUpdate = true;
             return;
         }
 
@@ -1417,6 +1443,73 @@ class Style extends Evented {
         }
 
         this._updateDrapeFirstLayers();
+        this._markersNeedUpdate = true;
+    }
+
+    _createFog(fogOptions: FogSpecification) {
+        const fog = this.fog = new Fog(fogOptions);
+        this.stylesheet.fog = fogOptions;
+        const parameters = {
+            now: browser.now(),
+            transition: extend({
+                duration: 0
+            }, this.stylesheet.transition)
+        };
+
+        fog.updateTransitions(parameters);
+    }
+
+    _updateMarkersOpacity() {
+        if (this.map._markers.length === 0) {
+            return;
+        }
+        this.map._requestDomTask(() => {
+            for (const marker of this.map._markers) {
+                marker._evaluateOpacity();
+            }
+        });
+    }
+
+    getFog() {
+        return this.fog ? this.fog.get() : null;
+    }
+
+    setFog(fogOptions: FogSpecification) {
+        this._checkLoaded();
+
+        if (!fogOptions) {
+            // Remove fog
+            delete this.fog;
+            delete this.stylesheet.fog;
+            this._markersNeedUpdate = true;
+            return;
+        }
+
+        if (!this.fog) {
+            // Initialize Fog
+            this._createFog(fogOptions);
+        } else {
+            // Updating fog
+            const fog = this.fog;
+            const currSpec = fog.get();
+            for (const key in fogOptions) {
+                if (!deepEqual(fogOptions[key], currSpec[key])) {
+                    fog.set(fogOptions);
+                    this.stylesheet.fog = fogOptions;
+                    const parameters = {
+                        now: browser.now(),
+                        transition: extend({
+                            duration: 0
+                        }, this.stylesheet.transition)
+                    };
+
+                    fog.updateTransitions(parameters);
+                    break;
+                }
+            }
+        }
+
+        this._markersNeedUpdate = true;
     }
 
     _updateDrapeFirstLayers() {
@@ -1560,7 +1653,7 @@ class Style extends Evented {
         }
 
         if (forceFullPlacement || !this.pauseablePlacement || (this.pauseablePlacement.isDone() && !this.placement.stillRecent(browser.now(), transform.zoom))) {
-            this.pauseablePlacement = new PauseablePlacement(transform, this._order, forceFullPlacement, showCollisionBoxes, fadeDuration, crossSourceCollisions, this.placement);
+            this.pauseablePlacement = new PauseablePlacement(transform, this._order, forceFullPlacement, showCollisionBoxes, fadeDuration, crossSourceCollisions, this.placement, this.fog ? this.fog.state : null);
             this._layerOrderChanged = false;
         }
 
@@ -1630,7 +1723,7 @@ class Style extends Evented {
         setDependencies(this._symbolSourceCaches[params.source]);
     }
 
-    getGlyphs(mapId: string, params: {stacks: {[_: string]: Array<number>}}, callback: Callback<{[_: string]: {[_: number]: ?StyleGlyph}}>) {
+    getGlyphs(mapId: string, params: {stacks: {[_: string]: Array<number>}}, callback: Callback<{[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}}>) {
         this.glyphManager.getGlyphs(params.stacks, callback);
     }
 

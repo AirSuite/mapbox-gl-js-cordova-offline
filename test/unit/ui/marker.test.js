@@ -219,6 +219,7 @@ test('Marker anchor defaults to center', (t) => {
     const marker = new Marker()
         .setLngLat([0, 0])
         .addTo(map);
+    map._domRenderTaskQueue.run();
 
     t.ok(marker.getElement().classList.contains('mapboxgl-marker-anchor-center'));
     t.match(marker.getElement().style.transform, /translate\(-50%,-50%\)/);
@@ -232,6 +233,7 @@ test('Marker anchors as specified by the anchor option', (t) => {
     const marker = new Marker({anchor: 'top'})
         .setLngLat([0, 0])
         .addTo(map);
+    map._domRenderTaskQueue.run();
 
     t.ok(marker.getElement().classList.contains('mapboxgl-marker-anchor-top'));
     t.match(marker.getElement().style.transform, /translate\(-50%,0\)/);
@@ -259,6 +261,7 @@ test('Popup offsets around default Marker', (t) => {
         .setLngLat([0, 0])
         .setPopup(new Popup().setText('Test'))
         .addTo(map);
+    map._domRenderTaskQueue.run();
 
     t.ok(marker.getPopup().options.offset.bottom[1] < 0, 'popup is vertically offset somewhere above the tip');
     t.ok(marker.getPopup().options.offset.top[1] === 0, 'popup is vertically offset at the tip');
@@ -296,34 +299,42 @@ test('Popup anchors around default Marker', (t) => {
     Object.defineProperty(marker.getPopup()._container, 'offsetHeight', {value: 100});
 
     // marker should default to above since it has enough space
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-bottom'), 'popup anchors above marker');
 
     // move marker to the top forcing the popup to below
     marker.setLngLat(map.unproject([mapHeight / 2, markerTop]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-top'), 'popup anchors below marker');
 
     // move marker to the right forcing the popup to the left
     marker.setLngLat(map.unproject([mapHeight - markerRight, mapHeight / 2]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-right'), 'popup anchors left of marker');
 
     // move marker to the left forcing the popup to the right
     marker.setLngLat(map.unproject([markerRight, mapHeight / 2]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-left'), 'popup anchors right of marker');
 
     // move marker to the top left forcing the popup to the bottom right
     marker.setLngLat(map.unproject([markerRight, markerTop]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-top-left'), 'popup anchors bottom right of marker');
 
     // move marker to the top right forcing the popup to the bottom left
     marker.setLngLat(map.unproject([mapHeight - markerRight, markerTop]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-top-right'), 'popup anchors bottom left of marker');
 
     // move marker to the bottom left forcing the popup to the top right
     marker.setLngLat(map.unproject([markerRight, mapHeight]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-bottom-left'), 'popup anchors top right of marker');
 
     // move marker to the bottom right forcing the popup to the top left
     marker.setLngLat(map.unproject([mapHeight - markerRight, mapHeight]));
+    map._domRenderTaskQueue.run();
     t.ok(marker.getPopup()._container.classList.contains('mapboxgl-popup-anchor-bottom-right'), 'popup anchors top left of marker');
 
     t.end();
@@ -725,11 +736,13 @@ test('Marker transforms rotation with the map', (t) => {
     const marker = new Marker({rotationAlignment: 'map'})
         .setLngLat([0, 0])
         .addTo(map);
+    map._domRenderTaskQueue.run();
 
     const rotationRegex = /rotateZ\(-?([0-9]+)deg\)/;
     const initialRotation = marker.getElement().style.transform.match(rotationRegex)[1];
 
     map.setBearing(map.getBearing() + 180);
+    map._domRenderTaskQueue.run();
 
     const finalRotation = marker.getElement().style.transform.match(rotationRegex)[1];
     t.notEqual(initialRotation, finalRotation);
@@ -745,11 +758,13 @@ test('Marker transforms pitch with the map', (t) => {
         .addTo(map);
 
     map.setPitch(0);
+    map._domRenderTaskQueue.run();
 
     const rotationRegex = /rotateX\(-?([0-9]+)deg\)/;
     const initialPitch = marker.getElement().style.transform.match(rotationRegex)[1];
 
     map.setPitch(45);
+    map._domRenderTaskQueue.run();
 
     const finalPitch = marker.getElement().style.transform.match(rotationRegex)[1];
     t.notEqual(initialPitch, finalPitch);
@@ -827,4 +842,80 @@ test('Drag below / behind camera', (t) => {
 
     map.remove();
     t.end();
+});
+
+test('Marker and fog', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({draggable: true})
+        .setLngLat([0, 0])
+        .addTo(map)
+        .setPopup(new Popup().setHTML(`a popup content`))
+        .togglePopup();
+
+    map.on('load', () => {
+        map.setFog({
+            "range": [0.5, 10.5]
+        });
+
+        t.ok(map.getFog());
+        map.once('render', () => {
+            map.setZoom(10);
+            map.setCenter([0, 0]);
+
+            t.test('not occluded', (t) => {
+                marker.setLngLat([0, 0]);
+
+                setTimeout(() => {
+                    t.deepEqual(marker.getElement().style.opacity, 1.0);
+                    t.end();
+                }, 100);
+            });
+
+            t.test('occluded high', (t) => {
+                map.setBearing(90);
+                map.setPitch(70);
+                marker.setLngLat([1.0, 0]);
+
+                setTimeout(() => {
+                    t.deepEqual(marker.getElement().style.opacity, 0.5900199155427887);
+                    t.end();
+                }, 100);
+            });
+
+            t.test('occluded mid', (t) => {
+                map.setBearing(90);
+                map.setPitch(70);
+                marker.setLngLat([1.2, 0]);
+
+                setTimeout(() => {
+                    t.deepEqual(marker.getElement().style.opacity, 0.4580009697138284);
+                    t.end();
+                }, 100);
+            });
+
+            t.test('occluded low', (t) => {
+                map.setBearing(90);
+                map.setPitch(70);
+                marker.setLngLat([2.5, 0]);
+
+                setTimeout(() => {
+                    t.deepEqual(marker.getElement().style.opacity, 0.053455443950435555);
+                    t.end();
+                }, 100);
+            });
+
+            t.test('occluded', (t) => {
+                map.setBearing(90);
+                map.setPitch(70);
+                marker.setLngLat([4, 0]);
+
+                setTimeout(() => {
+                    t.deepEqual(marker.getElement().style.opacity, 0.0);
+                    t.end();
+                }, 100);
+            });
+
+            t.end();
+        });
+    });
 });
