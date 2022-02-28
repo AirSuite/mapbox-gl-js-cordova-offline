@@ -5,95 +5,60 @@ import Point from '@mapbox/point-geometry';
 import window from './window.js';
 import assert from 'assert';
 
-const DOM = {};
-export default DOM;
-
-DOM.create = function (tagName: string, className: ?string, container?: HTMLElement) {
+// refine the return type based on tagName, e.g. 'button' -> HTMLButtonElement
+export function create<T: string>(tagName: T, className: ?string, container?: HTMLElement): $Call<typeof document.createElement, T> {
     const el = window.document.createElement(tagName);
     if (className !== undefined) el.className = className;
     if (container) container.appendChild(el);
     return el;
-};
+}
 
-DOM.createNS = function (namespaceURI: string, tagName: string) {
-    const el = window.document.createElementNS(namespaceURI, tagName);
+export function createSVG(tagName: string, attributes: {[string]: string | number}, container?: Element): Element {
+    const el = window.document.createElementNS('http://www.w3.org/2000/svg', tagName);
+    for (const name of Object.keys(attributes)) {
+        el.setAttributeNS(null, name, attributes[name]);
+    }
+    if (container) container.appendChild(el);
     return el;
-};
+}
 
 const docStyle = window.document && window.document.documentElement.style;
 const selectProp = docStyle && docStyle.userSelect !== undefined ? 'userSelect' : 'WebkitUserSelect';
 let userSelect;
 
-DOM.disableDrag = function () {
+export function disableDrag() {
     if (docStyle && selectProp) {
         userSelect = docStyle[selectProp];
         docStyle[selectProp] = 'none';
     }
-};
+}
 
-DOM.enableDrag = function () {
+export function enableDrag() {
     if (docStyle && selectProp) {
         docStyle[selectProp] = userSelect;
     }
-};
-
-DOM.setTransform = function(el: HTMLElement, value: string) {
-    el.style.transform = value;
-};
-
-// Feature detection for {passive: false} support in add/removeEventListener.
-let passiveSupported = false;
-
-try {
-    // https://github.com/facebook/flow/issues/285
-    // $FlowFixMe
-    const options = Object.defineProperty({}, "passive", {
-        get() { // eslint-disable-line
-            passiveSupported = true;
-        }
-    });
-    window.addEventListener("test", options, options);
-    window.removeEventListener("test", options, options);
-} catch (err) {
-    passiveSupported = false;
 }
 
-DOM.addEventListener = function(target: *, type: *, callback: *, options: {passive?: boolean, capture?: boolean} = {}) {
-    if ('passive' in options && passiveSupported) {
-        target.addEventListener(type, callback, options);
-    } else {
-        target.addEventListener(type, callback, options.capture);
-    }
-};
-
-DOM.removeEventListener = function(target: *, type: *, callback: *, options: {passive?: boolean, capture?: boolean} = {}) {
-    if ('passive' in options && passiveSupported) {
-        target.removeEventListener(type, callback, options);
-    } else {
-        target.removeEventListener(type, callback, options.capture);
-    }
-};
-
 // Suppress the next click, but only if it's immediate.
-const suppressClick: MouseEventListener = function (e) {
+function suppressClickListener(e) {
     e.preventDefault();
     e.stopPropagation();
-    window.removeEventListener('click', suppressClick, true);
-};
+    window.removeEventListener('click', suppressClickListener, true);
+}
 
-DOM.suppressClick = function() {
-    window.addEventListener('click', suppressClick, true);
+export function suppressClick() {
+    window.addEventListener('click', suppressClickListener, true);
     window.setTimeout(() => {
-        window.removeEventListener('click', suppressClick, true);
+        window.removeEventListener('click', suppressClickListener, true);
     }, 0);
-};
+}
 
-DOM.mousePos = function (el: HTMLElement, e: MouseEvent | WheelEvent) {
+export function mousePos(el: HTMLElement, e: MouseEvent | WheelEvent): Point {
     const rect = el.getBoundingClientRect();
     return getScaledPoint(el, rect, e);
-};
+}
 
-DOM.touchPos = function (el: HTMLElement, touches: TouchList) {
+export function touchPos(el: HTMLElement, touches: TouchList): Array<Point> {
     const rect = el.getBoundingClientRect(),
         points = [];
 
@@ -101,9 +66,9 @@ DOM.touchPos = function (el: HTMLElement, touches: TouchList) {
         points.push(getScaledPoint(el, rect, touches[i]));
     }
     return points;
-};
+}
 
-DOM.mouseButton = function (e: MouseEvent) {
+export function mouseButton(e: MouseEvent): number {
     assert(e.type === 'mousedown' || e.type === 'mouseup');
     if (typeof window.InstallTrigger !== 'undefined' && e.button === 2 && e.ctrlKey &&
         window.navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
@@ -113,13 +78,7 @@ DOM.mouseButton = function (e: MouseEvent) {
         return 0;
     }
     return e.button;
-};
-
-DOM.remove = function(node: HTMLElement) {
-    if (node.parentNode) {
-        node.parentNode.removeChild(node);
-    }
-};
+}
 
 function getScaledPoint(el: HTMLElement, rect: ClientRect, e: MouseEvent | WheelEvent | Touch) {
     // Until we get support for pointer events (https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent)

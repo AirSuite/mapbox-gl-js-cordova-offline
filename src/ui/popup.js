@@ -3,7 +3,7 @@
 import {extend, bindAll} from '../util/util.js';
 import {Event, Evented} from '../util/evented.js';
 import {MapMouseEvent} from '../ui/events.js';
-import DOM from '../util/dom.js';
+import * as DOM from '../util/dom.js';
 import LngLat from '../geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
 import window from '../util/window.js';
@@ -100,12 +100,12 @@ const focusQuerySelector = [
  * @see [Example: Attach a popup to a marker instance](https://www.mapbox.com/mapbox-gl-js/example/set-popup/)
  */
 export default class Popup extends Evented {
-    _map: Map;
+    _map: ?Map;
     options: PopupOptions;
-    _content: HTMLElement;
-    _container: HTMLElement;
-    _closeButton: HTMLElement;
-    _tip: HTMLElement;
+    _content: ?HTMLElement;
+    _container: ?HTMLElement;
+    _closeButton: ?HTMLElement;
+    _tip: ?HTMLElement;
     _lngLat: LngLat;
     _trackPointer: boolean;
     _pos: ?Point;
@@ -115,7 +115,7 @@ export default class Popup extends Evented {
     constructor(options: PopupOptions) {
         super();
         this.options = extend(Object.create(defaultOptions), options);
-        bindAll(['_update', '_onClose', 'remove', '_onMouseMove', '_onMouseUp', '_onDrag'], this);
+        bindAll(['_update', '_onClose', 'remove', '_onMouseEvent'], this);
         this._classList = new Set(options && options.className ?
             options.className.trim().split(/\s+/) : []);
     }
@@ -135,28 +135,28 @@ export default class Popup extends Evented {
      * @see [Example: Display a popup on click](https://docs.mapbox.com/mapbox-gl-js/example/popup-on-click/)
      * @see [Example: Show polygon information on click](https://docs.mapbox.com/mapbox-gl-js/example/polygon-popup-on-click/)
      */
-    addTo(map: Map) {
+    addTo(map: Map): this {
         if (this._map) this.remove();
 
         this._map = map;
         if (this.options.closeOnClick) {
-            this._map.on('preclick', this._onClose);
+            map.on('preclick', this._onClose);
         }
 
         if (this.options.closeOnMove) {
-            this._map.on('move', this._onClose);
+            map.on('move', this._onClose);
         }
 
-        this._map.on('remove', this.remove);
+        map.on('remove', this.remove);
         this._update();
         this._focusFirstElement();
 
         if (this._trackPointer) {
-            this._map.on('mousemove', this._onMouseMove);
-            this._map.on('mouseup', this._onMouseUp);
-            this._map._canvasContainer.classList.add('mapboxgl-track-pointer');
+            map.on('mousemove', this._onMouseEvent);
+            map.on('mouseup', this._onMouseEvent);
+            map._canvasContainer.classList.add('mapboxgl-track-pointer');
         } else {
-            this._map.on('move', this._update);
+            map.on('move', this._update);
         }
 
         /**
@@ -190,7 +190,7 @@ export default class Popup extends Evented {
      * @example
      * const isPopupOpen = popup.isOpen();
      */
-    isOpen() {
+    isOpen(): boolean {
         return !!this._map;
     }
 
@@ -202,25 +202,27 @@ export default class Popup extends Evented {
      * popup.remove();
      * @returns {Popup} Returns itself to allow for method chaining.
      */
-    remove() {
+    remove(): this {
         if (this._content) {
-            DOM.remove(this._content);
+            this._content.remove();
         }
 
         if (this._container) {
-            DOM.remove(this._container);
-            delete this._container;
+            this._container.remove();
+            this._container = undefined;
         }
 
-        if (this._map) {
-            this._map.off('move', this._update);
-            this._map.off('move', this._onClose);
-            this._map.off('click', this._onClose);
-            this._map.off('remove', this.remove);
-            this._map.off('mousemove', this._onMouseMove);
-            this._map.off('mouseup', this._onMouseUp);
-            this._map.off('drag', this._onDrag);
-            delete this._map;
+        const map = this._map;
+        if (map) {
+            map.off('move', this._update);
+            map.off('move', this._onClose);
+            map.off('preclick', this._onClose);
+            map.off('click', this._onClose);
+            map.off('remove', this.remove);
+            map.off('mousemove', this._onMouseEvent);
+            map.off('mouseup', this._onMouseEvent);
+            map.off('drag', this._onMouseEvent);
+            this._map = undefined;
         }
 
         /**
@@ -258,7 +260,7 @@ export default class Popup extends Evented {
      * @example
      * const lngLat = popup.getLngLat();
      */
-    getLngLat() {
+    getLngLat(): LngLat {
         return this._lngLat;
     }
 
@@ -270,7 +272,7 @@ export default class Popup extends Evented {
      * @example
      * popup.setLngLat([-122.4194, 37.7749]);
      */
-    setLngLat(lnglat: LngLatLike) {
+    setLngLat(lnglat: LngLatLike): this {
         this._lngLat = LngLat.convert(lnglat);
         this._pos = null;
 
@@ -278,10 +280,11 @@ export default class Popup extends Evented {
 
         this._update();
 
-        if (this._map) {
-            this._map.on('move', this._update);
-            this._map.off('mousemove', this._onMouseMove);
-            this._map._canvasContainer.classList.remove('mapboxgl-track-pointer');
+        const map = this._map;
+        if (map) {
+            map.on('move', this._update);
+            map.off('mousemove', this._onMouseEvent);
+            map._canvasContainer.classList.remove('mapboxgl-track-pointer');
         }
 
         return this;
@@ -298,15 +301,16 @@ export default class Popup extends Evented {
      *     .addTo(map);
      * @returns {Popup} Returns itself to allow for method chaining.
      */
-    trackPointer() {
+    trackPointer(): this {
         this._trackPointer = true;
         this._pos = null;
         this._update();
-        if (this._map) {
-            this._map.off('move', this._update);
-            this._map.on('mousemove', this._onMouseMove);
-            this._map.on('drag', this._onDrag);
-            this._map._canvasContainer.classList.add('mapboxgl-track-pointer');
+        const map = this._map;
+        if (map) {
+            map.off('move', this._update);
+            map.on('mousemove', this._onMouseEvent);
+            map.on('drag', this._onMouseEvent);
+            map._canvasContainer.classList.add('mapboxgl-track-pointer');
         }
 
         return this;
@@ -326,7 +330,7 @@ export default class Popup extends Evented {
      * popupElem.style.fontSize = "25px";
      * @returns {HTMLElement} Returns container element.
      */
-    getElement() {
+    getElement(): ?HTMLElement {
         return this._container;
     }
 
@@ -345,7 +349,7 @@ export default class Popup extends Evented {
      *     .setText('Hello, world!')
      *     .addTo(map);
      */
-    setText(text: string) {
+    setText(text: string): this {
         return this.setDOMContent(window.document.createTextNode(text));
     }
 
@@ -368,7 +372,7 @@ export default class Popup extends Evented {
      * @see [Example: Display a popup on click](https://docs.mapbox.com/mapbox-gl-js/example/popup-on-click/)
      * @see [Example: Attach a popup to a marker instance](https://docs.mapbox.com/mapbox-gl-js/example/set-popup/)
      */
-    setHTML(html: string) {
+    setHTML(html: string): this {
         const frag = window.document.createDocumentFragment();
         const temp = window.document.createElement('body');
         let child;
@@ -389,7 +393,7 @@ export default class Popup extends Evented {
      * @example
      * const maxWidth = popup.getMaxWidth();
      */
-    getMaxWidth() {
+    getMaxWidth(): ?string {
         return this._container && this._container.style.maxWidth;
     }
 
@@ -402,7 +406,7 @@ export default class Popup extends Evented {
      * @example
      * popup.setMaxWidth('50');
      */
-    setMaxWidth(maxWidth: string) {
+    setMaxWidth(maxWidth: string): this {
         this.options.maxWidth = maxWidth;
         this._update();
         return this;
@@ -422,21 +426,30 @@ export default class Popup extends Evented {
      *     .setDOMContent(div)
      *     .addTo(map);
      */
-    setDOMContent(htmlNode: Node) {
-        if (this._content) {
+    setDOMContent(htmlNode: Node): this {
+        let content = this._content;
+        if (content) {
             // Clear out children first.
-            while (this._content.hasChildNodes()) {
-                if (this._content.firstChild) {
-                    this._content.removeChild(this._content.firstChild);
+            while (content.hasChildNodes()) {
+                if (content.firstChild) {
+                    content.removeChild(content.firstChild);
                 }
             }
         } else {
-            this._content = DOM.create('div', 'mapboxgl-popup-content', this._container);
+            content = this._content = DOM.create('div', 'mapboxgl-popup-content', this._container || undefined);
         }
 
         // The close button should be the last tabbable element inside the popup for a good keyboard UX.
-        this._content.appendChild(htmlNode);
-        this._createCloseButton();
+        content.appendChild(htmlNode);
+
+        if (this.options.closeButton) {
+            const button = this._closeButton = DOM.create('button', 'mapboxgl-popup-close-button', content);
+            button.type = 'button';
+            button.setAttribute('aria-label', 'Close popup');
+            button.setAttribute('aria-hidden', 'true');
+            button.innerHTML = '&#215;';
+            button.addEventListener('click', this._onClose);
+        }
         this._update();
         this._focusFirstElement();
         return this;
@@ -452,11 +465,9 @@ export default class Popup extends Evented {
      * const popup = new mapboxgl.Popup();
      * popup.addClassName('some-class');
      */
-    addClassName(className: string) {
+    addClassName(className: string): this {
         this._classList.add(className);
-        if (this._container) {
-            this._updateClassList();
-        }
+        this._updateClassList();
         return this;
     }
 
@@ -470,11 +481,9 @@ export default class Popup extends Evented {
      * const popup = new mapboxgl.Popup({className: 'some classes'});
      * popup.removeClassName('some');
      */
-    removeClassName(className: string) {
+    removeClassName(className: string): this {
         this._classList.delete(className);
-        if (this._container) {
-            this._updateClassList();
-        }
+        this._updateClassList();
         return this;
     }
 
@@ -498,7 +507,7 @@ export default class Popup extends Evented {
      * @example
      * popup.setOffset(10);
      */
-    setOffset (offset?: Offset) {
+    setOffset (offset?: Offset): this {
         this.options.offset = offset;
         this._update();
         return this;
@@ -515,7 +524,7 @@ export default class Popup extends Evented {
      * const popup = new mapboxgl.Popup();
      * popup.toggleClassName('highlighted');
      */
-    toggleClassName(className: string) {
+    toggleClassName(className: string): boolean {
         let finalState: boolean;
         if (this._classList.delete(className)) {
             finalState = false;
@@ -523,64 +532,50 @@ export default class Popup extends Evented {
             this._classList.add(className);
             finalState = true;
         }
-        if (this._container) {
-            this._updateClassList();
-        }
+        this._updateClassList();
         return finalState;
     }
 
-    _createCloseButton() {
-        if (this.options.closeButton) {
-            this._closeButton = DOM.create('button', 'mapboxgl-popup-close-button', this._content);
-            this._closeButton.type = 'button';
-            this._closeButton.setAttribute('aria-label', 'Close popup');
-            this._closeButton.innerHTML = '&#215;';
-            this._closeButton.addEventListener('click', this._onClose);
-        }
-    }
-
-    _onMouseUp(event: MapMouseEvent) {
+    _onMouseEvent(event: MapMouseEvent) {
         this._update(event.point);
     }
 
-    _onMouseMove(event: MapMouseEvent) {
-        this._update(event.point);
-    }
-
-    _onDrag(event: MapMouseEvent) {
-        this._update(event.point);
-    }
-
-    _getAnchor(offset: any) {
+    _getAnchor(bottomY: number): Anchor {
         if (this.options.anchor) { return this.options.anchor; }
 
-        const pos: any = this._pos;
-        const width = this._container.offsetWidth;
-        const height = this._container.offsetHeight;
-        let anchorComponents;
+        const map = this._map;
+        const container = this._container;
+        const pos = this._pos;
 
-        if (pos.y + offset.bottom.y < height) {
-            anchorComponents = ['top'];
-        } else if (pos.y > this._map.transform.height - height) {
-            anchorComponents = ['bottom'];
-        } else {
-            anchorComponents = [];
+        if (!map || !container || !pos) return 'bottom';
+
+        const width = container.offsetWidth;
+        const height = container.offsetHeight;
+
+        const isTop = pos.y + bottomY < height;
+        const isBottom = pos.y > map.transform.height - height;
+        const isLeft = pos.x < width / 2;
+        const isRight = pos.x > map.transform.width - width / 2;
+
+        if (isTop) {
+            if (isLeft) return 'top-left';
+            if (isRight) return 'top-right';
+            return 'top';
         }
-
-        if (pos.x < width / 2) {
-            anchorComponents.push('left');
-        } else if (pos.x > this._map.transform.width - width / 2) {
-            anchorComponents.push('right');
+        if (isBottom) {
+            if (isLeft) return 'bottom-left';
+            if (isRight) return 'bottom-right';
         }
+        if (isLeft) return 'left';
+        if (isRight) return 'right';
 
-        if (anchorComponents.length === 0) {
-            return 'bottom';
-        }
-        return ((anchorComponents.join('-'): any): Anchor);
-
+        return 'bottom';
     }
 
     _updateClassList() {
+        const container = this._container;
+        if (!container) return;
+
         const classes = [...this._classList];
         classes.push('mapboxgl-popup');
         if (this._anchor) {
@@ -589,38 +584,43 @@ export default class Popup extends Evented {
         if (this._trackPointer) {
             classes.push('mapboxgl-popup-track-pointer');
         }
-        this._container.className = classes.join(' ');
+        container.className = classes.join(' ');
     }
 
-    _update(cursor: ?PointLike) {
+    _update(cursor?: Point) {
         const hasPosition = this._lngLat || this._trackPointer;
+        const map = this._map;
+        const content = this._content;
 
-        if (!this._map || !hasPosition || !this._content) { return; }
+        if (!map || !hasPosition || !content) { return; }
 
-        if (!this._container) {
-            this._container = DOM.create('div', 'mapboxgl-popup', this._map.getContainer());
-            this._tip       = DOM.create('div', 'mapboxgl-popup-tip', this._container);
-            this._container.appendChild(this._content);
+        let container = this._container;
+
+        if (!container) {
+            container = this._container = DOM.create('div', 'mapboxgl-popup', map.getContainer());
+            this._tip = DOM.create('div', 'mapboxgl-popup-tip', container);
+            container.appendChild(content);
         }
 
-        if (this.options.maxWidth && this._container.style.maxWidth !== this.options.maxWidth) {
-            this._container.style.maxWidth = this.options.maxWidth;
+        if (this.options.maxWidth && container.style.maxWidth !== this.options.maxWidth) {
+            container.style.maxWidth = this.options.maxWidth;
         }
 
-        if (this._map.transform.renderWorldCopies && !this._trackPointer) {
-            this._lngLat = smartWrap(this._lngLat, this._pos, this._map.transform);
+        if (map.transform.renderWorldCopies && !this._trackPointer) {
+            this._lngLat = smartWrap(this._lngLat, this._pos, map.transform);
         }
 
         if (!this._trackPointer || cursor) {
-            const pos = this._pos = this._trackPointer && cursor ? cursor : this._map.project(this._lngLat);
+            const pos = this._pos = this._trackPointer && cursor ? cursor : map.project(this._lngLat);
 
-            const offset = normalizeOffset(this.options.offset);
-            const anchor = this._anchor = this._getAnchor(offset);
+            const offsetBottom = normalizeOffset(this.options.offset);
+            const anchor = this._anchor = this._getAnchor(offsetBottom.y);
+            const offset = normalizeOffset(this.options.offset, anchor);
 
-            const offsetedPos = pos.add(offset[anchor]).round();
-            this._map._requestDomTask(() => {
+            const offsetedPos = pos.add(offset).round();
+            map._requestDomTask(() => {
                 if (this._container && anchor) {
-                    DOM.setTransform(this._container, `${anchorTranslate[anchor]} translate(${offsetedPos.x}px,${offsetedPos.y}px)`);
+                    this._container.style.transform = `${anchorTranslate[anchor]} translate(${offsetedPos.x}px,${offsetedPos.y}px)`;
                 }
             });
         }
@@ -646,51 +646,29 @@ export default class Popup extends Evented {
     }
 }
 
-function normalizeOffset(offset: ?Offset) {
-    if (!offset) offset = (new Point(0, 0));
-
+// returns a normalized offset for a given anchor
+function normalizeOffset(offset: Offset = new Point(0, 0), anchor: Anchor = 'bottom'): Point {
     if (typeof offset === 'number') {
         // input specifies a radius from which to calculate offsets at all positions
         const cornerOffset = Math.round(Math.sqrt(0.5 * Math.pow(offset, 2)));
-        return {
-            'center': new Point(0, 0),
-            'top': new Point(0, offset),
-            'top-left': new Point(cornerOffset, cornerOffset),
-            'top-right': new Point(-cornerOffset, cornerOffset),
-            'bottom': new Point(0, -offset),
-            'bottom-left': new Point(cornerOffset, -cornerOffset),
-            'bottom-right': new Point(-cornerOffset, -cornerOffset),
-            'left': new Point(offset, 0),
-            'right': new Point(-offset, 0)
-        };
-
-    } else if (offset instanceof Point || Array.isArray(offset)) {
-        // input specifies a single offset to be applied to all positions
-        const convertedOffset = Point.convert(offset);
-        return {
-            'center': convertedOffset,
-            'top': convertedOffset,
-            'top-left': convertedOffset,
-            'top-right': convertedOffset,
-            'bottom': convertedOffset,
-            'bottom-left': convertedOffset,
-            'bottom-right': convertedOffset,
-            'left': convertedOffset,
-            'right': convertedOffset
-        };
-
-    } else {
-        // input specifies an offset per position
-        return {
-            'center': Point.convert(offset['center'] || [0, 0]),
-            'top': Point.convert(offset['top'] || [0, 0]),
-            'top-left': Point.convert(offset['top-left'] || [0, 0]),
-            'top-right': Point.convert(offset['top-right'] || [0, 0]),
-            'bottom': Point.convert(offset['bottom'] || [0, 0]),
-            'bottom-left': Point.convert(offset['bottom-left'] || [0, 0]),
-            'bottom-right': Point.convert(offset['bottom-right'] || [0, 0]),
-            'left': Point.convert(offset['left'] || [0, 0]),
-            'right': Point.convert(offset['right'] || [0, 0])
-        };
+        switch (anchor) {
+        case 'top': return new Point(0, offset);
+        case 'top-left': return new Point(cornerOffset, cornerOffset);
+        case 'top-right': return new Point(-cornerOffset, cornerOffset);
+        case 'bottom': return new Point(0, -offset);
+        case 'bottom-left': return new Point(cornerOffset, -cornerOffset);
+        case 'bottom-right': return new Point(-cornerOffset, -cornerOffset);
+        case 'left': return new Point(offset, 0);
+        case 'right': return new Point(-offset, 0);
+        }
+        return new Point(0, 0);
     }
+
+    if (offset instanceof Point || Array.isArray(offset)) {
+        // input specifies a single offset to be applied to all positions
+        return Point.convert(offset);
+    }
+
+    // input specifies an offset per position
+    return Point.convert(offset[anchor] || [0, 0]);
 }

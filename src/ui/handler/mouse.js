@@ -1,7 +1,8 @@
 // @flow
 
-import DOM from '../../util/dom.js';
+import * as DOM from '../../util/dom.js';
 import type Point from '@mapbox/point-geometry';
+import type {HandlerResult} from '../handler_manager.js';
 
 const LEFT_BUTTON = 0;
 const RIGHT_BUTTON = 2;
@@ -21,8 +22,8 @@ class MouseHandler {
 
     _enabled: boolean;
     _active: boolean;
-    _lastPoint: Point;
-    _eventButton: number;
+    _lastPoint: ?Point;
+    _eventButton: ?number;
     _moved: boolean;
     _clickTolerance: number;
 
@@ -31,14 +32,18 @@ class MouseHandler {
         this._clickTolerance = options.clickTolerance || 1;
     }
 
+    blur() {
+        this.reset();
+    }
+
     reset() {
         this._active = false;
         this._moved = false;
-        delete this._lastPoint;
-        delete this._eventButton;
+        this._lastPoint = undefined;
+        this._eventButton = undefined;
     }
 
-    _correctButton(e: MouseEvent, button: number) {  //eslint-disable-line
+    _correctButton(e: MouseEvent, button: number): boolean {  //eslint-disable-line
         return false; // implemented by child
     }
 
@@ -61,7 +66,7 @@ class MouseHandler {
         if (!lastPoint) return;
         e.preventDefault();
 
-        if (buttonStillPressed(e, this._eventButton)) {
+        if (this._eventButton != null && buttonStillPressed(e, this._eventButton)) {
             // Some browsers don't fire a `mouseup` when the mouseup occurs outside
             // the window or iframe:
             // https://github.com/mapbox/mapbox-gl-js/issues/4622
@@ -97,11 +102,11 @@ class MouseHandler {
         this.reset();
     }
 
-    isEnabled() {
+    isEnabled(): boolean {
         return this._enabled;
     }
 
-    isActive() {
+    isActive(): boolean {
         return this._active;
     }
 }
@@ -112,7 +117,7 @@ export class MousePanHandler extends MouseHandler {
         super.mousedown(e, point);
         if (this._lastPoint) this._active = true;
     }
-    _correctButton(e: MouseEvent, button: number) {
+    _correctButton(e: MouseEvent, button: number): boolean {
         return button === LEFT_BUTTON && !e.ctrlKey;
     }
 
@@ -125,11 +130,11 @@ export class MousePanHandler extends MouseHandler {
 }
 
 export class MouseRotateHandler extends MouseHandler {
-    _correctButton(e: MouseEvent, button: number) {
+    _correctButton(e: MouseEvent, button: number): boolean {
         return (button === LEFT_BUTTON && e.ctrlKey) || (button === RIGHT_BUTTON);
     }
 
-    _move(lastPoint: Point, point: Point) {
+    _move(lastPoint: Point, point: Point): ?HandlerResult {
         const degreesPerPixelMoved = 0.8;
         const bearingDelta = (point.x - lastPoint.x) * degreesPerPixelMoved;
         if (bearingDelta) {
@@ -146,11 +151,11 @@ export class MouseRotateHandler extends MouseHandler {
 }
 
 export class MousePitchHandler extends MouseHandler {
-    _correctButton(e: MouseEvent, button: number) {
+    _correctButton(e: MouseEvent, button: number): boolean {
         return (button === LEFT_BUTTON && e.ctrlKey) || (button === RIGHT_BUTTON);
     }
 
-    _move(lastPoint: Point, point: Point) {
+    _move(lastPoint: Point, point: Point): ?HandlerResult {
         const degreesPerPixelMoved = -0.5;
         const pitchDelta = (point.y - lastPoint.y) * degreesPerPixelMoved;
         if (pitchDelta) {

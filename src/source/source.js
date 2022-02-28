@@ -11,8 +11,8 @@ import type {Callback} from '../types/callback.js';
 import {CanonicalTileID} from './tile_id.js';
 
 /**
- * The `Source` interface must be implemented by each source type, including "core" types (`vector`, `raster`,
- * `video`, etc.) and all custom, third-party types.
+ * The `Source` interface must be implemented by each source type, including "core" types like `vector`, `raster`,
+ * or `video`) and all custom, third-party types.
  *
  * @private
  *
@@ -22,8 +22,9 @@ import {CanonicalTileID} from './tile_id.js';
  * @param {string} options.type The source type, matching the value of `name` used in {@link Style#addSourceType}.
  * @param {Dispatcher} dispatcher A {@link Dispatcher} instance, which can be used to send messages to the workers.
  *
- * @fires data with `{dataType: 'source', sourceDataType: 'metadata'}` to indicate that any necessary metadata
- * has been loaded so that it's okay to call `loadTile`; and with `{dataType: 'source', sourceDataType: 'content'}`
+ * @fires Map.event:data Fires `data` with `{dataType: 'source', sourceDataType: 'metadata'}`
+ * to indicate that any necessary metadata has been loaded so that it's okay to call `loadTile`;
+ * fires `data` with `{dataType: 'source', sourceDataType: 'content'}`
  * to indicate that the source data has changed, so that any current caches should be flushed.
  * @property {string} id The id for the source.  Must match the id passed to the constructor.
  * @property {number} minzoom
@@ -54,6 +55,7 @@ export interface Source {
 
     fire(event: Event): mixed;
     on(type: *, listener: (Object) => any): Evented;
+    setEventedParent(parent: ?Evented, data?: Object | () => Object): Evented;
 
     +onAdd?: (map: Map) => void;
     +onRemove?: (map: Map) => void;
@@ -74,6 +76,7 @@ export interface Source {
     +prepare?: () => void;
 
     +afterUpdate?: () => void;
+    +_clear?: () => void;
 }
 
 type SourceStatics = {
@@ -116,7 +119,7 @@ const sourceTypes = {
  * @param {Dispatcher} dispatcher
  * @returns {Source}
  */
-export const create = function(id: string, specification: SourceSpecification, dispatcher: Dispatcher, eventedParent: Evented) {
+export const create = function(id: string, specification: SourceSpecification, dispatcher: Dispatcher, eventedParent: Evented): Source {
     const source = new sourceTypes[specification.type](id, (specification: any), dispatcher, eventedParent);
 
     if (source.id !== id) {
@@ -127,7 +130,7 @@ export const create = function(id: string, specification: SourceSpecification, d
     return source;
 };
 
-export const getType = function (name: string) {
+export const getType = function (name: string): Class<Source> {
     return sourceTypes[name];
 };
 

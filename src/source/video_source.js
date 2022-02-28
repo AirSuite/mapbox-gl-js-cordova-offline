@@ -3,8 +3,6 @@
 import {getVideo, ResourceType} from '../util/ajax.js';
 
 import ImageSource from './image_source.js';
-import rasterBoundsAttributes from '../data/raster_bounds_attributes.js';
-import SegmentVector from '../data/segment.js';
 import Texture from '../render/texture.js';
 import {ErrorEvent} from '../util/evented.js';
 import ValidationError from '../style-spec/error/validation_error.js';
@@ -79,6 +77,9 @@ class VideoSource extends ImageSource {
                 this.video = video;
                 this.video.loop = true;
 
+                // Prevent the video from taking over the screen in iOS
+                this.video.setAttribute('playsinline', '');
+
                 // Start repainting when video starts playing. hasTransition() will then return
                 // true to trigger additional frames as long as the videos continues playing.
                 this.video.addEventListener('playing', () => {
@@ -149,7 +150,7 @@ class VideoSource extends ImageSource {
      *
      * videoSource.getVideo(); // <video crossorigin="Anonymous" loop="">...</video>
      */
-    getVideo() {
+    getVideo(): HTMLVideoElement {
         return this.video;
     }
 
@@ -205,32 +206,21 @@ class VideoSource extends ImageSource {
         const context = this.map.painter.context;
         const gl = context.gl;
 
-        if (!this.boundsBuffer) {
-            this.boundsBuffer = context.createVertexBuffer(this._boundsArray, rasterBoundsAttributes.members);
-        }
-
-        if (!this.boundsSegments) {
-            this.boundsSegments = SegmentVector.simpleSegment(0, 0, 4, 2);
-        }
-
         if (!this.texture) {
             this.texture = new Texture(context, this.video, gl.RGBA);
             this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            this.width = this.video.videoWidth;
+            this.height = this.video.videoHeight;
+
         } else if (!this.video.paused) {
             this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.video);
         }
 
-        for (const w in this.tiles) {
-            const tile = this.tiles[w];
-            if (tile.state !== 'loaded') {
-                tile.state = 'loaded';
-                tile.texture = this.texture;
-            }
-        }
+        this._prepareData(context);
     }
 
-    serialize() {
+    serialize(): VideoSourceSpecification {
         return {
             type: 'video',
             urls: this.urls,
@@ -238,7 +228,7 @@ class VideoSource extends ImageSource {
         };
     }
 
-    hasTransition() {
+    hasTransition(): boolean {
         return this.video && !this.video.paused;
     }
 }

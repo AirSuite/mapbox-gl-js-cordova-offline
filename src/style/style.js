@@ -9,7 +9,7 @@ import loadSprite from './load_sprite.js';
 import ImageManager from '../render/image_manager.js';
 import GlyphManager, {LocalGlyphMode} from '../render/glyph_manager.js';
 import Light from './light.js';
-import Terrain from './terrain.js';
+import Terrain, {DrapeRenderMode} from './terrain.js';
 import Fog from './fog.js';
 import LineAtlas from '../render/line_atlas.js';
 import {pick, clone, extend, deepEqual, filterObject} from '../util/util.js';
@@ -17,7 +17,14 @@ import {getJSON, getReferrer, makeRequest, ResourceType} from '../util/ajax.js';
 import {isMapboxURL} from '../util/mapbox.js';
 import browser from '../util/browser.js';
 import Dispatcher from '../util/dispatcher.js';
-import {validateStyle, emitValidationErrors as _emitValidationErrors} from './validate_style.js';
+import {
+    validateStyle,
+    validateSource,
+    validateLayer,
+    validateFilter,
+    validateTerrain,
+    emitValidationErrors as _emitValidationErrors
+} from './validate_style.js';
 import {QueryGeometry} from '../style/query_geometry.js';
 import {
     create as createSource,
@@ -46,7 +53,7 @@ import {validateCustomStyleLayer} from './style_layer/custom_style_layer.js';
 // We're skipping validation errors with the `source.canvas` identifier in order
 // to continue to allow canvas sources to be added at runtime/updated in
 // smart setStyle (see https://github.com/mapbox/mapbox-gl-js/pull/6424):
-const emitValidationErrors = (evented: Evented, errors: ?$ReadOnlyArray<{message: string, identifier?: string}>) =>
+const emitValidationErrors = (evented: Evented, errors: ?ValidationErrors) =>
     _emitValidationErrors(evented, errors && errors.filter(error => error.identifier !== 'source.canvas'));
 
 import type Map from '../ui/map.js';
@@ -66,10 +73,11 @@ import type {
     LightSpecification,
     SourceSpecification,
     TerrainSpecification,
-    FogSpecification
+    FogSpecification,
+    ProjectionSpecification
 } from '../style-spec/types.js';
 import type {CustomLayerInterface} from './style_layer/custom_style_layer.js';
-import type {Validator} from './validate_style.js';
+import type {Validator, ValidationErrors} from './validate_style.js';
 import type {OverscaledTileID} from '../source/tile_id.js';
 import type {PointLike} from '@mapbox/point-geometry';
 
@@ -86,7 +94,8 @@ const supportedDiffOperations = pick(diffOperations, [
     'setTransition',
     'setGeoJSONSourceData',
     'setTerrain',
-    'setFog'
+    'setFog',
+    'setProjection'
     // 'setGlyphs',
     // 'setSprite',
 ]);
@@ -295,6 +304,7 @@ class Style extends Evented {
 
         this._loaded = true;
         this.stylesheet = json;
+        this._updateProjection();
 
         for (const id in json.sources) {
             this.addSource(id, json.sources[id], {validate: false});
@@ -322,11 +332,12 @@ class Style extends Evented {
             this._serializedLayers[layer.id] = layer.serialize();
             this._updateLayerCount(layer, true);
         }
+
         this.dispatcher.broadcast('setLayers', this._serializeLayers(this._order));
 
         this.light = new Light(this.stylesheet.light);
-        if (this.stylesheet.terrain) {
-            this._createTerrain(this.stylesheet.terrain);
+        if (this.stylesheet.terrain && !this.terrainSetForDrapingOnly()) {
+            this._createTerrain(this.stylesheet.terrain, DrapeRenderMode.elevated);
         }
         if (this.stylesheet.fog) {
             this._createFog(this.stylesheet.fog);
@@ -335,6 +346,42 @@ class Style extends Evented {
 
         this.fire(new Event('data', {dataType: 'style'}));
         this.fire(new Event('style.load'));
+    }
+
+    terrainSetForDrapingOnly() {
+        return this.terrain && this.terrain.drapeRenderMode === DrapeRenderMode.deferred;
+    }
+
+    setProjection(projection?: ?ProjectionSpecification) {
+        if (projection) {
+            this.stylesheet.projection = projection;
+        } else {
+            delete this.stylesheet.projection;
+        }
+        if (!this.map._explicitProjection) {
+            this.map._updateProjection();
+        }
+    }
+
+    _updateProjection() {
+        if (!this.map._explicitProjection) {
+            this.map._updateProjection();
+        } else { // Ensure that style is consistent with current projection on style load
+            this.enableDraping();
+        }
+    }
+
+    enableDraping() {
+        if (this._loaded) {
+            if (this.map.transform.projection.requiresDraping) {
+                const hasTerrain = this.getTerrain() || this.stylesheet.terrain;
+                if (!hasTerrain) {
+                    this.setTerrainForDraping();
+                }
+            } else if (this.terrainSetForDrapingOnly()) {
+                this.setTerrain(null);
+            }
+        }
     }
 
     _loadSprite(url: string) {
@@ -616,6 +663,7 @@ class Style extends Evented {
         });
 
         this.stylesheet = nextState;
+        this._updateProjection();
 
         return true;
     }
@@ -652,10 +700,9 @@ class Style extends Evented {
         this.fire(new Event('data', {dataType: 'style'}));
     }
 
-    listImages() {
+    listImages(): Array<string> {
         this._checkLoaded();
-
-        return this.imageManager.listImages();
+        return this._availableImages.slice();
     }
 
     addSource(id: string, source: SourceSpecification, options: StyleSetterOptions = {}) {
@@ -671,14 +718,14 @@ class Style extends Evented {
 
         const builtIns = ['vector', 'raster', 'geojson', 'video', 'image'];
         const shouldValidate = builtIns.indexOf(source.type) >= 0;
-        if (shouldValidate && this._validate(validateStyle.source, `sources.${id}`, source, null, options)) return;
+        if (shouldValidate && this._validate(validateSource, `sources.${id}`, source, null, options)) return;
 
         if (this.map && this.map._collectResourceTiming) (source: any).collectResourceTiming = true;
 
         const sourceInstance = createSource(id, source, this.dispatcher, this);
 
         sourceInstance.setEventedParent(this, () => ({
-            isSourceLoaded: this.loaded(),
+            isSourceLoaded: this._isSourceCacheLoaded(id),
             source: sourceInstance.serialize(),
             sourceId: id
         }));
@@ -801,7 +848,7 @@ class Style extends Evented {
             }
 
             // this layer is not in the style.layers array, so we pass an impossible array index
-            if (this._validate(validateStyle.layer,
+            if (this._validate(validateLayer,
                 `layers.${id}`, layerObject, {arrayIndex: -1}, options)) return;
 
             layer = createStyleLayer(layerObject);
@@ -891,7 +938,7 @@ class Style extends Evented {
      * If no such layer exists, an `error` event is fired.
      *
      * @param {string} id ID of the layer to remove.
-     * @fires error
+     * @fires Map.event:error
      */
     removeLayer(id: string) {
         this._checkLoaded();
@@ -999,7 +1046,7 @@ class Style extends Evented {
             return;
         }
 
-        if (this._validate(validateStyle.filter, `layers.${layer.id}.filter`, filter, null, options)) {
+        if (this._validate(validateFilter, `layers.${layer.id}.filter`, filter, {layerType: layer.type}, options)) {
             return;
         }
 
@@ -1178,6 +1225,7 @@ class Style extends Evented {
             sprite: this.stylesheet.sprite,
             glyphs: this.stylesheet.glyphs,
             transition: this.stylesheet.transition,
+            projection: this.stylesheet.projection,
             sources,
             layers: this._serializeLayers(this._order)
         }, (value) => { return value !== undefined; });
@@ -1194,6 +1242,8 @@ class Style extends Evented {
             sourceCache.pause();
         }
         this._changed = true;
+        layer.invalidateCompiledFilter();
+
     }
 
     _flattenAndSortRenderedFeatures(sourceResults: Array<any>) {
@@ -1266,7 +1316,7 @@ class Style extends Evented {
 
     queryRenderedFeatures(queryGeometry: PointLike | [PointLike, PointLike], params: any, transform: Transform) {
         if (params && params.filter) {
-            this._validate(validateStyle.filter, 'queryRenderedFeatures.filter', params.filter, null, params);
+            this._validate(validateFilter, 'queryRenderedFeatures.filter', params.filter, null, params);
         }
 
         const includedSources = {};
@@ -1334,7 +1384,7 @@ class Style extends Evented {
 
     querySourceFeatures(sourceID: string, params: ?{sourceLayer: ?string, filter: ?Array<any>, validate?: boolean}) {
         if (params && params.filter) {
-            this._validate(validateStyle.filter, 'querySourceFeatures.filter', params.filter, null, params);
+            this._validate(validateFilter, 'querySourceFeatures.filter', params.filter, null, params);
         }
         const sourceCaches = this._getSourceCaches(sourceID);
         let results = [];
@@ -1391,16 +1441,21 @@ class Style extends Evented {
     }
 
     getTerrain() {
-        return this.terrain ? this.terrain.get() : null;
+        return this.terrain && this.terrain.drapeRenderMode === DrapeRenderMode.elevated ? this.terrain.get() : null;
+    }
+
+    setTerrainForDraping() {
+        const mockTerrainOptions = {source: '', exaggeration: 0};
+        this.setTerrain(mockTerrainOptions, DrapeRenderMode.deferred);
     }
 
     // eslint-disable-next-line no-warning-comments
     // TODO: generic approach for root level property: light, terrain, skybox.
     // It is not done here to prevent rebasing issues.
-    setTerrain(terrainOptions: TerrainSpecification) {
+    setTerrain(terrainOptions: ?TerrainSpecification, drapeRenderMode: number = DrapeRenderMode.elevated) {
         this._checkLoaded();
 
-        //Disabling
+        // Disabling
         if (!terrainOptions) {
             delete this.terrain;
             delete this.stylesheet.terrain;
@@ -1410,18 +1465,23 @@ class Style extends Evented {
             return;
         }
 
-        // Input validation and source object unrolling
-        if (typeof terrainOptions.source === 'object') {
-            const id = 'terrain-dem-src';
-            this.addSource(id, ((terrainOptions.source): any));
-            terrainOptions = clone(terrainOptions);
-            terrainOptions = (extend(terrainOptions, {source: id}): any);
+        if (drapeRenderMode === DrapeRenderMode.elevated) {
+            // Input validation and source object unrolling
+            if (typeof terrainOptions.source === 'object') {
+                const id = 'terrain-dem-src';
+                this.addSource(id, ((terrainOptions.source): any));
+                terrainOptions = clone(terrainOptions);
+                terrainOptions = (extend(terrainOptions, {source: id}): any);
+            }
+
+            if (this._validate(validateTerrain, 'terrain', terrainOptions)) {
+                return;
+            }
         }
-        if (this._validate(validateStyle.terrain, 'terrain', terrainOptions)) return;
 
         // Enabling
-        if (!this.terrain) {
-            this._createTerrain(terrainOptions);
+        if (!this.terrain || (this.terrain && drapeRenderMode !== this.terrain.drapeRenderMode)) {
+            this._createTerrain(terrainOptions, drapeRenderMode);
         } else { // Updating
             const terrain = this.terrain;
             const currSpec = terrain.get();
@@ -1447,7 +1507,7 @@ class Style extends Evented {
     }
 
     _createFog(fogOptions: FogSpecification) {
-        const fog = this.fog = new Fog(fogOptions);
+        const fog = this.fog = new Fog(fogOptions, this.map.transform);
         this.stylesheet.fog = fogOptions;
         const parameters = {
             now: browser.now(),
@@ -1529,10 +1589,10 @@ class Style extends Evented {
         this._drapedFirstOrder.push(...nonDraped);
     }
 
-    _createTerrain(terrainOptions: TerrainSpecification) {
-        const terrain = this.terrain = new Terrain(terrainOptions);
+    _createTerrain(terrainOptions: TerrainSpecification, drapeRenderMode: number) {
+        const terrain = this.terrain = new Terrain(terrainOptions, drapeRenderMode);
         this.stylesheet.terrain = terrainOptions;
-        this.dispatcher.broadcast('enableTerrain', true);
+        this.dispatcher.broadcast('enableTerrain', !this.terrainSetForDrapingOnly());
         this._force3DLayerUpdate();
         const parameters = {
             now: browser.now(),
@@ -1548,6 +1608,15 @@ class Style extends Evented {
         for (const layerId in this._layers) {
             const layer = this._layers[layerId];
             if (layer.type === 'fill-extrusion') {
+                this._updateLayer(layer);
+            }
+        }
+    }
+
+    _forceSymbolLayerUpdate() {
+        for (const layerId in this._layers) {
+            const layer = this._layers[layerId];
+            if (layer.type === 'symbol') {
                 this._updateLayer(layer);
             }
         }
@@ -1635,7 +1704,7 @@ class Style extends Evented {
                     .sort((a, b) => (b.tileID.overscaledZ - a.tileID.overscaledZ) || (a.tileID.isLessThan(b.tileID) ? -1 : 1));
             }
 
-            const layerBucketsChanged = this.crossTileSymbolIndex.addLayer(styleLayer, layerTiles[styleLayer.source], transform.center.lng);
+            const layerBucketsChanged = this.crossTileSymbolIndex.addLayer(styleLayer, layerTiles[styleLayer.source], transform.center.lng, transform.projection);
             symbolBucketsChanged = symbolBucketsChanged || layerBucketsChanged;
         }
         this.crossTileSymbolIndex.pruneUnusedLayers(this._order);
@@ -1653,7 +1722,8 @@ class Style extends Evented {
         }
 
         if (forceFullPlacement || !this.pauseablePlacement || (this.pauseablePlacement.isDone() && !this.placement.stillRecent(browser.now(), transform.zoom))) {
-            this.pauseablePlacement = new PauseablePlacement(transform, this._order, forceFullPlacement, showCollisionBoxes, fadeDuration, crossSourceCollisions, this.placement, this.fog ? this.fog.state : null);
+            const fogState = this.fog && transform.projection.supportsFog ? this.fog.state : null;
+            this.pauseablePlacement = new PauseablePlacement(transform, this._order, forceFullPlacement, showCollisionBoxes, fadeDuration, crossSourceCollisions, this.placement, fogState);
             this._layerOrderChanged = false;
         }
 
@@ -1752,6 +1822,15 @@ class Style extends Evented {
         return sourceCaches;
     }
 
+    _isSourceCacheLoaded(source: string) {
+        const sourceCaches = this._getSourceCaches(source);
+        if (sourceCaches.length === 0) {
+            this.fire(new ErrorEvent(new Error(`There is no source with ID '${source}'`)));
+            return;
+        }
+        return sourceCaches.every(sc => sc.loaded());
+    }
+
     has3DLayers(): boolean {
         return this._num3DLayers > 0;
     }
@@ -1762,6 +1841,18 @@ class Style extends Evented {
 
     hasCircleLayers(): boolean {
         return this._numCircleLayers > 0;
+    }
+
+    _clearWorkerCaches() {
+        this.dispatcher.broadcast('clearCaches');
+    }
+
+    destroy() {
+        this._clearWorkerCaches();
+        if (this.terrainSetForDrapingOnly()) {
+            delete this.terrain;
+            delete this.stylesheet.terrain;
+        }
     }
 }
 
