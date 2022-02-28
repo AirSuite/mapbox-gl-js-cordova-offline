@@ -2,12 +2,13 @@
 
 import {TapRecognizer, MAX_TAP_INTERVAL} from './tap_recognizer.js';
 import type Point from '@mapbox/point-geometry';
+import type {HandlerResult} from '../handler_manager.js';
 
 export default class TapDragZoomHandler {
 
     _enabled: boolean;
     _active: boolean;
-    _swipePoint: Point;
+    _swipePoint: ?Point;
     _swipeTouch: number;
     _tapTime: number;
     _tap: TapRecognizer;
@@ -24,9 +25,9 @@ export default class TapDragZoomHandler {
 
     reset() {
         this._active = false;
-        delete this._swipePoint;
-        delete this._swipeTouch;
-        delete this._tapTime;
+        this._swipePoint = undefined;
+        this._swipeTouch = 0;
+        this._tapTime = 0;
         this._tap.reset();
     }
 
@@ -46,7 +47,7 @@ export default class TapDragZoomHandler {
 
     }
 
-    touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) {
+    touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>): ?HandlerResult {
         if (!this._tapTime) {
             this._tap.touchmove(e, points, mapTouches);
         } else if (this._swipePoint) {
@@ -93,11 +94,11 @@ export default class TapDragZoomHandler {
         this.reset();
     }
 
-    isEnabled() {
+    isEnabled(): boolean {
         return this._enabled;
     }
 
-    isActive() {
+    isActive(): boolean {
         return this._active;
     }
 }

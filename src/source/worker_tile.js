@@ -15,26 +15,30 @@ import LineAtlas from '../render/line_atlas.js';
 import ImageAtlas from '../render/image_atlas.js';
 import GlyphAtlas from '../render/glyph_atlas.js';
 import EvaluationParameters from '../style/evaluation_parameters.js';
-import {OverscaledTileID} from './tile_id.js';
+import {CanonicalTileID, OverscaledTileID} from './tile_id.js';
 import {PerformanceUtils} from '../util/performance.js';
-
+import tileTransform from '../geo/projection/tile_transform.js';
+import type Projection from '../geo/projection/projection.js';
 import type {Bucket} from '../data/bucket.js';
 import type Actor from '../util/actor.js';
 import type StyleLayer from '../style/style_layer.js';
 import type StyleLayerIndex from '../style/style_layer_index.js';
 import type {StyleImage} from '../style/style_image.js';
 import type {StyleGlyph} from '../style/style_glyph.js';
+import type {SpritePositions} from '../util/image.js';
 import type {
     WorkerTileParameters,
     WorkerTileCallback,
 } from '../source/worker_source.js';
 import type {PromoteIdSpecification} from '../style-spec/types.js';
+import type {TileTransform} from '../geo/projection/tile_transform.js';
 
 class WorkerTile {
     tileID: OverscaledTileID;
     uid: number;
     zoom: number;
     tileZoom: number;
+    canonical: CanonicalTileID;
     pixelRatio: number;
     tileSize: number;
     source: string;
@@ -45,13 +49,15 @@ class WorkerTile {
     returnDependencies: boolean;
     enableTerrain: boolean;
     isSymbolTile: ?boolean;
+    projection: Projection;
+    tileTransform: TileTransform;
 
     status: 'parsing' | 'done';
     data: VectorTile;
     collisionBoxArray: CollisionBoxArray;
 
     abort: ?() => void;
-    reloadCallback: WorkerTileCallback;
+    reloadCallback: ?WorkerTileCallback;
     vectorTile: VectorTile;
 
     constructor(params: WorkerTileParameters) {
@@ -59,6 +65,7 @@ class WorkerTile {
         this.tileZoom = params.tileZoom;
         this.uid = params.uid;
         this.zoom = params.zoom;
+        this.canonical = params.tileID.canonical;
         this.pixelRatio = params.pixelRatio;
         this.tileSize = params.tileSize;
         this.source = params.source;
@@ -70,6 +77,8 @@ class WorkerTile {
         this.promoteId = params.promoteId;
         this.enableTerrain = !!params.enableTerrain;
         this.isSymbolTile = params.isSymbolTile;
+        this.tileTransform = tileTransform(params.tileID.canonical, params.projection);
+        this.projection = params.projection;
     }
 
     parse(data: VectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
@@ -148,15 +157,19 @@ class WorkerTile {
                     index: featureIndex.bucketLayerIDs.length,
                     layers: family,
                     zoom: this.zoom,
+                    canonical: this.canonical,
                     pixelRatio: this.pixelRatio,
                     overscaling: this.overscaling,
                     collisionBoxArray: this.collisionBoxArray,
                     sourceLayerIndex,
                     sourceID: this.source,
-                    enableTerrain: this.enableTerrain
+                    enableTerrain: this.enableTerrain,
+                    projection: this.projection.name,
+                    availableImages
                 });
 
-                bucket.populate(features, options, this.tileID.canonical);
+                assert(this.tileTransform.projection.name === this.projection.name);
+                bucket.populate(features, options, this.tileID.canonical, this.tileTransform);
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }
@@ -230,14 +243,18 @@ class WorkerTile {
                             iconMap,
                             imageAtlas.iconPositions,
                             this.showCollisionBoxes,
+                            availableImages,
                             this.tileID.canonical,
-                            this.tileZoom);
+                            this.tileZoom,
+                            this.projection);
                     } else if (bucket.hasPattern &&
                         (bucket instanceof LineBucket ||
                          bucket instanceof FillBucket ||
                          bucket instanceof FillExtrusionBucket)) {
                         recalculateLayers(bucket.layers, this.zoom, availableImages);
-                        bucket.addFeatures(options, this.tileID.canonical, imageAtlas.patternPositions);
+                        // $FlowFixMe[incompatible-type] Flow can't interpret ImagePosition as SpritePosition for some reason here
+                        const imagePositions: SpritePositions = imageAtlas.patternPositions;
+                        bucket.addFeatures(options, this.tileID.canonical, imagePositions, availableImages, this.tileTransform);
                     }
                 }
 

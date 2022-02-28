@@ -7,13 +7,13 @@ import LineBucket from '../../data/bucket/line_bucket.js';
 import {polygonIntersectsBufferedMultiLine} from '../../util/intersection_tests.js';
 import {getMaximumPaintValue, translateDistance, translate} from '../query_utils.js';
 import properties from './line_style_layer_properties.js';
-import {extend, MAX_SAFE_INTEGER} from '../../util/util.js';
+import {extend} from '../../util/util.js';
 import EvaluationParameters from '../evaluation_parameters.js';
 import {Transitionable, Transitioning, Layout, PossiblyEvaluated, DataDrivenProperty} from '../properties.js';
 import ProgramConfiguration from '../../data/program_configuration.js';
 
 import Step from '../../style-spec/expression/definitions/step.js';
-import type {FeatureState, ZoomConstantExpression} from '../../style-spec/expression/index.js';
+import type {FeatureState, ZoomConstantExpression, StylePropertyExpression} from '../../style-spec/expression/index.js';
 import type {Bucket, BucketParameters} from '../../data/bucket.js';
 import type {LayoutProps, PaintProps} from './line_style_layer_properties.js';
 import type Transform from '../../geo/transform.js';
@@ -62,11 +62,11 @@ class LineStyleLayer extends StyleLayer {
         if (name === 'line-gradient') {
             const expression: ZoomConstantExpression<'source'> = ((this._transitionablePaint._values['line-gradient'].value.expression): any);
             this.stepInterpolant = expression._styleExpression && expression._styleExpression.expression instanceof Step;
-            this.gradientVersion = (this.gradientVersion + 1) % MAX_SAFE_INTEGER;
+            this.gradientVersion = (this.gradientVersion + 1) % Number.MAX_SAFE_INTEGER;
         }
     }
 
-    gradientExpression() {
+    gradientExpression(): StylePropertyExpression {
         return this._transitionablePaint._values['line-gradient'].value.expression;
     }
 
@@ -77,7 +77,7 @@ class LineStyleLayer extends StyleLayer {
             lineFloorwidthProperty.possiblyEvaluate(this._transitioningPaint._values['line-width'].value, parameters);
     }
 
-    createBucket(parameters: BucketParameters<*>) {
+    createBucket(parameters: BucketParameters<*>): LineBucket {
         return new LineBucket(parameters);
     }
 
@@ -124,7 +124,7 @@ class LineStyleLayer extends StyleLayer {
         return polygonIntersectsBufferedMultiLine(translatedPolygon, geometry, halfWidth);
     }
 
-    isTileClipped() {
+    isTileClipped(): boolean {
         return true;
     }
 }

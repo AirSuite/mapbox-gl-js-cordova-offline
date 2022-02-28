@@ -3,6 +3,7 @@
 import StencilMode from '../gl/stencil_mode.js';
 import DepthMode from '../gl/depth_mode.js';
 import CullFaceMode from '../gl/cull_face_mode.js';
+import Tile from '../source/tile.js';
 import {
     backgroundUniformValues,
     backgroundPatternUniformValues
@@ -37,7 +38,12 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
 
     const program = painter.useProgram(image ? 'backgroundPattern' : 'background');
 
-    const tileIDs = coords ? coords : transform.coveringTiles({tileSize});
+    let tileIDs = coords;
+    let backgroundTiles;
+    if (!tileIDs) {
+        backgroundTiles = painter.getBackgroundTiles();
+        tileIDs = Object.values(backgroundTiles).map(tile => (tile: any).tileID);
+    }
 
     if (image) {
         context.activeTexture.set(gl.TEXTURE0);
@@ -48,7 +54,10 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
     for (const tileID of tileIDs) {
         const unwrappedTileID = tileID.toUnwrapped();
         const matrix = coords ? tileID.projMatrix : painter.transform.calculateProjMatrix(unwrappedTileID);
-        painter.prepareDrawTile(tileID);
+        painter.prepareDrawTile();
+
+        const tile = sourceCache ? sourceCache.getTile(tileID) :
+            backgroundTiles ? backgroundTiles[tileID.key] : new Tile(tileID, tileSize, transform.zoom, painter);
 
         const uniformValues = image ?
             backgroundPatternUniformValues(matrix, opacity, painter, image, {tileID, tileSize}, crossfade) :
@@ -56,8 +65,10 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
 
         painter.prepareDrawProgram(context, program, unwrappedTileID);
 
+        const {tileBoundsBuffer, tileBoundsIndexBuffer, tileBoundsSegments} = painter.getTileBoundsBuffers(tile);
+
         program.draw(context, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
-            uniformValues, layer.id, painter.tileExtentBuffer,
-            painter.quadTriangleIndexBuffer, painter.tileExtentSegments);
+            uniformValues, layer.id, tileBoundsBuffer,
+                tileBoundsIndexBuffer, tileBoundsSegments);
     }
 }

@@ -6,6 +6,7 @@ import {test} from '../../util/test.js';
 import VectorTileWorkerSource from '../../../src/source/vector_tile_worker_source.js';
 import StyleLayerIndex from '../../../src/style/style_layer_index.js';
 import perf from '../../../src/util/performance.js';
+import {getProjection} from '../../../src/geo/projection/index.js';
 
 import {fileURLToPath} from 'url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -19,6 +20,7 @@ test('VectorTileWorkerSource#abortTile aborts pending request', (t) => {
         source: 'source',
         uid: 0,
         tileID: {overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0}},
+        projection: getProjection({name: 'mercator'}),
         request: {url: 'http://localhost:2900/abort'}
     }, (err, res) => {
         t.false(err);
@@ -46,7 +48,8 @@ test('VectorTileWorkerSource#abortTile aborts pending async request', (t) => {
 
     source.loadTile({
         uid: 0,
-        tileID: {overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0}}
+        tileID: {overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0}},
+        projection: getProjection({name: 'mercator'})
     }, (err, res) => {
         t.false(err);
         t.false(res);
@@ -87,7 +90,7 @@ test('VectorTileWorkerSource#reloadTile reloads a previously-loaded tile', (t) =
     };
 
     const callback = t.spy();
-    source.reloadTile({uid: 0}, callback);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback);
     t.equal(parse.callCount, 1);
 
     parse.firstCall.args[4]();
@@ -110,11 +113,11 @@ test('VectorTileWorkerSource#reloadTile queues a reload when parsing is in progr
 
     const callback1 = t.spy();
     const callback2 = t.spy();
-    source.reloadTile({uid: 0}, callback1);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback1);
     t.equal(parse.callCount, 1);
 
     source.loaded[0].status = 'parsing';
-    source.reloadTile({uid: 0}, callback2);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback2);
     t.equal(parse.callCount, 1);
 
     parse.firstCall.args[4]();
@@ -145,11 +148,11 @@ test('VectorTileWorkerSource#reloadTile handles multiple pending reloads', (t) =
     const callback1 = t.spy();
     const callback2 = t.spy();
     const callback3 = t.spy();
-    source.reloadTile({uid: 0}, callback1);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback1);
     t.equal(parse.callCount, 1);
 
     source.loaded[0].status = 'parsing';
-    source.reloadTile({uid: 0}, callback2);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback2);
     t.equal(parse.callCount, 1);
 
     parse.firstCall.args[4]();
@@ -158,7 +161,7 @@ test('VectorTileWorkerSource#reloadTile handles multiple pending reloads', (t) =
     t.equal(callback2.callCount, 0);
     t.equal(callback3.callCount, 0);
 
-    source.reloadTile({uid: 0}, callback3);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback3);
     t.equal(parse.callCount, 2);
     t.equal(callback1.callCount, 1);
     t.equal(callback2.callCount, 0);
@@ -191,7 +194,7 @@ test('VectorTileWorkerSource#reloadTile does not reparse tiles with no vectorTil
 
     const callback = t.spy();
 
-    source.reloadTile({uid: 0}, callback);
+    source.reloadTile({uid: 0, tileID: {canonical: {x: 0, y: 0, z: 0}}, projection: {name: 'mercator'}}, callback);
     t.ok(parse.notCalled);
     t.ok(callback.calledOnce);
 
@@ -246,6 +249,7 @@ test('VectorTileWorkerSource provides resource timing information', (t) => {
         source: 'source',
         uid: 0,
         tileID: {overscaledZ: 0, wrap: 0, canonical: {x: 0, y: 0, z: 0, w: 0}},
+        projection: getProjection({name: 'mercator'}),
         request: {url: 'http://localhost:2900/faketile.pbf', collectResourceTiming: true}
     }, (err, res) => {
         t.false(err);

@@ -14,7 +14,7 @@ const MIN_TIME_UNTIL_EXPIRY = 1000 * 60 * 7; // 7 minutes. Skip caching tiles wi
 export type ResponseOptions = {
     status: number,
     statusText: string,
-    headers: window.Headers
+    headers: Headers
 };
 
 // We're using a global shared cache object. Normally, requesting ad-hoc Cache objects is fine, but
@@ -72,7 +72,9 @@ export function cachePut(request: Request, response: Response, requestTime: numb
         options.headers.set('Expires', new Date(requestTime + cacheControl['max-age'] * 1000).toUTCString());
     }
 
-    const timeUntilExpiry = new Date(options.headers.get('Expires')).getTime() - requestTime;
+    const expires = options.headers.get('Expires');
+    if (!expires) return;
+    const timeUntilExpiry = new Date(expires).getTime() - requestTime;
     if (timeUntilExpiry < MIN_TIME_UNTIL_EXPIRY) return;
 
     prepareBody(response, body => {
@@ -91,7 +93,7 @@ function stripQueryParameters(url: string) {
     return start < 0 ? url : url.slice(0, start);
 }
 
-export function cacheGet(request: Request, callback: (error: ?any, response: ?Response, fresh: ?boolean) => void) {
+export function cacheGet(request: Request, callback: (error: ?any, response: ?Response, fresh: ?boolean) => void): void {
     cacheOpen();
     if (!sharedCache) return callback(null);
 

@@ -2,7 +2,7 @@ import {test} from '../../../util/test.js';
 import {extend} from '../../../../src/util/util.js';
 import window from '../../../../src/util/window.js';
 import Map from '../../../../src/ui/map.js';
-import DOM from '../../../../src/util/dom.js';
+import * as DOM from '../../../../src/util/dom.js';
 import simulate from '../../../util/simulate_interaction.js';
 import browser from '../../../../src/util/browser.js';
 
@@ -492,6 +492,8 @@ test('DragRotateHandler ends rotation if the window blurs (#3389)', (t) => {
     t.equal(rotate.callCount, 1);
 
     simulate.blur(window);
+    map._renderTaskQueue.run();
+
     t.equal(rotateend.callCount, 1);
 
     map.remove();

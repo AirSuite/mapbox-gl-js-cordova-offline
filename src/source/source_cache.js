@@ -3,7 +3,7 @@
 import Tile from './tile.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
 import TileCache from './tile_cache.js';
-import {keysDifference, values} from '../util/util.js';
+import {asyncAll, keysDifference, values} from '../util/util.js';
 import Context from '../gl/context.js';
 import Point from '@mapbox/point-geometry';
 import browser from '../util/browser.js';
@@ -12,11 +12,13 @@ import assert from 'assert';
 import SourceFeatureState from './source_state.js';
 
 import type {Source} from './source.js';
-import type Map from '../ui/map.js';
+import type {SourceSpecification} from '../style-spec/types.js';
+import type {default as MapboxMap} from '../ui/map.js';
 import type Style from '../style/style.js';
 import type Transform from '../geo/transform.js';
 import type {TileState} from './tile.js';
 import type {Callback} from '../types/callback.js';
+import type {FeatureStates} from './source_state.js';
 import type {QueryGeometry, TilespaceQueryGeometry} from '../style/query_geometry.js';
 
 /**
@@ -32,7 +34,7 @@ import type {QueryGeometry, TilespaceQueryGeometry} from '../style/query_geometr
  */
 class SourceCache extends Evented {
     id: string;
-    map: Map;
+    map: MapboxMap;
     style: Style;
 
     _source: Source;
@@ -43,6 +45,7 @@ class SourceCache extends Evented {
     _cache: TileCache;
     _timers: {[_: any]: TimeoutID};
     _cacheTimers: {[_: any]: TimeoutID};
+    _minTileCacheSize: ?number;
     _maxTileCacheSize: ?number;
     _paused: boolean;
     _shouldReloadOnResume: boolean;
@@ -88,6 +91,7 @@ class SourceCache extends Evented {
         this._cache = new TileCache(0, this._unloadTile.bind(this));
         this._timers = {};
         this._cacheTimers = {};
+        this._minTileCacheSize = null;
         this._maxTileCacheSize = null;
         this._loadedParentTiles = {};
 
@@ -95,8 +99,9 @@ class SourceCache extends Evented {
         this._state = new SourceFeatureState();
     }
 
-    onAdd(map: Map) {
+    onAdd(map: MapboxMap) {
         this.map = map;
+        this._minTileCacheSize = map ? map._minTileCacheSize : null;
         this._maxTileCacheSize = map ? map._maxTileCacheSize : null;
     }
 
@@ -134,22 +139,22 @@ class SourceCache extends Evented {
         if (this.transform) this.update(this.transform);
     }
 
-    _loadTile(tile: Tile, callback: Callback<void>) {
+    _loadTile(tile: Tile, callback: Callback<void>): void {
         tile.isSymbolTile = this._onlySymbols;
         return this._source.loadTile(tile, callback);
     }
 
-    _unloadTile(tile: Tile) {
+    _unloadTile(tile: Tile): void {
         if (this._source.unloadTile)
             return this._source.unloadTile(tile, () => {});
     }
 
-    _abortTile(tile: Tile) {
+    _abortTile(tile: Tile): void {
         if (this._source.abortTile)
             return this._source.abortTile(tile, () => {});
     }
 
-    serialize() {
+    serialize(): SourceSpecification {
         return this._source.serialize();
     }
 
@@ -191,7 +196,7 @@ class SourceCache extends Evented {
         return renderables.map(tile => tile.tileID).sort(compareTileId).map(id => id.key);
     }
 
-    hasRenderableParent(tileID: OverscaledTileID) {
+    hasRenderableParent(tileID: OverscaledTileID): boolean {
         const parentTile = this.findLoadedParent(tileID, 0);
         if (parentTile) {
             return this._isIdRenderable(parentTile.tileID.key);
@@ -199,7 +204,7 @@ class SourceCache extends Evented {
         return false;
     }
 
-    _isIdRenderable(id: number, symbolLayer?: boolean) {
+    _isIdRenderable(id: number, symbolLayer?: boolean): boolean {
         return this._tiles[id] && this._tiles[id].hasData() &&
             !this._coveredTiles[id] && (symbolLayer || !this._tiles[id].holdingForFade());
     }
@@ -240,15 +245,24 @@ class SourceCache extends Evented {
         if (err) {
             tile.state = 'errored';
             if ((err: any).status !== 404) this._source.fire(new ErrorEvent(err, {tile}));
-            // continue to try loading parent/children tiles if a tile doesn't exist (404)
-            else this.update(this.transform);
+            else {
+                // continue to try loading parent/children tiles if a tile doesn't exist (404)
+                const updateForTerrain = this._source.type === 'raster-dem' && this.usedForTerrain;
+                if (updateForTerrain && this.map.painter.terrain) {
+                    const terrain = this.map.painter.terrain;
+                    this.update(this.transform, terrain.getScaledDemTileSize(), true);
+                    terrain.resetTileLookupCache(this.id);
+                } else {
+                    this.update(this.transform);
+                }
+            }
             return;
         }
 
         tile.timeAdded = browser.now();
         if (previousState === 'expired') tile.refreshedUponExpiration = true;
         this._setTileReloadTimer(id, tile);
-        if (this.getSource().type === 'raster-dem' && tile.dem) this._backfillDEM(tile);
+        if (this._source.type === 'raster-dem' && tile.dem) this._backfillDEM(tile);
         this._state.initializeTileState(tile, this.map ? this.map.painter : null);
 
         this._source.fire(new Event('data', {dataType: 'source', tile, coord: tile.tileID, 'sourceCacheId': this.id}));
@@ -318,10 +332,10 @@ class SourceCache extends Evented {
      * @private
      */
     _retainLoadedChildren(
-        idealTiles: {[_: any]: OverscaledTileID},
+        idealTiles: {[number | string]: OverscaledTileID},
         zoom: number,
         maxCoveringZoom: number,
-        retain: {[_: any]: OverscaledTileID}
+        retain: {[number | string]: OverscaledTileID}
     ) {
         for (const id in this._tiles) {
             let tile = this._tiles[id];
@@ -393,7 +407,7 @@ class SourceCache extends Evented {
 
     /**
      * Resizes the tile cache based on the current viewport's size
-     * or the maxTileCacheSize option passed during map creation
+     * or the minTileCacheSize and maxTileCacheSize options passed during map creation
      *
      * Larger viewports use more tiles and need larger caches. Larger viewports
      * are more likely to be found on devices with more memory and on pages where
@@ -408,14 +422,15 @@ class SourceCache extends Evented {
         const commonZoomRange = 5;
 
         const viewDependentMaxSize = Math.floor(approxTilesInView * commonZoomRange);
-        const maxSize = typeof this._maxTileCacheSize === 'number' ? Math.min(this._maxTileCacheSize, viewDependentMaxSize) : viewDependentMaxSize;
+        const minSize = typeof this._minTileCacheSize === 'number' ? Math.max(this._minTileCacheSize, viewDependentMaxSize) : viewDependentMaxSize;
+        const maxSize = typeof this._maxTileCacheSize === 'number' ? Math.min(this._maxTileCacheSize, minSize) : minSize;
 
         this._cache.setMaxSize(maxSize);
     }
 
     handleWrapJump(lng: number) {
         // On top of the regular z/x/y values, TileIDs have a `wrap` value that specify
-        // which cppy of the world the tile belongs to. For example, at `lng: 10` you
+        // which copy of the world the tile belongs to. For example, at `lng: 10` you
         // might render z/x/y/0 while at `lng: 370` you would render z/x/y/1.
         //
         // When lng values get wrapped (going from `lng: 370` to `long: 10`) you expect
@@ -475,7 +490,9 @@ class SourceCache extends Evented {
         }
 
         this.updateCacheSize(transform, tileSize);
-        this.handleWrapJump(this.transform.center.lng);
+        if (this.transform.projection.name !== 'globe') {
+            this.handleWrapJump(this.transform.center.lng);
+        }
 
         // Covered is a list of retained tiles who's areas are fully covered by other,
         // better, retained tiles. They are not drawn separately.
@@ -516,7 +533,7 @@ class SourceCache extends Evented {
                 assert(tileID.key === +id);
 
                 const tile = this._tiles[id];
-                if (!tile || tile.fadeEndTime && tile.fadeEndTime <= browser.now()) continue;
+                if (!tile || (tile.fadeEndTime && tile.fadeEndTime <= browser.now())) continue;
 
                 // if the tile is loaded but still fading in, find parents to cross-fade with it
                 const parentTile = this.findLoadedParent(tileID, Math.max(tileID.overscaledZ - SourceCache.maxOverzooming, this._source.minzoom));
@@ -595,7 +612,7 @@ class SourceCache extends Evented {
         if (idealTileIDs.length === 0) { return retain; }
 
         const checked: {[_: number | string]: boolean } = {};
-        const minZoom = idealTileIDs[idealTileIDs.length - 1].overscaledZ;
+        const minZoom = idealTileIDs.reduce((min, id) => Math.min(min, id.overscaledZ), Infinity);
         const maxZoom = idealTileIDs[0].overscaledZ;
         assert(minZoom <= maxZoom);
         const minCoveringZoom = Math.max(maxZoom - SourceCache.maxOverzooming, this._source.minzoom);
@@ -737,7 +754,9 @@ class SourceCache extends Evented {
 
         const cached = Boolean(tile);
         if (!cached) {
-            tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom);
+            const painter = this.map ? this.map.painter : null;
+            const isRaster = this._source.type === 'raster' || this._source.type === 'raster-dem';
+            tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, painter, isRaster);
             this._loadTile(tile, this._tileLoaded.bind(this, tile, tileID.key, tile.state));
         }
 
@@ -805,7 +824,13 @@ class SourceCache extends Evented {
         for (const id in this._tiles)
             this._removeTile(+id);
 
+        if (this._source._clear) this._source._clear();
+
         this._cache.reset();
+
+        if (this.map && this.usedForTerrain && this.map.painter.terrain) {
+            this.map.painter.terrain.resetTileLookupCache(this.id);
+        }
     }
 
     /**
@@ -849,7 +874,7 @@ class SourceCache extends Evented {
         return coords;
     }
 
-    hasTransition() {
+    hasTransition(): boolean {
         if (this._source.hasTransition()) {
             return true;
         }
@@ -888,7 +913,7 @@ class SourceCache extends Evented {
      * Get the entire state object for a feature
      * @private
      */
-    getFeatureState(sourceLayer?: string, featureId: number | string) {
+    getFeatureState(sourceLayer?: string, featureId: number | string): FeatureStates {
         sourceLayer = sourceLayer || '_geojsonTileLayer';
         return this._state.getState(sourceLayer, featureId);
     }
@@ -918,6 +943,50 @@ class SourceCache extends Evented {
         }
         this._cache.filter(tile => !tile.hasDependency(namespaces, keys));
     }
+
+    /**
+     * Preloads all tiles that will be requested for one or a series of transformations
+     *
+     * @private
+     * @returns {Object} Returns `this` | Promise.
+     */
+    _preloadTiles(transform: Transform | Array<Transform>, callback: Callback<any>) {
+        const coveringTilesIDs: Map<number, OverscaledTileID> = new Map();
+        const transforms = Array.isArray(transform) ? transform : [transform];
+
+        const terrain = this.map.painter.terrain;
+        const tileSize = this.usedForTerrain && terrain ? terrain.getScaledDemTileSize() : this._source.tileSize;
+
+        for (const tr of transforms) {
+            const tileIDs = tr.coveringTiles({
+                tileSize,
+                minzoom: this._source.minzoom,
+                maxzoom: this._source.maxzoom,
+                roundZoom: this._source.roundZoom && !this.usedForTerrain,
+                reparseOverscaled: this._source.reparseOverscaled,
+                isTerrainDEM: this.usedForTerrain
+            });
+
+            for (const tileID of tileIDs) {
+                coveringTilesIDs.set(tileID.key, tileID);
+            }
+
+            if (this.usedForTerrain) {
+                tr.updateElevation(false);
+            }
+        }
+
+        const tileIDs = Array.from(coveringTilesIDs.values());
+        const isRaster = this._source.type === 'raster' || this._source.type === 'raster-dem';
+
+        asyncAll(tileIDs, (tileID, done) => {
+            const tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, this.map.painter, isRaster);
+            this._loadTile(tile, (err) => {
+                if (this._source.type === 'raster-dem' && tile.dem) this._backfillDEM(tile);
+                done(err, tile);
+            });
+        }, callback);
+    }
 }
 
 SourceCache.maxOverzooming = 10;
@@ -932,7 +1001,7 @@ function compareTileId(a: OverscaledTileID, b: OverscaledTileID): number {
     return a.overscaledZ - b.overscaledZ || bWrap - aWrap || b.canonical.y - a.canonical.y || b.canonical.x - a.canonical.x;
 }
 
-function isRasterType(type) {
+function isRasterType(type): boolean {
     return type === 'raster' || type === 'image' || type === 'video';
 }
 

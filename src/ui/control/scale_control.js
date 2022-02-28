@@ -1,9 +1,9 @@
 // @flow
 
-import DOM from '../../util/dom.js';
+import * as DOM from '../../util/dom.js';
 import {extend, bindAll} from '../../util/util.js';
 
-import type Map from '../map.js';
+import type Map, {ControlPosition} from '../map.js';
 
 type Unit = 'imperial' | 'metric' | 'nautical';
 
@@ -48,7 +48,7 @@ class ScaleControl {
         ], this);
     }
 
-    getDefaultPosition() {
+    getDefaultPosition(): ControlPosition {
         return 'bottom-left';
     }
 
@@ -56,7 +56,7 @@ class ScaleControl {
         updateScale(this._map, this._container, this.options);
     }
 
-    onAdd(map: Map) {
+    onAdd(map: Map): HTMLElement {
         this._map = map;
         this._container = DOM.create('div', 'mapboxgl-ctrl mapboxgl-ctrl-scale', map.getContainer());
 
@@ -67,7 +67,7 @@ class ScaleControl {
     }
 
     onRemove() {
-        DOM.remove(this._container);
+        this._container.remove();
         this._map.off('move', this._onMove);
         this._map = (undefined: any);
     }
@@ -90,9 +90,9 @@ function updateScale(map, container, options) {
     // container with maximum length (Default) as 100px.
     // Using spherical law of cosines approximation, the real distance is
     // found between the two coordinates.
-    const maxWidth = options && options.maxWidth || 100;
+    const maxWidth = (options && options.maxWidth) || 100;
 
-    const y = map._container.clientHeight / 2;
+    const y = map._containerHeight / 2;
     const left = map.unproject([0, y]);
     const right = map.unproject([maxWidth, y]);
     const maxMeters = left.distanceTo(right);

@@ -1,8 +1,8 @@
 // @flow
 
-import {CircleLayoutArray} from '../array_types.js';
+import {CircleLayoutArray, CircleGlobeExtArray} from '../array_types.js';
 
-import {members as layoutAttributes} from './circle_attributes.js';
+import {circleAttributes, circleGlobeAttributesExt} from './circle_attributes.js';
 import SegmentVector from '../segment.js';
 import {ProgramConfigurationSet} from '../program_configuration.js';
 import {TriangleIndexArray} from '../index_array_type.js';
@@ -27,12 +27,24 @@ import type IndexBuffer from '../../gl/index_buffer.js';
 import type VertexBuffer from '../../gl/vertex_buffer.js';
 import type Point from '@mapbox/point-geometry';
 import type {FeatureStates} from '../../source/source_state.js';
-import type {ImagePosition} from '../../render/image_atlas.js';
+import type {SpritePositions} from '../../util/image.js';
+import type {TileTransform} from '../../geo/projection/tile_transform.js';
+import type Projection from '../../geo/projection/projection.js';
+import type {Vec3} from 'gl-matrix';
+import {latFromMercatorY, mercatorZfromAltitude} from '../../geo/mercator_coordinate.js';
 
 function addCircleVertex(layoutVertexArray, x, y, extrudeX, extrudeY) {
     layoutVertexArray.emplaceBack(
         (x * 2) + ((extrudeX + 1) / 2),
         (y * 2) + ((extrudeY + 1) / 2));
+}
+
+function addGlobeExtVertex(vertexArray: CircleGlobeExtArray, pos: {x: number, y: number, z: number}, normal: Vec3, scale: number) {
+    const encode = 1 << 14;
+    vertexArray.emplaceBack(
+        pos.x, pos.y, pos.z,
+        normal[0] * encode, normal[1] * encode, normal[2] * encode,
+        scale);
 }
 
 /**
@@ -53,6 +65,8 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
 
     layoutVertexArray: CircleLayoutArray;
     layoutVertexBuffer: VertexBuffer;
+    globeExtVertexArray: ?CircleGlobeExtArray;
+    globeExtVertexBuffer: ?VertexBuffer;
 
     indexArray: TriangleIndexArray;
     indexBuffer: IndexBuffer;
@@ -61,6 +75,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
     programConfigurations: ProgramConfigurationSet<Layer>;
     segments: SegmentVector;
     uploaded: boolean;
+    projection: string;
 
     constructor(options: BucketParameters<Layer>) {
         this.zoom = options.zoom;
@@ -69,6 +84,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         this.layerIds = this.layers.map(layer => layer.id);
         this.index = options.index;
         this.hasPattern = false;
+        this.projection = options.projection;
 
         this.layoutVertexArray = new CircleLayoutArray();
         this.indexArray = new TriangleIndexArray();
@@ -77,7 +93,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform) {
         const styleLayer = this.layers[0];
         const bucketFeatures = [];
         let circleSortKey = null;
@@ -103,7 +119,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
                 type: feature.type,
                 sourceLayerIndex,
                 index,
-                geometry: needGeometry ? evaluationFeature.geometry : loadGeometry(feature),
+                geometry: needGeometry ? evaluationFeature.geometry : loadGeometry(feature, canonical, tileTransform),
                 patterns: {},
                 sortKey
             };
@@ -119,32 +135,44 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
             });
         }
 
+        let globeProjection: ?Projection = null;
+
+        if (tileTransform.projection.name === 'globe') {
+            // Extend vertex attributes if the globe projection is enabled
+            this.globeExtVertexArray = new CircleGlobeExtArray();
+            globeProjection = tileTransform.projection;
+        }
+
         for (const bucketFeature of bucketFeatures) {
             const {geometry, index, sourceLayerIndex} = bucketFeature;
             const feature = features[index].feature;
 
-            this.addFeature(bucketFeature, geometry, index, canonical);
+            this.addFeature(bucketFeature, geometry, index, options.availableImages, canonical, globeProjection);
             options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: {[_: string]: ImagePosition}) {
+    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
         if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, imagePositions);
+        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
     }
 
-    isEmpty() {
+    isEmpty(): boolean {
         return this.layoutVertexArray.length === 0;
     }
 
-    uploadPending() {
+    uploadPending(): boolean {
         return !this.uploaded || this.programConfigurations.needsUpload;
     }
 
     upload(context: Context) {
         if (!this.uploaded) {
-            this.layoutVertexBuffer = context.createVertexBuffer(this.layoutVertexArray, layoutAttributes);
+            this.layoutVertexBuffer = context.createVertexBuffer(this.layoutVertexArray, circleAttributes.members);
             this.indexBuffer = context.createIndexBuffer(this.indexArray);
+
+            if (this.globeExtVertexArray) {
+                this.globeExtVertexBuffer = context.createVertexBuffer(this.globeExtVertexArray, circleGlobeAttributesExt.members);
+            }
         }
         this.programConfigurations.upload(context);
         this.uploaded = true;
@@ -156,9 +184,12 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         this.indexBuffer.destroy();
         this.programConfigurations.destroy();
         this.segments.destroy();
+        if (this.globeExtVertexBuffer) {
+            this.globeExtVertexBuffer.destroy();
+        }
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, availableImages: Array<string>, canonical: CanonicalTileID, projection?: ?Projection) {
         for (const ring of geometry) {
             for (const point of ring) {
                 const x = point.x;
@@ -176,6 +207,21 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
                 // │ 0     1 │
                 // └─────────┘
 
+                if (projection) {
+                    const projectedPoint = projection.projectTilePoint(x, y, canonical);
+                    const normal = projection.upVector(canonical, x, y);
+
+                    // Apply extra scaling to cover different pixelPerMeter ratios at different latitudes
+                    // scale = projection.ppm(lat) / mercator.ppm(lat)
+                    const lat = latFromMercatorY((y / EXTENT + canonical.y) / (1 << canonical.z));
+                    const scale = projection.pixelsPerMeter(lat, 1) / mercatorZfromAltitude(1, lat);
+                    const array: any = this.globeExtVertexArray;
+
+                    addGlobeExtVertex(array, projectedPoint, normal, scale);
+                    addGlobeExtVertex(array, projectedPoint, normal, scale);
+                    addGlobeExtVertex(array, projectedPoint, normal, scale);
+                    addGlobeExtVertex(array, projectedPoint, normal, scale);
+                }
                 const segment = this.segments.prepareSegment(4, this.layoutVertexArray, this.indexArray, feature.sortKey);
                 const index = segment.vertexLength;
 
@@ -192,10 +238,10 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
             }
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {}, canonical);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {}, availableImages, canonical);
     }
 }
 
-register('CircleBucket', CircleBucket, {omit: ['layers']});
+register(CircleBucket, {omit: ['layers']});
 
 export default CircleBucket;

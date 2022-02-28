@@ -12,8 +12,8 @@ const containerHeight = 512;
 function createMap(t, options) {
     options = options || {};
     const container = window.document.createElement('div');
-    Object.defineProperty(container, 'clientWidth', {value: options.width || containerWidth});
-    Object.defineProperty(container, 'clientHeight', {value: options.height || containerHeight});
+    Object.defineProperty(container, 'getBoundingClientRect',
+        {value: () => ({height: options.height || containerHeight, width: options.width || containerWidth})});
     return globalCreateMap(t, {container});
 }
 
@@ -51,6 +51,24 @@ test('Popup closes on map click events by default', (t) => {
     simulate.click(map.getCanvas());
 
     t.ok(!popup.isOpen());
+    t.end();
+});
+
+test('Popup close event listener is removed on map click', (t) => {
+    const map = createMap(t);
+    const popup = new Popup()
+        .setText('Test')
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    const listener = t.spy();
+    popup.on('close', listener);
+
+    simulate.click(map.getCanvas());
+    simulate.click(map.getCanvas());
+
+    t.ok(!popup.isOpen());
+    t.ok(listener.calledOnce);
     t.end();
 });
 

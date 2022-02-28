@@ -13,17 +13,20 @@ import {Evented} from '../util/evented.js';
 import {Layout, Transitionable, Transitioning, Properties, PossiblyEvaluated, PossiblyEvaluatedPropertyValue} from './properties.js';
 import {supportsPropertyExpression} from '../style-spec/util/properties.js';
 import ProgramConfiguration from '../data/program_configuration.js';
+import featureFilter from '../style-spec/feature_filter/index.js';
 
 import type {FeatureState} from '../style-spec/expression/index.js';
 import type {Bucket} from '../data/bucket.js';
 import type Point from '@mapbox/point-geometry';
-import type {FeatureFilter} from '../style-spec/feature_filter/index.js';
+import type {FeatureFilter, FilterExpression} from '../style-spec/feature_filter/index.js';
 import type {TransitionParameters, PropertyValue} from './properties.js';
 import type EvaluationParameters, {CrossfadeParameters} from './evaluation_parameters.js';
 import type Transform from '../geo/transform.js';
 import type {
     LayerSpecification,
-    FilterSpecification
+    FilterSpecification,
+    TransitionSpecification,
+    PropertyValueSpecification
 } from '../style-spec/types.js';
 import type {CustomLayerInterface} from './style_layer/custom_style_layer.js';
 import type Map from '../ui/map.js';
@@ -53,6 +56,7 @@ class StyleLayer extends Evented {
     +paint: mixed;
 
     _featureFilter: FeatureFilter;
+    _filterCompiled: boolean;
 
     +queryRadius: (bucket: Bucket) => number;
     +queryIntersectsFeature: (queryGeometry: TilespaceQueryGeometry,
@@ -73,7 +77,8 @@ class StyleLayer extends Evented {
 
         this.id = layer.id;
         this.type = layer.type;
-        this._featureFilter = {filter: () => true, needGeometry: false};
+        this._featureFilter = {filter: () => true, needGeometry: false, needFeature: false};
+        this._filterCompiled = false;
 
         if (layer.type === 'custom') return;
 
@@ -109,11 +114,11 @@ class StyleLayer extends Evented {
         }
     }
 
-    getCrossfadeParameters() {
+    getCrossfadeParameters(): CrossfadeParameters {
         return this._crossfadeParameters;
     }
 
-    getLayoutProperty(name: string) {
+    getLayoutProperty(name: string): PropertyValueSpecification<mixed> {
         if (name === 'visibility') {
             return this.visibility;
         }
@@ -137,7 +142,7 @@ class StyleLayer extends Evented {
         this._unevaluatedLayout.setValue(name, value);
     }
 
-    getPaintProperty(name: string) {
+    getPaintProperty(name: string): void | TransitionSpecification | PropertyValueSpecification<mixed> {
         if (endsWith(name, TRANSITION_SUFFIX)) {
             return this._transitionablePaint.getTransition(name.slice(0, -TRANSITION_SUFFIX.length));
         } else {
@@ -145,7 +150,7 @@ class StyleLayer extends Evented {
         }
     }
 
-    setPaintProperty(name: string, value: mixed, options: StyleSetterOptions = {}) {
+    setPaintProperty(name: string, value: mixed, options: StyleSetterOptions = {}): boolean {
         if (value !== null && value !== undefined) {
             const key = `layers.${this.id}.paint.${name}`;
             if (this._validate(validatePaintProperty, key, name, value, options)) {
@@ -195,7 +200,7 @@ class StyleLayer extends Evented {
         return false;
     }
 
-    isHidden(zoom: number) {
+    isHidden(zoom: number): boolean {
         if (this.minzoom && zoom < this.minzoom) return true;
         if (this.maxzoom && zoom >= this.maxzoom) return true;
         return this.visibility === 'none';
@@ -205,7 +210,7 @@ class StyleLayer extends Evented {
         this._transitioningPaint = this._transitionablePaint.transitioned(parameters, this._transitioningPaint);
     }
 
-    hasTransition() {
+    hasTransition(): boolean {
         return this._transitioningPaint.hasTransition();
     }
 
@@ -221,7 +226,7 @@ class StyleLayer extends Evented {
         (this: any).paint = this._transitioningPaint.possiblyEvaluate(parameters, undefined, availableImages);
     }
 
-    serialize() {
+    serialize(): LayerSpecification {
         const output: any = {
             'id': this.id,
             'type': this.type,
@@ -247,7 +252,7 @@ class StyleLayer extends Evented {
         });
     }
 
-    _validate(validate: Function, key: string, name: string, value: mixed, options: StyleSetterOptions = {}) {
+    _validate(validate: Function, key: string, name: string, value: mixed, options: StyleSetterOptions = {}): boolean {
         if (options && options.validate === false) {
             return false;
         }
@@ -262,19 +267,19 @@ class StyleLayer extends Evented {
         }));
     }
 
-    is3D() {
+    is3D(): boolean {
         return false;
     }
 
-    isSky() {
+    isSky(): boolean {
         return false;
     }
 
-    isTileClipped() {
+    isTileClipped(): boolean {
         return false;
     }
 
-    hasOffscreenPass() {
+    hasOffscreenPass(): boolean {
         return false;
     }
 
@@ -282,7 +287,7 @@ class StyleLayer extends Evented {
         // noop
     }
 
-    isStateDependent() {
+    isStateDependent(): boolean {
         for (const property in (this: any).paint._values) {
             const value = (this: any).paint.get(property);
             if (!(value instanceof PossiblyEvaluatedPropertyValue) || !supportsPropertyExpression(value.property.specification)) {
@@ -295,6 +300,25 @@ class StyleLayer extends Evented {
             }
         }
         return false;
+    }
+
+    compileFilter() {
+        if (!this._filterCompiled) {
+            this._featureFilter = featureFilter(this.filter);
+            this._filterCompiled = true;
+        }
+    }
+
+    invalidateCompiledFilter() {
+        this._filterCompiled = false;
+    }
+
+    dynamicFilter(): ?FilterExpression {
+        return this._featureFilter.dynamicFilter;
+    }
+
+    dynamicFilterNeedsFeature(): boolean {
+        return this._featureFilter.needFeature;
     }
 }
 
