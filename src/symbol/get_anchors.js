@@ -37,7 +37,7 @@ function getCenterAnchor(line: Array<Point>,
                          shapedText: ?Shaping,
                          shapedIcon: ?PositionedIcon,
                          glyphSize: number,
-                         boxScale: number) {
+                         boxScale: number): ?Anchor {
     const angleWindowSize = getAngleWindowSize(shapedText, glyphSize, boxScale);
     const labelLength = getShapedLabelLength(shapedText, shapedIcon) * boxScale;
 
@@ -57,7 +57,7 @@ function getCenterAnchor(line: Array<Point>,
                 x = interpolate(a.x, b.x, t),
                 y = interpolate(a.y, b.y, t);
 
-            const anchor = new Anchor(x, y, b.angleTo(a), i);
+            const anchor = new Anchor(x, y, 0, b.angleTo(a), i);
             if (!angleWindowSize || checkMaxAngle(line, anchor, labelLength, angleWindowSize, maxAngle)) {
                 return anchor;
             } else {
@@ -77,7 +77,7 @@ function getAnchors(line: Array<Point>,
                     glyphSize: number,
                     boxScale: number,
                     overscaling: number,
-                    tileExtent: number) {
+                    tileExtent: number): Array<Anchor> {
 
     // Resample a line to get anchor points for labels and check that each
     // potential label passes text-max-angle check and has enough froom to fit
@@ -141,7 +141,7 @@ function resample(line, offset, spacing, angleWindowSize, maxAngle, labelLength,
             if (x >= 0 && x < tileExtent && y >= 0 && y < tileExtent &&
                     markedDistance - halfLabelLength >= 0 &&
                     markedDistance + halfLabelLength <= lineLength) {
-                const anchor = new Anchor(x, y, angle, i);
+                const anchor = new Anchor(x, y, 0, angle, i);
                 anchor._round();
 
                 if (!angleWindowSize || checkMaxAngle(line, anchor, labelLength, angleWindowSize, maxAngle)) {

@@ -1,6 +1,6 @@
 // @flow
 
-import DOM from '../../util/dom.js';
+import * as DOM from '../../util/dom.js';
 
 import {bindAll, warnOnce} from '../../util/util.js';
 import window from '../../util/window.js';
@@ -52,7 +52,7 @@ class FullscreenControl {
         }
     }
 
-    onAdd(map: Map) {
+    onAdd(map: Map): HTMLElement {
         this._map = map;
         if (!this._container) this._container = this._map.getContainer();
         this._controlContainer = DOM.create('div', `mapboxgl-ctrl mapboxgl-ctrl-group`);
@@ -66,12 +66,12 @@ class FullscreenControl {
     }
 
     onRemove() {
-        DOM.remove(this._controlContainer);
+        this._controlContainer.remove();
         this._map = (null: any);
         window.document.removeEventListener(this._fullscreenchange, this._changeIcon);
     }
 
-    _checkFullscreenSupport() {
+    _checkFullscreenSupport(): boolean {
         return !!(
             window.document.fullscreenEnabled ||
             (window.document: any).webkitFullscreenEnabled
@@ -80,7 +80,7 @@ class FullscreenControl {
 
     _setupUI() {
         const button = this._fullscreenButton = DOM.create('button', (`mapboxgl-ctrl-fullscreen`), this._controlContainer);
-        DOM.create('span', `mapboxgl-ctrl-icon`, button).setAttribute('aria-hidden', true);
+        DOM.create('span', `mapboxgl-ctrl-icon`, button).setAttribute('aria-hidden', 'true');
         button.type = 'button';
         this._updateTitle();
         this._fullscreenButton.addEventListener('click', this._onClickFullscreen);
@@ -90,14 +90,14 @@ class FullscreenControl {
     _updateTitle() {
         const title = this._getTitle();
         this._fullscreenButton.setAttribute("aria-label", title);
-        this._fullscreenButton.title = title;
+        if (this._fullscreenButton.firstElementChild) this._fullscreenButton.firstElementChild.setAttribute('title', title);
     }
 
-    _getTitle() {
+    _getTitle(): string {
         return this._map._getUIString(this._isFullscreen() ? 'FullscreenControl.Exit' : 'FullscreenControl.Enter');
     }
 
-    _isFullscreen() {
+    _isFullscreen(): boolean {
         return this._fullscreen;
     }
 
