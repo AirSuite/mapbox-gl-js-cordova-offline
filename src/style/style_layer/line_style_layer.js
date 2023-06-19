@@ -13,27 +13,28 @@ import {Transitionable, Transitioning, Layout, PossiblyEvaluated, DataDrivenProp
 import ProgramConfiguration from '../../data/program_configuration.js';
 
 import Step from '../../style-spec/expression/definitions/step.js';
-import type {FeatureState, ZoomConstantExpression, StylePropertyExpression} from '../../style-spec/expression/index.js';
+import type {PossiblyEvaluatedValue, PropertyValue, PossiblyEvaluatedPropertyValue} from '../properties.js';
+import type {Feature, FeatureState, ZoomConstantExpression, StylePropertyExpression} from '../../style-spec/expression/index.js';
 import type {Bucket, BucketParameters} from '../../data/bucket.js';
 import type {LayoutProps, PaintProps} from './line_style_layer_properties.js';
 import type Transform from '../../geo/transform.js';
 import type {LayerSpecification} from '../../style-spec/types.js';
 import type {TilespaceQueryGeometry} from '../query_geometry.js';
+import type {IVectorTileFeature} from '@mapbox/vector-tile';
 
 class LineFloorwidthProperty extends DataDrivenProperty<number> {
-    useIntegerZoom: true;
+    useIntegerZoom: ?boolean;
 
-    possiblyEvaluate(value, parameters) {
+    possiblyEvaluate(value: PropertyValue<number, PossiblyEvaluatedPropertyValue<number>>, parameters: EvaluationParameters): PossiblyEvaluatedPropertyValue<number> {
         parameters = new EvaluationParameters(Math.floor(parameters.zoom), {
             now: parameters.now,
             fadeDuration: parameters.fadeDuration,
-            zoomHistory: parameters.zoomHistory,
             transition: parameters.transition
         });
         return super.possiblyEvaluate(value, parameters);
     }
 
-    evaluate(value, globals, feature, featureState) {
+    evaluate(value: PossiblyEvaluatedValue<number>, globals: EvaluationParameters, feature: Feature, featureState: FeatureState): number {
         globals = extend({}, globals, {zoom: Math.floor(globals.zoom)});
         return super.evaluate(value, globals, feature, featureState);
     }
@@ -70,6 +71,10 @@ class LineStyleLayer extends StyleLayer {
         return this._transitionablePaint._values['line-gradient'].value.expression;
     }
 
+    widthExpression(): StylePropertyExpression {
+        return this._transitionablePaint._values['line-width'].value.expression;
+    }
+
     recalculate(parameters: EvaluationParameters, availableImages: Array<string>) {
         super.recalculate(parameters, availableImages);
 
@@ -77,7 +82,7 @@ class LineStyleLayer extends StyleLayer {
             lineFloorwidthProperty.possiblyEvaluate(this._transitioningPaint._values['line-width'].value, parameters);
     }
 
-    createBucket(parameters: BucketParameters<*>): LineBucket {
+    createBucket(parameters: BucketParameters<LineStyleLayer>): LineBucket {
         return new LineBucket(parameters);
     }
 
@@ -92,6 +97,7 @@ class LineStyleLayer extends StyleLayer {
         return new ProgramConfiguration(this, zoom);
     }
 
+    // $FlowFixMe[method-unbinding]
     queryRadius(bucket: Bucket): number {
         const lineBucket: LineBucket = (bucket: any);
         const width = getLineWidth(
@@ -101,8 +107,9 @@ class LineStyleLayer extends StyleLayer {
         return width / 2 + Math.abs(offset) + translateDistance(this.paint.get('line-translate'));
     }
 
+    // $FlowFixMe[method-unbinding]
     queryIntersectsFeature(queryGeometry: TilespaceQueryGeometry,
-                           feature: VectorTileFeature,
+                           feature: IVectorTileFeature,
                            featureState: FeatureState,
                            geometry: Array<Array<Point>>,
                            zoom: number,
@@ -131,7 +138,7 @@ class LineStyleLayer extends StyleLayer {
 
 export default LineStyleLayer;
 
-function getLineWidth(lineWidth, lineGapWidth) {
+function getLineWidth(lineWidth: number, lineGapWidth: number) {
     if (lineGapWidth > 0) {
         return lineGapWidth + 2 * lineWidth;
     } else {
@@ -139,7 +146,7 @@ function getLineWidth(lineWidth, lineGapWidth) {
     }
 }
 
-function offsetLine(rings, offset) {
+function offsetLine(rings: Array<Array<Point>>, offset: number) {
     const newRings = [];
     const zero = new Point(0, 0);
     for (let k = 0; k < rings.length; k++) {

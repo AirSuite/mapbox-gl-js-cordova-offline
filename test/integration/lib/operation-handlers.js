@@ -2,8 +2,7 @@
 /* global mapboxgl:readonly */
 import customLayerImplementations from '../custom_layer_implementations.js';
 
-function handleOperation(map, options, opIndex, doneCb) {
-    const operations = options.operations;
+function handleOperation(map, operations, opIndex, doneCb) {
     const operation = operations[opIndex];
     const opName = operation[0];
     //Delegate to special handler if one is available
@@ -46,8 +45,36 @@ export const operationHandlers = {
             throw new Error(`addImage opertation failed with src ${image.src}`);
         };
     },
+    addLayer(map, params, doneCb) {
+        map.addLayer(params[0], params[1]);
+        waitForRender(map, () => true, doneCb);
+    },
     addCustomLayer(map, params, doneCb) {
         map.addLayer(new customLayerImplementations[params[0]](), params[1]);
+        waitForRender(map, () => true, doneCb);
+    },
+    addCustomSource(map, params, doneCb) {
+        map.addSource(params[0], {
+            type: 'custom',
+            maxzoom: 17,
+            tileSize: 256,
+            async loadTile({z, x, y}, {signal}) {
+                const url = params[1]
+                    .replace('local://', '/')
+                    .replace('{z}', String(z))
+                    .replace('{x}', String(x))
+                    .replace('{y}', String(y));
+
+                const response = await window.fetch(url, {signal});
+                if (!response.ok) return null;
+
+                const data = await response.arrayBuffer();
+                const blob = new window.Blob([new Uint8Array(data)], {type: 'image/png'});
+                const imageBitmap = await window.createImageBitmap(blob);
+                return imageBitmap;
+            }
+        });
+
         waitForRender(map, () => true, doneCb);
     },
     updateFakeCanvas(map, params, doneCb) {
@@ -103,14 +130,10 @@ export const operationHandlers = {
     }
 };
 
-export function applyOperations(map, options) {
+export async function applyOperations(map, {operations}) {
+    if (!operations) return Promise.resolve();
+
     return new Promise((resolve, reject) => {
-        const operations = options.operations;
-        // No operations specified, end immediately and invoke doneCb.
-        if (!operations || operations.length === 0) {
-            resolve();
-            return;
-        }
         let currentOperation = null;
         // Start recursive chain
         const scheduleNextOperation = (lastOpIndex) => {
@@ -119,8 +142,8 @@ export function applyOperations(map, options) {
                 resolve();
                 return;
             }
-            currentOperation = options.operations[lastOpIndex + 1];
-            handleOperation(map, options, ++lastOpIndex, scheduleNextOperation);
+            currentOperation = operations[lastOpIndex + 1];
+            handleOperation(map, operations, ++lastOpIndex, scheduleNextOperation);
         };
         map.once('error', (e) => {
             reject(new Error(`Error occured during ${JSON.stringify(currentOperation)}. ${e.error.stack}`));
@@ -132,7 +155,7 @@ export function applyOperations(map, options) {
 function updateCanvas(imagePath) {
     return new Promise((resolve) => {
         const canvas = window.document.getElementById('fake-canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', {willReadFrequently: true});
         const image = new Image();
         image.src = imagePath.replace('./', '');
         image.onload = () => {

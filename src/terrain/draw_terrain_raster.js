@@ -8,6 +8,7 @@ import {Terrain} from './terrain.js';
 import Tile from '../source/tile.js';
 import assert from 'assert';
 import {easeCubicInOut} from '../util/util.js';
+import browser from '../util/browser.js';
 import {mercatorXfromLng, mercatorYfromLat} from '../geo/mercator_coordinate.js';
 import type Painter from '../render/painter.js';
 import type SourceCache from '../source/source_cache.js';
@@ -18,11 +19,17 @@ import {mat4} from 'gl-matrix';
 import {
     calculateGlobeMercatorMatrix,
     globeToMercatorTransition,
-    globeMatrixForTile,
     globePoleMatrixForTile,
-    globeVertexBufferForTileMesh
+    getGridMatrix,
+    tileCornersToBounds,
+    globeNormalizeECEF,
+    globeTileBounds,
+    globeUseCustomAntiAliasing,
+    getLatitudinalLod
 } from '../geo/projection/globe_util.js';
 import extend from '../style-spec/util/extend.js';
+import type Program from '../render/program.js';
+import type VertexBuffer from "../gl/vertex_buffer.js";
 
 export {
     drawTerrainRaster,
@@ -140,14 +147,16 @@ function drawTerrainForGlobe(painter: Painter, terrain: Terrain, sourceCache: So
 
     let program, programMode;
     const showWireframe = painter.options.showTerrainWireframe ? SHADER_TERRAIN_WIREFRAME : SHADER_DEFAULT;
+    const tr = painter.transform;
+    const useCustomAntialiasing = globeUseCustomAntiAliasing(painter, context, tr);
 
-    const setShaderMode = (mode, isWireframe) => {
-        if (programMode === mode)
-            return;
+    const setShaderMode = (mode: number, isWireframe: boolean) => {
+        if (programMode === mode) return;
         const defines = [shaderDefines[mode], 'PROJECTION_GLOBE_VIEW'];
-        if (isWireframe) {
-            defines.push(shaderDefines[showWireframe]);
-        }
+
+        if (useCustomAntialiasing) defines.push('CUSTOM_ANTIALIASING');
+        if (isWireframe) defines.push(shaderDefines[showWireframe]);
+
         program = painter.useProgram('globeRaster', null, defines);
         programMode = mode;
     };
@@ -155,13 +164,18 @@ function drawTerrainForGlobe(painter: Painter, terrain: Terrain, sourceCache: So
     const colorMode = painter.colorModeForRenderPass();
     const depthMode = new DepthMode(gl.LEQUAL, DepthMode.ReadWrite, painter.depthRangeFor3D);
     vertexMorphing.update(now);
-    const tr = painter.transform;
     const globeMercatorMatrix = calculateGlobeMercatorMatrix(tr);
     const mercatorCenter = [mercatorXfromLng(tr.center.lng), mercatorYfromLat(tr.center.lat)];
     const batches = showWireframe ? [false, true] : [false];
     const sharedBuffers = painter.globeSharedBuffers;
+    const viewport = [tr.width * browser.devicePixelRatio, tr.height * browser.devicePixelRatio];
+    const globeMatrix = Float32Array.from(tr.globeMatrix);
+    const elevationOptions = {useDenormalizedUpVectorScale: true};
 
     batches.forEach(isWireframe => {
+        const tr = painter.transform;
+        const skirtHeightValue = skirtHeight(tr.zoom) * terrain.exaggeration();
+
         // This code assumes the rendering is batched into mesh terrain and then wireframe
         // terrain (if applicable) so that this is enough to ensure the correct program is
         // set when we switch from one to the other.
@@ -171,7 +185,6 @@ function drawTerrainForGlobe(painter: Painter, terrain: Terrain, sourceCache: So
 
         for (const coord of tileIDs) {
             const tile = sourceCache.getTile(coord);
-            const gridBuffer = globeVertexBufferForTileMesh(painter, tile, coord);
             const stencilMode = StencilMode.disabled;
 
             const prevDemTile = terrain.prevTerrainTileForTile[coord.key];
@@ -187,16 +200,19 @@ function drawTerrainForGlobe(painter: Painter, terrain: Terrain, sourceCache: So
 
             const morph = vertexMorphing.getMorphValuesForProxy(coord.key);
             const shaderMode = morph ? SHADER_MORPHING : SHADER_DEFAULT;
-            const elevationOptions = {};
 
             if (morph) {
                 extend(elevationOptions, {morphing: {srcDemTile: morph.from, dstDemTile: morph.to, phase: easeCubicInOut(morph.phase)}});
             }
 
-            const posMatrix = globeMatrixForTile(coord.canonical, tr.globeMatrix);
+            const tileBounds = tileCornersToBounds(coord.canonical);
+            const latitudinalLod = getLatitudinalLod(tileBounds.getCenter().lat);
+            const gridMatrix = getGridMatrix(coord.canonical, tileBounds, latitudinalLod, tr.worldSize / tr._pixelsPerMercatorPixel);
+            const normalizeMatrix = globeNormalizeECEF(globeTileBounds(coord.canonical));
             const uniformValues = globeRasterUniformValues(
-                tr.projMatrix, posMatrix, globeMercatorMatrix,
-                globeToMercatorTransition(tr.zoom), mercatorCenter);
+                tr.projMatrix, globeMatrix, globeMercatorMatrix, normalizeMatrix, globeToMercatorTransition(tr.zoom),
+                mercatorCenter, tr.frustumCorners.TL, tr.frustumCorners.TR, tr.frustumCorners.BR,
+                tr.frustumCorners.BL, tr.globeCenterInViewSpace, tr.globeRadius, viewport, skirtHeightValue, gridMatrix);
 
             setShaderMode(shaderMode, isWireframe);
 
@@ -205,40 +221,61 @@ function drawTerrainForGlobe(painter: Painter, terrain: Terrain, sourceCache: So
             painter.prepareDrawProgram(context, program, coord.toUnwrapped());
 
             if (sharedBuffers) {
-                const [buffer, segments] = isWireframe ?
-                    sharedBuffers.getWirefameBuffer(painter.context) :
-                    [sharedBuffers.gridIndexBuffer, sharedBuffers.gridSegments];
+                const [buffer, indexBuffer, segments] = isWireframe ?
+                    sharedBuffers.getWirefameBuffers(painter.context, latitudinalLod) :
+                    sharedBuffers.getGridBuffers(latitudinalLod, skirtHeightValue !== 0);
 
                 program.draw(context, primitive, depthMode, stencilMode, colorMode, CullFaceMode.backCCW,
-                    uniformValues, "globe_raster", gridBuffer, buffer, segments);
-            }
-
-            if (!isWireframe && sharedBuffers) {
-                // Fill poles by extrapolating adjacent border tiles
-                const {x, y, z} = coord.canonical;
-                const topCap = y === 0;
-                const bottomCap = y === (1 << z) - 1;
-                const segment = sharedBuffers.poleSegments[z];
-
-                if (segment && (topCap || bottomCap)) {
-                    let poleMatrix = globePoleMatrixForTile(z, x, tr);
-
-                    const drawPole = (program, vertexBuffer) => program.draw(
-                        context, primitive, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
-                        globeRasterUniformValues(tr.projMatrix, poleMatrix, poleMatrix, 0.0, mercatorCenter),
-                        "globe_pole_raster", vertexBuffer, sharedBuffers.poleIndexBuffer, segment);
-
-                    if (topCap) {
-                        drawPole(program, sharedBuffers.poleNorthVertexBuffer);
-                    }
-                    if (bottomCap) {
-                        poleMatrix = mat4.scale(mat4.create(), poleMatrix, [1, -1, 1]);
-                        drawPole(program, sharedBuffers.poleSouthVertexBuffer);
-                    }
-                }
+                    uniformValues, "globe_raster", buffer, indexBuffer, segments);
             }
         }
     });
+
+    // Render the poles.
+    if (sharedBuffers) {
+        const defines = ['GLOBE_POLES', 'PROJECTION_GLOBE_VIEW'];
+        if (useCustomAntialiasing) defines.push('CUSTOM_ANTIALIASING');
+
+        program = painter.useProgram('globeRaster', null, defines);
+        for (const coord of tileIDs) {
+            // Fill poles by extrapolating adjacent border tiles
+            const {x, y, z} = coord.canonical;
+            const topCap = y === 0;
+            const bottomCap = y === (1 << z) - 1;
+
+            const [northPoleBuffer, southPoleBuffer, indexBuffer, segment] = sharedBuffers.getPoleBuffers(z);
+
+            if (segment && (topCap || bottomCap)) {
+                const tile = sourceCache.getTile(coord);
+
+                // Bind the main draped texture
+                context.activeTexture.set(gl.TEXTURE0);
+                tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+
+                let poleMatrix = globePoleMatrixForTile(z, x, tr);
+                const normalizeMatrix = globeNormalizeECEF(globeTileBounds(coord.canonical));
+
+                const drawPole = (program: Program<any>, vertexBuffer: VertexBuffer) => program.draw(
+                    context, gl.TRIANGLES, depthMode, StencilMode.disabled, colorMode, CullFaceMode.disabled,
+                    globeRasterUniformValues(tr.projMatrix, poleMatrix, poleMatrix, normalizeMatrix, 0.0, mercatorCenter,
+                    tr.frustumCorners.TL, tr.frustumCorners.TR, tr.frustumCorners.BR, tr.frustumCorners.BL,
+                    tr.globeCenterInViewSpace, tr.globeRadius, viewport, 0), "globe_pole_raster", vertexBuffer,
+                    indexBuffer, segment);
+
+                terrain.setupElevationDraw(tile, program, elevationOptions);
+
+                painter.prepareDrawProgram(context, program, coord.toUnwrapped());
+
+                if (topCap) {
+                    drawPole(program, northPoleBuffer);
+                }
+                if (bottomCap) {
+                    poleMatrix = mat4.scale(mat4.create(), poleMatrix, [1, -1, 1]);
+                    drawPole(program, southPoleBuffer);
+                }
+            }
+        }
+    }
 }
 
 function drawTerrainRaster(painter: Painter, terrain: Terrain, sourceCache: SourceCache, tileIDs: Array<OverscaledTileID>, now: number) {
@@ -251,7 +288,7 @@ function drawTerrainRaster(painter: Painter, terrain: Terrain, sourceCache: Sour
         let program, programMode;
         const showWireframe = painter.options.showTerrainWireframe ? SHADER_TERRAIN_WIREFRAME : SHADER_DEFAULT;
 
-        const setShaderMode = (mode, isWireframe) => {
+        const setShaderMode = (mode: number, isWireframe: boolean) => {
             if (programMode === mode)
                 return;
             const modes = [shaderDefines[mode]];
@@ -338,7 +375,7 @@ function drawTerrainDepth(painter: Painter, terrain: Terrain, sourceCache: Sourc
     }
 }
 
-function skirtHeight(zoom) {
+function skirtHeight(zoom: number) {
     // Skirt height calculation is heuristic: provided value hides
     // seams between tiles and it is not too large: 9 at zoom 22, ~20000m at zoom 0.
     return 6 * Math.pow(1.5, 22 - zoom);

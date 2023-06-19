@@ -25,6 +25,7 @@ type ClearArgs = {
 
 class Context {
     gl: WebGLRenderingContext;
+    isWebGL2: boolean;
     extVertexArrayObject: any;
     currentNumAttributes: ?number;
     maxTextureSize: number;
@@ -60,18 +61,34 @@ class Context {
     pixelStoreUnpack: PixelStoreUnpack;
     pixelStoreUnpackPremultiplyAlpha: PixelStoreUnpackPremultiplyAlpha;
     pixelStoreUnpackFlipY: PixelStoreUnpackFlipY;
+    renderer: ?string;
+    vendor: ?string;
 
     extTextureFilterAnisotropic: any;
     extTextureFilterAnisotropicMax: any;
     extTextureHalfFloat: any;
     extRenderToTextureHalfFloat: any;
+    extStandardDerivatives: any;
+    extDebugRendererInfo: any;
     extTimerQuery: any;
 
     extTextureFilterAnisotropicForceOff: boolean;
+    extStandardDerivativesForceOff: boolean;
 
-    constructor(gl: WebGLRenderingContext) {
+    constructor(gl: WebGLRenderingContext, isWebGL2: boolean = false) {
         this.gl = gl;
+        this.isWebGL2 = isWebGL2;
         this.extVertexArrayObject = this.gl.getExtension('OES_vertex_array_object');
+
+        if (isWebGL2) {
+            /* $FlowFixMe[cannot-resolve-name] */ // Not adding dependency to webgl2 yet.
+            const gl2 = (gl: WebGL2RenderingContext);
+            this.extVertexArrayObject = {
+                createVertexArrayOES: gl2.createVertexArray.bind(gl),
+                deleteVertexArrayOES: gl2.deleteVertexArray.bind(gl),
+                bindVertexArrayOES: gl2.bindVertexArray.bind(gl)
+            };
+        }
 
         this.clearColor = new ClearColor(this);
         this.clearDepth = new ClearDepth(this);
@@ -114,12 +131,19 @@ class Context {
             this.extTextureFilterAnisotropicMax = gl.getParameter(this.extTextureFilterAnisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
         }
         this.extTextureFilterAnisotropicForceOff = false;
+        this.extStandardDerivativesForceOff = false;
 
-        this.extTextureHalfFloat = gl.getExtension('OES_texture_half_float');
-        if (this.extTextureHalfFloat) {
-            gl.getExtension('OES_texture_half_float_linear');
+        this.extDebugRendererInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (this.extDebugRendererInfo) {
+            this.renderer = gl.getParameter(this.extDebugRendererInfo.UNMASKED_RENDERER_WEBGL);
+            this.vendor = gl.getParameter(this.extDebugRendererInfo.UNMASKED_VENDOR_WEBGL);
+        }
+
+        if (!isWebGL2) this.extTextureHalfFloat = gl.getExtension('OES_texture_half_float');
+        if (isWebGL2 || (this.extTextureHalfFloat && gl.getExtension('OES_texture_half_float_linear'))) {
             this.extRenderToTextureHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
         }
+        this.extStandardDerivatives = isWebGL2 || gl.getExtension('OES_standard_derivatives');
 
         this.extTimerQuery = gl.getExtension('EXT_disjoint_timer_query');
         this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);

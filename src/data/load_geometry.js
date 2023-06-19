@@ -32,7 +32,7 @@ function preparePoint(point: Point, scale: number) {
 }
 
 // a subset of VectorTileGeometry
-type FeatureWithGeometry = {
+interface FeatureWithGeometry {
     extent: number;
     type: 1 | 2 | 3;
     loadGeometry(): Array<Array<Point>>;
@@ -53,7 +53,7 @@ export default function loadGeometry(feature: FeatureWithGeometry, canonical?: C
         const z2 = 1 << canonical.z;
         const {scale, x, y, projection} = tileTransform;
 
-        const reproject = (p) => {
+        const reproject = (p: Point) => {
             const lng = lngFromMercatorX((canonical.x + p.x / extent) / z2);
             const lat = latFromMercatorY((canonical.y + p.y / extent) / z2);
             const p2 = projection.project(lng, lat);

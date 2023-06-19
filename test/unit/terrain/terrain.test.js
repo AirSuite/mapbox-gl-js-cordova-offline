@@ -86,14 +86,12 @@ const createNegativeGradientDEM = () => {
 test('Elevation', (t) => {
     const dem = createGradientDEM();
 
-    t.beforeEach((callback) => {
+    t.beforeEach(() => {
         window.useFakeXMLHttpRequest();
-        callback();
     });
 
-    t.afterEach((callback) => {
+    t.afterEach(() => {
         window.restore();
-        callback();
     });
 
     t.test('elevation sampling', t => {
@@ -318,7 +316,7 @@ test('Elevation', (t) => {
             })
         });
         map.setPitch(85);
-        map.setZoom(13);
+        map.setZoom(12);
 
         map.once('style.load', () => {
             map.addSource('mapbox-dem', {
@@ -363,7 +361,8 @@ test('Elevation', (t) => {
                 t.false(map._averageElevation.isEasing(timestamp));
                 t.equal(map.transform.averageElevation, 0);
 
-                map.setZoom(14);
+                map.setZoom(13);
+                map.setPitch(70);
                 map.setCenter([map.getCenter().lng + 0.01, map.getCenter().lat]);
 
                 timestamp += AVERAGE_ELEVATION_SAMPLING_INTERVAL;
@@ -372,23 +371,27 @@ test('Elevation', (t) => {
                 t.true(map._averageElevation.isEasing(timestamp));
                 t.equal(map.transform.averageElevation, 0);
 
-                timestamp += AVERAGE_ELEVATION_EASE_TIME * 0.5;
-                changed = map._updateAverageElevation(timestamp);
-                t.true(changed);
-                t.true(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 154.15083854452925);
+                const assertAlmostEqual = (t, actual, expected, epsilon = 1e-6) => {
+                    t.ok(Math.abs(actual - expected) < epsilon);
+                };
 
                 timestamp += AVERAGE_ELEVATION_EASE_TIME * 0.5;
                 changed = map._updateAverageElevation(timestamp);
                 t.true(changed);
                 t.true(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 308.3016770890585);
+                assertAlmostEqual(t, map.transform.averageElevation, 797.6258610429736);
+
+                timestamp += AVERAGE_ELEVATION_EASE_TIME * 0.5;
+                changed = map._updateAverageElevation(timestamp);
+                t.true(changed);
+                t.true(map._averageElevation.isEasing(timestamp));
+                assertAlmostEqual(t, map.transform.averageElevation, 1595.2517220859472);
 
                 timestamp += AVERAGE_ELEVATION_SAMPLING_INTERVAL;
                 changed = map._updateAverageElevation(timestamp);
                 t.false(changed);
                 t.false(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 308.3016770890585);
+                assertAlmostEqual(t, map.transform.averageElevation, 1595.2517220859472);
 
                 t.end();
             });
@@ -661,7 +664,7 @@ const spec = styleSpec.terrain;
 test('Terrain style', (t) => {
     test('Terrain defaults', (t) => {
         const terrain = new Terrain({});
-        terrain.recalculate({zoom: 0, zoomHistory: {}});
+        terrain.recalculate({zoom: 0});
 
         t.deepEqual(terrain.properties.get('source'), spec.source.default);
         t.deepEqual(terrain.properties.get('exaggeration'), spec.exaggeration.default);
@@ -676,7 +679,7 @@ test('Terrain style', (t) => {
                 stops: [[15, 0.2], [17, 0.8]]
             }
         });
-        terrain.recalculate({zoom: 16, zoomHistory: {}});
+        terrain.recalculate({zoom: 16});
 
         t.deepEqual(terrain.properties.get('exaggeration'), 0.5);
         t.end();
@@ -776,14 +779,12 @@ test('Raycast projection 2D/3D', t => {
 });
 
 test('Negative Elevation', (t) => {
-    t.beforeEach((callback) => {
+    t.beforeEach(() => {
         window.useFakeXMLHttpRequest();
-        callback();
     });
 
-    t.afterEach((callback) => {
+    t.afterEach(() => {
         window.restore();
-        callback();
     });
 
     const map = createMap(t, {

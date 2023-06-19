@@ -10,11 +10,14 @@ import type {Callback} from '../types/callback.js';
 import type {TileJSON} from '../types/tilejson.js';
 import type {Cancelable} from '../types/cancelable.js';
 
-export default function(options: any, requestManager: RequestManager, callback: Callback<TileJSON>): Cancelable {
+export default function(options: any, requestManager: RequestManager, language: ?string, worldview: ?string, callback: Callback<TileJSON>): Cancelable {
     const loaded = function(err: ?Error, tileJSON: ?Object) {
         if (err) {
             return callback(err);
         } else if (tileJSON) {
+            // Prefer TileJSON tiles, if both URL and tiles options are set
+            if (options.url && tileJSON.tiles && options.tiles) delete options.tiles;
+
             const result: any = pick(
                 // explicit source options take precedence over TileJSON
                 extend(tileJSON, options),
@@ -32,7 +35,7 @@ export default function(options: any, requestManager: RequestManager, callback: 
     };
 
     if (options.url) {
-        return getJSON(requestManager.transformRequest(requestManager.normalizeSourceURL(options.url), ResourceType.Source), loaded);
+        return getJSON(requestManager.transformRequest(requestManager.normalizeSourceURL(options.url, null, language, worldview), ResourceType.Source), loaded);
     } else {
         return browser.frame(() => loaded(null, options));
     }

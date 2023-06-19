@@ -13,7 +13,7 @@ import {AJAXError} from './ajax.js';
 
 import type {Transferable} from '../types/transferable.js';
 
-type SerializedObject = {[_: string]: Serialized }; // eslint-disable-line
+type SerializedObject = interface { [_: string]: Serialized };
 export type Serialized =
     | null
     | void
@@ -52,17 +52,20 @@ const registry: Registry = {};
  *
  * @private
  */
-export function register<T: any>(klass: Class<T>, options: RegisterOptions<T> = {}) {
-    const name = klass.name;
+export function register<T: any>(klass: Class<T>, name: string, options: RegisterOptions<T> = {}) {
     assert(name, 'Can\'t register a class without a name.');
     assert(!registry[name], `${name} is already registered.`);
+    (Object.defineProperty: any)(klass, '_classRegistryKey', {
+        value: name,
+        writeable: false
+    });
     registry[name] = {
         klass,
         omit: options.omit || []
     };
 }
 
-register(Object);
+register(Object, 'Object');
 
 type SerializedGrid = { buffer: ArrayBuffer };
 
@@ -77,21 +80,23 @@ type SerializedGrid = { buffer: ArrayBuffer };
 (Grid: any).deserialize = function deserialize(serialized: SerializedGrid): Grid {
     return new Grid(serialized.buffer);
 };
-register(Grid);
 
-register(Color);
-register(Error);
-register(AJAXError);
-register(ResolvedImage);
+Object.defineProperty(Grid, 'name', {value: 'Grid'});
 
-register(StylePropertyFunction);
-register(StyleExpression, {omit: ['_evaluator']});
+register(Grid, 'Grid');
 
-register(ZoomDependentExpression);
-register(ZoomConstantExpression);
-register(CompoundExpression, {omit: ['_evaluate']});
+register(Color, 'Color');
+register(Error, 'Error');
+register(AJAXError, 'AJAXError');
+register(ResolvedImage, 'ResolvedImage');
+register(StylePropertyFunction, 'StylePropertyFunction');
+register(StyleExpression, 'StyleExpression', {omit: ['_evaluator']});
+
+register(ZoomDependentExpression, 'ZoomDependentExpression');
+register(ZoomConstantExpression, 'ZoomConstantExpression');
+register(CompoundExpression, 'CompoundExpression', {omit: ['_evaluate']});
 for (const name in expressions) {
-    if (!registry[expressions[name].name]) register(expressions[name]);
+    if (!registry[(expressions[name]: any)._classRegistryKey]) register(expressions[name], `Expression${name}`);
 }
 
 function isArrayBuffer(val: any): boolean {
@@ -164,10 +169,11 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
 
     if (typeof input === 'object') {
         const klass = (input.constructor: any);
-        const name = klass.name;
-        if (!registry[name]) {
+        const name = klass._classRegistryKey;
+        if (!name) {
             throw new Error(`can't serialize object of unregistered class ${name}`);
         }
+        assert(registry[name]);
 
         const properties: SerializedObject = klass.serialize ?
             // (Temporary workaround) allow a class to provide static
@@ -188,18 +194,18 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
                 properties[key] = serialize(property, transferables);
             }
             if (input instanceof Error) {
-                properties.message = input.message;
+                properties['message'] = input.message;
             }
         } else {
             // make sure statically serialized object survives transfer of $name property
             assert(!transferables || properties !== transferables[transferables.length - 1]);
         }
 
-        if (properties.$name) {
+        if (properties['$name']) {
             throw new Error('$name property is reserved for worker serialization logic.');
         }
         if (name !== 'Object') {
-            properties.$name = name;
+            properties['$name'] = name;
         }
 
         return properties;
@@ -242,9 +248,10 @@ export function deserialize(input: Serialized): mixed {
             return (klass.deserialize: typeof deserialize)(input);
         }
 
-        const result = Object.create(klass.prototype);
+        const result: {[_: string]: any} = Object.create(klass.prototype);
 
         for (const key of Object.keys(input)) {
+            // $FlowFixMe[incompatible-type]
             if (key === '$name') continue;
             const value = (input: SerializedObject)[key];
             result[key] = deserialize(value);

@@ -1,29 +1,26 @@
 // @flow
-import {mat4, vec3, vec4} from 'gl-matrix';
-import {Ray} from '../../util/primitives.js';
+import {mat4, vec3} from 'gl-matrix';
 import EXTENT from '../../data/extent.js';
 import LngLat from '../lng_lat.js';
-import {degToRad, radToDeg, getColumn, shortestAngle} from '../../util/util.js';
+import {degToRad} from '../../util/util.js';
 import MercatorCoordinate, {
-    lngFromMercatorX,
-    latFromMercatorY,
     mercatorZfromAltitude,
-    mercatorXfromLng,
-    mercatorYfromLat
 } from '../mercator_coordinate.js';
 import Mercator from './mercator.js';
 import Point from '@mapbox/point-geometry';
 import {farthestPixelDistanceOnPlane, farthestPixelDistanceOnSphere} from './far_z.js';
 import {number as interpolate} from '../../style-spec/util/interpolate.js';
 import {
-    GLOBE_RADIUS,
+    GLOBE_SCALE_MATCH_LATITUDE,
     latLngToECEF,
     globeTileBounds,
     globeNormalizeECEF,
     globeDenormalizeECEF,
-    globeECEFUnitsToPixelScale,
     globeECEFNormalizationScale,
-    globeToMercatorTransition
+    globeToMercatorTransition,
+    globePointCoordinate,
+    tileCoordToECEF,
+    globeMetersToEcef
 } from './globe_util.js';
 
 import type Transform from '../transform.js';
@@ -32,27 +29,20 @@ import type {Vec3} from 'gl-matrix';
 import type {ProjectionSpecification} from '../../style-spec/types.js';
 import type {CanonicalTileID, UnwrappedTileID} from '../../source/tile_id.js';
 
-const GLOBE_METERS_TO_ECEF = mercatorZfromAltitude(1, 0.0) * 2.0 * GLOBE_RADIUS * Math.PI;
-
 export default class Globe extends Mercator {
 
     constructor(options: ProjectionSpecification) {
         super(options);
         this.requiresDraping = true;
         this.supportsWorldCopies = false;
-        this.supportsFog = false;
+        this.supportsFog = true;
         this.zAxisUnit = "pixels";
-        this.unsupportedLayers = ['debug', 'custom'];
+        this.unsupportedLayers = ['debug'];
+        this.range = [3, 5];
     }
 
     projectTilePoint(x: number, y: number, id: CanonicalTileID): {x: number, y: number, z: number} {
-        const tiles = Math.pow(2.0, id.z);
-        const mx = (x / EXTENT + id.x) / tiles;
-        const my = (y / EXTENT + id.y) / tiles;
-        const lat = latFromMercatorY(my);
-        const lng = lngFromMercatorX(mx);
-        const pos = latLngToECEF(lat, lng);
-
+        const pos = tileCoordToECEF(x, y, id);
         const bounds = globeTileBounds(id);
         const normalizationMatrix = globeNormalizeECEF(bounds);
         vec3.transformMat4(pos, pos, normalizationMatrix);
@@ -81,70 +71,48 @@ export default class Globe extends Mercator {
         return mercatorZfromAltitude(1, 0) * worldSize;
     }
 
+    pixelSpaceConversion(lat: number, worldSize: number, interpolationT: number): number {
+        // Using only the center latitude to determine scale causes the globe to rapidly change
+        // size as you pan up and down. As you approach the pole, the globe's size approaches infinity.
+        // This is because zoom levels are based on mercator.
+        //
+        // Instead, use a fixed reference latitude at lower zoom levels. And transition between
+        // this latitude and the center's latitude as you zoom in. This is a compromise that
+        // makes globe view more usable with existing camera parameters, styles and data.
+        const centerScale = mercatorZfromAltitude(1, lat) * worldSize;
+        const referenceScale = mercatorZfromAltitude(1, GLOBE_SCALE_MATCH_LATITUDE) * worldSize;
+        const combinedScale = interpolate(referenceScale, centerScale, interpolationT);
+        return this.pixelsPerMeter(lat, worldSize) / combinedScale;
+    }
+
     createTileMatrix(tr: Transform, worldSize: number, id: UnwrappedTileID): Float64Array {
         const decode = globeDenormalizeECEF(globeTileBounds(id.canonical));
         return mat4.multiply(new Float64Array(16), tr.globeMatrix, decode);
     }
 
     createInversionMatrix(tr: Transform, id: CanonicalTileID): Float32Array {
-        const {center, worldSize} = tr;
-        const ecefUnitsToPixels = globeECEFUnitsToPixelScale(worldSize);
-        const matrix = mat4.identity(new Float64Array(16));
-        const encode = globeNormalizeECEF(globeTileBounds(id));
-        mat4.multiply(matrix, matrix, encode);
+        const {center} = tr;
+        const matrix = globeNormalizeECEF(globeTileBounds(id));
         mat4.rotateY(matrix, matrix, degToRad(center.lng));
         mat4.rotateX(matrix, matrix, degToRad(center.lat));
-        mat4.scale(matrix, matrix, [1.0 / ecefUnitsToPixels, 1.0 / ecefUnitsToPixels, 1.0]);
-
-        const ecefUnitsToMercatorPixels = tr.pixelsPerMeter / mercatorZfromAltitude(1.0, center.lat) / EXTENT;
-
-        mat4.scale(matrix, matrix, [ecefUnitsToMercatorPixels, ecefUnitsToMercatorPixels, 1.0]);
-
+        mat4.scale(matrix, matrix, [tr._pixelsPerMercatorPixel, tr._pixelsPerMercatorPixel, 1.0]);
         return Float32Array.from(matrix);
     }
 
     pointCoordinate(tr: Transform, x: number, y: number, _: number): MercatorCoordinate {
-        const point0 = [x, y, 0, 1];
-        const point1 = [x, y, 1, 1];
+        const coord = globePointCoordinate(tr, x, y, true);
+        if (!coord) { return new MercatorCoordinate(0, 0); } // This won't happen, is here for Flow
+        return coord;
+    }
 
-        vec4.transformMat4(point0, point0, tr.pixelMatrixInverse);
-        vec4.transformMat4(point1, point1, tr.pixelMatrixInverse);
+    pointCoordinate3D(tr: Transform, x: number, y: number): ?Vec3 {
+        const coord = this.pointCoordinate(tr, x, y, 0);
+        return [coord.x, coord.y, coord.z];
+    }
 
-        vec4.scale(point0, point0, 1 / point0[3]);
-        vec4.scale(point1, point1, 1 / point1[3]);
-
-        const p0p1 = vec3.sub([], point1, point0);
-        const direction = vec3.normalize([], p0p1);
-
-        // Compute globe origo in world space
-        const m = tr.globeMatrix;
-        const globeCenter = [m[12], m[13], m[14]];
-        const radius = tr.worldSize / (2.0 * Math.PI);
-
-        const pointOnGlobe = [];
-        const ray = new Ray(point0, direction);
-
-        ray.closestPointOnSphere(globeCenter, radius, pointOnGlobe);
-
-        // Transform coordinate axes to find lat & lng of the position
-        const xa = vec3.normalize([], getColumn(m, 0));
-        const ya = vec3.normalize([], getColumn(m, 1));
-        const za = vec3.normalize([], getColumn(m, 2));
-
-        const xp = vec3.dot(xa, pointOnGlobe);
-        const yp = vec3.dot(ya, pointOnGlobe);
-        const zp = vec3.dot(za, pointOnGlobe);
-
-        const lat = radToDeg(Math.asin(-yp / radius));
-        let lng = radToDeg(Math.atan2(xp, zp));
-
-        // Check that the returned longitude angle is not wrapped
-        lng = tr.center.lng + shortestAngle(tr.center.lng, lng);
-
-        const mx = mercatorXfromLng(lng);
-        const my = mercatorYfromLat(lat);
-
-        return new MercatorCoordinate(mx, my);
+    isPointAboveHorizon(tr: Transform, p: Point): boolean {
+        const raycastOnGlobe = globePointCoordinate(tr, p.x, p.y, false);
+        return !raycastOnGlobe;
     }
 
     farthestPixelDistance(tr: Transform): number {
@@ -154,20 +122,24 @@ export default class Globe extends Mercator {
         if (t > 0.0) {
             const mercatorPixelsPerMeter = mercatorZfromAltitude(1, tr.center.lat) * tr.worldSize;
             const mercatorPixelDistance = farthestPixelDistanceOnPlane(tr, mercatorPixelsPerMeter);
-            return interpolate(globePixelDistance, mercatorPixelDistance, t);
+            const pixelRadius = tr.worldSize / (2.0 * Math.PI);
+            const approxTileArcHalfAngle = Math.max(tr.width, tr.height) / tr.worldSize * Math.PI;
+            const padding = pixelRadius * (1.0 - Math.cos(approxTileArcHalfAngle));
+
+            // During transition to mercator we would like to keep
+            // the far plane lower to ensure that geometries (e.g. circles) that are far away and are not supposed
+            // to be rendered get culled out correctly. see https://github.com/mapbox/mapbox-gl-js/issues/11476
+            // To achieve this we dampen the interpolation.
+            return interpolate(globePixelDistance, mercatorPixelDistance + padding, Math.pow(t, 10.0));
         }
         return globePixelDistance;
     }
 
     upVector(id: CanonicalTileID, x: number, y: number): Vec3 {
-        const tiles = 1 << id.z;
-        const mercX = (x / EXTENT + id.x) / tiles;
-        const mercY = (y / EXTENT + id.y) / tiles;
-        return latLngToECEF(latFromMercatorY(mercY), lngFromMercatorX(mercX), 1.0);
+        return tileCoordToECEF(x, y, id, 1);
     }
 
-    upVectorScale(id: CanonicalTileID, latitude: number, worldSize: number): ElevationScale {
-        const pixelsPerMeterAtLat = mercatorZfromAltitude(1, latitude) * worldSize;
-        return {metersToTile: GLOBE_METERS_TO_ECEF * globeECEFNormalizationScale(globeTileBounds(id)), metersToLabelSpace: pixelsPerMeterAtLat};
+    upVectorScale(id: CanonicalTileID): ElevationScale {
+        return {metersToTile: globeMetersToEcef(globeECEFNormalizationScale(globeTileBounds(id)))};
     }
 }

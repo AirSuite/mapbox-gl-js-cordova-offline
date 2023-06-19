@@ -63,7 +63,7 @@
     },
     "fog": {
       "type": "fog",
-      "doc": "A global effect that fades layers and markers based on their distance to the camera. The fog can be used to approximate the effect of atmosphere on distant objects and enhance the depth perception of the map when used with terrain or 3D features."
+      "doc": "A global effect that fades layers and markers based on their distance to the camera. The fog can be used to approximate the effect of atmosphere on distant objects and enhance the depth perception of the map when used with terrain or 3D features. Note: fog is renamed to atmosphere in the Android and iOS SDKs and planned to be changed in GL-JS v.3.0.0."
     },
     "sources": {
       "required": true,
@@ -96,7 +96,7 @@
     },
     "projection": {
       "type": "projection",
-      "doc": "The projection the map should be rendered in. Supported projections are Albers, Equal Earth, Equirectangular (WGS84), Lambert conformal conic, Mercator, Natural Earth, Globe, and Winkel Tripel. Terrain, fog, sky and CustomLayerInterface are not supported for projections other than mercator.",
+      "doc": "The projection the map should be rendered in. Supported projections are Mercator, Globe, Albers, Equal Earth, Equirectangular (WGS84), Lambert conformal conic, Natural Earth, and Winkel Tripel. Terrain, sky and fog are supported by only Mercator and globe. CustomLayerInterface is not supported outside of Mercator.",
       "example": {
         "name": "albers",
         "center": [-154, 50],
@@ -196,7 +196,7 @@
     },
     "promoteId": {
       "type": "promoteId",
-      "doc": "A property to use as a feature id (for feature state). Either a property name, or an object of the form `{<sourceLayer>: <propertyName>}`. If specified as a string for a vector tile source, the same property is used across all its source layers."
+      "doc": "A property to use as a feature id (for feature state). Either a property name, or an object of the form `{<sourceLayer>: <propertyName>}`. If specified as a string for a vector tile source, the same property is used across all its source layers. If specified as an object only specified source layers will have id overriden, others will fallback to original feature id"
     },
     "volatile": {
       "type": "boolean",
@@ -874,6 +874,22 @@
           "android": "5.1.0",
           "ios": "3.6.0",
           "macos": "0.5.0"
+        }
+      },
+      "property-type": "constant"
+    },
+    "fill-extrusion-edge-radius": {
+      "type": "number",
+      "private": true,
+      "default": 0,
+      "minimum": 0,
+      "maximum": 1,
+      "doc": "Radius of a fill extrusion edge in meters. If not zero, rounds extrusion edges for a smoother appearance.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "v2.10.0",
+          "android": "10.7.0",
+          "ios": "10.7.0"
         }
       },
       "property-type": "constant"
@@ -1890,7 +1906,9 @@
           "macos": "0.1.0"
         },
         "data-driven styling": {
-          "js": "2.3.0"
+          "js": "2.3.0",
+          "android": "10.0.0",
+          "ios": "10.0.0"
         }
       },
       "expression": {
@@ -2798,7 +2816,9 @@
         "group": "Lookup",
         "sdk-support": {
           "basic functionality": {
-            "js": "1.10.0"
+            "js": "1.10.0",
+            "android": "10.0.0",
+            "ios": "10.0.0"
           }
         }
       },
@@ -2807,7 +2827,9 @@
         "group": "Lookup",
         "sdk-support": {
           "basic functionality": {
-            "js": "1.10.0"
+            "js": "1.10.0",
+            "android": "10.0.0",
+            "ios": "10.0.0"
           }
         }
       },
@@ -3046,7 +3068,7 @@
         }
       },
       "number-format": {
-        "doc": "Converts the input number into a string representation using the providing formatting rules. If set, the `locale` argument specifies the locale to use, as a BCP 47 language tag. If set, the `currency` argument specifies an ISO 4217 code to use for currency-style formatting. If set, the `min-fraction-digits` and `max-fraction-digits` arguments specify the minimum and maximum number of fractional digits to include.",
+        "doc": "Converts the input number into a string representation using the providing formatting rules. If set, the `locale` argument specifies the locale to use, as a BCP 47 language tag. If set, the `currency` argument specifies an ISO 4217 code to use for currency-style formatting. If set, the `unit` argument specifies a [simple ECMAScript unit](https://tc39.es/proposal-unified-intl-numberformat/section6/locales-currencies-tz_proposed_out.html#sec-issanctionedsimpleunitidentifier) to use for unit-style formatting. If set, the `min-fraction-digits` and `max-fraction-digits` arguments specify the minimum and maximum number of fractional digits to include.",
         "group": "Types",
         "sdk-support": {
           "basic functionality": {
@@ -3194,12 +3216,14 @@
         "group": "Feature data",
         "sdk-support": {
           "basic functionality": {
-            "js": "0.46.0"
+            "js": "0.46.0",
+            "android": "10.0.0",
+            "ios": "10.0.0"
           }
         }
       },
       "geometry-type": {
-        "doc": "Returns the feature's geometry type: `Point`, `MultiPoint`, `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon`. `Multi*` feature types are only returned in GeoJSON sources. When working with vector tile sources, use the singular forms.",
+        "doc": "Returns the feature's geometry type: `Point`, `LineString` or `Polygon`. `Multi*` feature types return the singular forms.",
         "group": "Feature data",
         "sdk-support": {
           "basic functionality": {
@@ -3239,7 +3263,9 @@
         "group": "Camera",
         "sdk-support": {
           "basic functionality": {
-            "js": "2.6.0"
+            "js": "2.6.0",
+            "android": "10.9.0",
+            "ios": "10.9.0"
           }
         }
       },
@@ -3248,7 +3274,9 @@
         "group": "Camera",
         "sdk-support": {
           "basic functionality": {
-            "js": "2.6.0"
+            "js": "2.6.0",
+            "android": "10.9.0",
+            "ios": "10.9.0"
           }
         }
       },
@@ -3736,7 +3764,9 @@
         "sdk-support": {
           "basic functionality": {
             "js": "0.45.0",
-            "android": "6.6.0"
+            "android": "6.6.0",
+            "ios": "4.1.0",
+            "macos": "0.8.0"
           }
         }
       },
@@ -3816,7 +3846,9 @@
       ],
       "sdk-support": {
         "basic functionality": {
-          "js": "2.3.0"
+          "js": "2.3.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
         }
       }
     },
@@ -3831,17 +3863,86 @@
         ]
       },
       "transition": true,
-      "doc": "The color of the fog. Using opacity is recommended only for smoothly transitioning fog on/off as anything less than 100% opacity results in more tiles loaded and drawn.",
+      "doc": "The color of the atmosphere region immediately below the horizon and within the `range` and above the horizon and within `horizon-blend`. Using opacity is recommended only for smoothly transitioning fog on/off as anything less than 100% opacity results in more tiles loaded and drawn.",
       "sdk-support": {
         "basic functionality": {
-          "js": "2.3.0"
+          "js": "2.3.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
+        }
+      }
+    },
+    "high-color": {
+      "type": "color",
+      "property-type": "data-constant",
+      "default": "#245cdf",
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "The color of the atmosphere region above the horizon, `high-color` extends further above the horizon than the `color` property and its spread can be controlled with `horizon-blend`. The opacity can be set to `0` to remove the high atmosphere color contribution.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.9.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
+        }
+      }
+    },
+    "space-color": {
+      "type": "color",
+      "property-type": "data-constant",
+
+      "default":
+      [
+        "interpolate",
+        [
+          "linear"
+        ],
+        [
+          "zoom"
+        ],
+        4,
+        "#010b19",
+        7,
+        "#367ab9"
+      ],
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "The color of the region above the horizon and after the end of the `horizon-blend` contribution. The opacity can be set to `0` to have a transparent background.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.9.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
         }
       }
     },
     "horizon-blend": {
       "type": "number",
       "property-type": "data-constant",
-      "default": 0.1,
+      "default":
+      [
+        "interpolate",
+        [
+          "linear"
+        ],
+        [
+          "zoom"
+        ],
+        4,
+        0.2,
+        7,
+        0.1
+      ],
       "minimum": 0,
       "maximum": 1,
       "expression": {
@@ -3851,10 +3952,47 @@
         ]
       },
       "transition": true,
-      "doc": "Horizon blend applies a smooth fade from the color of the fog to the color of the sky. A value of zero leaves a sharp transition from fog to sky. Increasing the value blends the color of fog into increasingly high angles of the sky.",
+      "doc": "Horizon blend applies a smooth fade from the color of the atmosphere to the color of space. A value of zero leaves a sharp transition from atmosphere to space. Increasing the value blends the color of atmosphere into increasingly high angles of the sky.",
       "sdk-support": {
         "basic functionality": {
-          "js": "2.3.0"
+          "js": "2.3.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
+        }
+      }
+    },
+    "star-intensity": {
+      "type": "number",
+      "property-type": "data-constant",
+      "default":
+      [
+        "interpolate",
+        [
+          "linear"
+        ],
+        [
+          "zoom"
+        ],
+        5,
+        0.35,
+        6,
+        0
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "A value controlling the star intensity where `0` will show no stars and `1` will show stars at their maximum intensity.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.9.0",
+          "android": "10.6.0",
+          "ios": "10.6.0"
         }
       }
     }
@@ -4010,6 +4148,8 @@
       "length": 2,
       "value": "number",
       "property-type": "data-constant",
+      "minimum": [-180, -90],
+      "maximum": [180, 90],
       "transition": false,
       "doc": "The reference longitude and latitude of the projection. `center` takes the form of [lng, lat]. This property is only configurable for conic projections (Albers and Lambert Conformal Conic). All other projections are centered on [0, 0].",
       "example": [
@@ -4035,6 +4175,8 @@
       "length": 2,
       "value": "number",
       "property-type": "data-constant",
+      "minimum": [-90, -90],
+      "maximum": [90, 90],
       "transition": false,
       "doc":  "The standard parallels of the projection, denoting the desired latitude range with minimal distortion. `parallels` takes the form of [lat0, lat1]. This property is only configurable for conic projections (Albers and Lambert Conformal Conic).",
       "example": [
@@ -4083,6 +4225,9 @@
       },
       "transition": true,
       "doc": "Exaggerates the elevation of the terrain by multiplying the data from the DEM with this value.",
+      "requires": [
+        "source"
+      ],
       "sdk-support": {
         "basic functionality": {
           "js": "2.0.0",
@@ -4286,7 +4431,7 @@
     },
     "fill-pattern": {
       "type": "resolvedImage",
-      "transition": true,
+      "transition": false,
       "doc": "Name of image in sprite to use for drawing image fills. For seamless patterns, image width and height must be a factor of two (2, 4, 8, ..., 512). Note that zoom-dependent expressions will be evaluated only at integer zoom levels.",
       "sdk-support": {
         "basic functionality": {
@@ -4309,7 +4454,7 @@
           "feature"
         ]
       },
-      "property-type": "cross-faded-data-driven"
+      "property-type": "data-driven"
     }
   },
   "paint_fill-extrusion": {
@@ -4430,7 +4575,7 @@
     },
     "fill-extrusion-pattern": {
       "type": "resolvedImage",
-      "transition": true,
+      "transition": false,
       "doc": "Name of image in sprite to use for drawing images on extruded fills. For seamless patterns, image width and height must be a factor of two (2, 4, 8, ..., 512). Note that zoom-dependent expressions will be evaluated only at integer zoom levels.",
       "sdk-support": {
         "basic functionality": {
@@ -4453,7 +4598,7 @@
           "feature"
         ]
       },
-      "property-type": "cross-faded-data-driven"
+      "property-type": "data-driven"
     },
     "fill-extrusion-height": {
       "type": "number",
@@ -4531,6 +4676,74 @@
           "android": "7.0.0",
           "ios": "4.7.0",
           "macos": "0.13.0"
+        }
+      },
+      "expression": {
+        "interpolated": false,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "property-type": "data-constant"
+    },
+    "fill-extrusion-ambient-occlusion-intensity": {
+      "property-type": "data-constant",
+      "type": "number",
+      "private": true,
+      "default": 0.0,
+      "minimum": 0,
+      "maximum": 1,
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "Controls the intensity of shading near ground and concave angles between walls. Default value 0.0 disables ambient occlusion and values around 0.3 provide the most plausible results for buildings.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.10.0",
+          "android": "10.7.0",
+          "ios": "10.7.0"
+        }
+      }
+    },
+    "fill-extrusion-ambient-occlusion-radius": {
+      "property-type": "data-constant",
+      "type": "number",
+      "private": true,
+      "default": 3.0,
+      "minimum": 0,
+      "expression": {
+        "interpolated": true,
+        "parameters": [
+          "zoom"
+        ]
+      },
+      "transition": true,
+      "doc": "Shades area near ground and concave angles between walls where the radius defines only vertical impact. Default value 3.0 corresponds to height of one floor and brings the most plausible results for buildings.",
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.10.0",
+          "android": "10.7.0",
+          "ios": "10.7.0"
+        }
+      }
+    },
+    "fill-extrusion-rounded-roof": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Indicates whether top edges should be rounded when fill-extrusion-edge-radius has a value greater than 0. If false, rounded edges are only applied to the sides. Default is true.",
+      "requires": [
+        "fill-extrusion-edge-radius"
+      ],
+      "transition": false,
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.15.0",
+          "android": "10.10.0",
+          "ios": "10.10.0"
         }
       },
       "expression": {
@@ -4794,7 +5007,7 @@
       "value": "number",
       "doc": "Specifies the lengths of the alternating dashes and gaps that form the dash pattern. The lengths are later scaled by the line width. To convert a dash length to pixels, multiply the length by the current line width. Note that GeoJSON sources with `lineMetrics: true` specified won't render dashed lines to the expected scale. Also note that zoom-dependent expressions will be evaluated only at integer zoom levels.",
       "minimum": 0,
-      "transition": true,
+      "transition": false,
       "units": "line widths",
       "requires": [
         {
@@ -4819,11 +5032,11 @@
           "feature"
         ]
       },
-      "property-type": "cross-faded-data-driven"
+      "property-type": "data-driven"
     },
     "line-pattern": {
       "type": "resolvedImage",
-      "transition": true,
+      "transition": false,
       "doc": "Name of image in sprite to use for drawing image lines. For seamless patterns, image width must be a factor of two (2, 4, 8, ..., 512). Note that zoom-dependent expressions will be evaluated only at integer zoom levels.",
       "sdk-support": {
         "basic functionality": {
@@ -4846,7 +5059,7 @@
           "feature"
         ]
       },
-      "property-type": "cross-faded-data-driven"
+      "property-type": "data-driven"
     },
     "line-gradient": {
       "type": "color",
@@ -4879,6 +5092,33 @@
         ]
       },
       "property-type": "color-ramp"
+    },
+    "line-trim-offset": {
+      "type": "array",
+      "value": "number",
+      "doc": "The line part between [trim-start, trim-end] will be marked as transparent to make a route vanishing effect. The line trim-off offset is based on the whole line range [0.0, 1.0].",
+      "length": 2,
+      "default": [0.0, 0.0],
+      "minimum": [0.0, 0.0],
+      "maximum": [1.0, 1.0],
+      "transition": false,
+      "requires": [
+          {
+              "source": "geojson",
+              "has": {
+                  "lineMetrics": true
+              }
+          }
+      ],
+      "sdk-support": {
+        "basic functionality": {
+          "js": "2.9.0",
+          "android": "10.5.0",
+          "ios": "10.5.0",
+          "macos": "10.5.0"
+        }
+      },
+      "property-type": "constant"
     }
   },
   "paint_circle": {
@@ -6176,7 +6416,7 @@
     },
     "background-pattern": {
       "type": "resolvedImage",
-      "transition": true,
+      "transition": false,
       "doc": "Name of image in sprite to use for drawing an image background. For seamless patterns, image width and height must be a factor of two (2, 4, 8, ..., 512). Note that zoom-dependent expressions will be evaluated only at integer zoom levels.",
       "sdk-support": {
         "basic functionality": {
@@ -6184,8 +6424,7 @@
           "android": "2.0.1",
           "ios": "2.0.0",
           "macos": "0.1.0"
-        },
-        "data-driven styling": {}
+        }
       },
       "expression": {
         "interpolated": false,
@@ -6193,7 +6432,7 @@
           "zoom"
         ]
       },
-      "property-type": "cross-faded"
+      "property-type": "data-constant"
     },
     "background-opacity": {
       "type": "number",
@@ -6476,14 +6715,6 @@
     "data-driven": {
       "type": "property-type",
       "doc": "Property is interpolable and can be represented using a property expression."
-    },
-    "cross-faded": {
-      "type": "property-type",
-      "doc": "Property is non-interpolable; rather, its values will be cross-faded to smoothly transition between integer zooms."
-    },
-    "cross-faded-data-driven": {
-      "type": "property-type",
-      "doc": "Property is non-interpolable; rather, its values will be cross-faded to smoothly transition between integer zooms. It can be represented using a property expression."
     },
     "color-ramp": {
       "type": "property-type",

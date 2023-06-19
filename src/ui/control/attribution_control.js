@@ -3,6 +3,7 @@
 import * as DOM from '../../util/dom.js';
 import {bindAll} from '../../util/util.js';
 import config from '../../util/config.js';
+import {getHashString} from '../hash.js';
 
 import type Map, {ControlPosition} from '../map.js';
 
@@ -59,6 +60,7 @@ class AttributionControl {
         this._compactButton = DOM.create('button', 'mapboxgl-ctrl-attrib-button', this._container);
         DOM.create('span', `mapboxgl-ctrl-icon`, this._compactButton).setAttribute('aria-hidden', 'true');
         this._compactButton.type = 'button';
+        // $FlowFixMe[method-unbinding]
         this._compactButton.addEventListener('click', this._toggleAttribution);
         this._setElementTitle(this._compactButton, 'ToggleAttribution');
         this._innerContainer = DOM.create('div', 'mapboxgl-ctrl-attrib-inner', this._container);
@@ -71,11 +73,15 @@ class AttributionControl {
         this._updateAttributions();
         this._updateEditLink();
 
+        // $FlowFixMe[method-unbinding]
         this._map.on('styledata', this._updateData);
+        // $FlowFixMe[method-unbinding]
         this._map.on('sourcedata', this._updateData);
+        // $FlowFixMe[method-unbinding]
         this._map.on('moveend', this._updateEditLink);
 
         if (compact === undefined) {
+            // $FlowFixMe[method-unbinding]
             this._map.on('resize', this._updateCompact);
             this._updateCompact();
         }
@@ -86,9 +92,13 @@ class AttributionControl {
     onRemove() {
         this._container.remove();
 
+        // $FlowFixMe[method-unbinding]
         this._map.off('styledata', this._updateData);
+        // $FlowFixMe[method-unbinding]
         this._map.off('sourcedata', this._updateData);
+        // $FlowFixMe[method-unbinding]
         this._map.off('moveend', this._updateEditLink);
+        // $FlowFixMe[method-unbinding]
         this._map.off('resize', this._updateCompact);
 
         this._map = (undefined: any);
@@ -131,7 +141,7 @@ class AttributionControl {
                 }
                 return acc;
             }, `?`);
-            editLink.href = `${config.FEEDBACK_URL}/${paramString}${this._map._hash ? this._map._hash.getHashString(true) : ''}`;
+            editLink.href = `${config.FEEDBACK_URL}/${paramString}#${getHashString(this._map, true)}`;
             editLink.rel = 'noopener nofollow';
             this._setElementTitle(editLink, 'MapFeedback');
         }
@@ -160,6 +170,7 @@ class AttributionControl {
             if (sourceCache.used) {
                 const source = sourceCache.getSource();
                 if (source.attribution && attributions.indexOf(source.attribution) < 0) {
+                    // $FlowFixMe[incompatible-call] - Flow can't infer that attribution is a string
                     attributions.push(source.attribution);
                 }
             }

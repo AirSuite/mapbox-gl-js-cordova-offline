@@ -31,7 +31,9 @@ import type VertexBuffer from '../../gl/vertex_buffer.js';
 import type Point from '@mapbox/point-geometry';
 import type {FeatureStates} from '../../source/source_state.js';
 import type {SpritePositions} from '../../util/image.js';
+import type {ProjectionSpecification} from '../../style-spec/types.js';
 import type {TileTransform} from '../../geo/projection/tile_transform.js';
+import type {IVectorTileLayer} from '@mapbox/vector-tile';
 
 class FillBucket implements Bucket {
     index: number;
@@ -57,7 +59,7 @@ class FillBucket implements Bucket {
     segments: SegmentVector;
     segments2: SegmentVector;
     uploaded: boolean;
-    projection: string;
+    projection: ProjectionSpecification;
 
     constructor(options: BucketParameters<FillStyleLayer>) {
         this.zoom = options.zoom;
@@ -87,6 +89,7 @@ class FillBucket implements Bucket {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
 
+            // $FlowFixMe[method-unbinding]
             if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical)) continue;
 
             const sortKey = fillSortKey ?
@@ -131,7 +134,7 @@ class FillBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
     }
@@ -227,6 +230,6 @@ class FillBucket implements Bucket {
     }
 }
 
-register(FillBucket, {omit: ['layers', 'patternFeatures']});
+register(FillBucket, 'FillBucket', {omit: ['layers', 'patternFeatures']});
 
 export default FillBucket;

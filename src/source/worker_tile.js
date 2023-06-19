@@ -32,6 +32,7 @@ import type {
 } from '../source/worker_source.js';
 import type {PromoteIdSpecification} from '../style-spec/types.js';
 import type {TileTransform} from '../geo/projection/tile_transform.js';
+import type {IVectorTile} from '@mapbox/vector-tile';
 
 class WorkerTile {
     tileID: OverscaledTileID;
@@ -53,12 +54,12 @@ class WorkerTile {
     tileTransform: TileTransform;
 
     status: 'parsing' | 'done';
-    data: VectorTile;
+    data: IVectorTile;
     collisionBoxArray: CollisionBoxArray;
 
     abort: ?() => void;
     reloadCallback: ?WorkerTileCallback;
-    vectorTile: VectorTile;
+    vectorTile: IVectorTile;
 
     constructor(params: WorkerTileParameters) {
         this.tileID = new OverscaledTileID(params.tileID.overscaledZ, params.tileID.wrap, params.tileID.canonical.z, params.tileID.canonical.x, params.tileID.canonical.y);
@@ -81,7 +82,7 @@ class WorkerTile {
         this.projection = params.projection;
     }
 
-    parse(data: VectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
+    parse(data: IVectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
         const m = PerformanceUtils.beginMeasure('parseTile1');
         this.status = 'parsing';
         this.data = data;
@@ -155,6 +156,7 @@ class WorkerTile {
 
                 const bucket = buckets[layer.id] = layer.createBucket({
                     index: featureIndex.bucketLayerIDs.length,
+                    // $FlowFixMe[incompatible-call] - Flow can't infer proper `family` type from `layer` above
                     layers: family,
                     zoom: this.zoom,
                     canonical: this.canonical,
@@ -164,7 +166,7 @@ class WorkerTile {
                     sourceLayerIndex,
                     sourceID: this.source,
                     enableTerrain: this.enableTerrain,
-                    projection: this.projection.name,
+                    projection: this.projection.spec,
                     availableImages
                 });
 
@@ -177,55 +179,12 @@ class WorkerTile {
         lineAtlas.trim();
 
         let error: ?Error;
-        let glyphMap: ?{[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}};
-        let iconMap: ?{[_: string]: StyleImage};
-        let patternMap: ?{[_: string]: StyleImage};
+        let glyphMap: {[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}};
+        let iconMap: {[_: string]: StyleImage};
+        let patternMap: {[_: string]: StyleImage};
         const taskMetadata = {type: 'maybePrepare', isSymbolTile: this.isSymbolTile, zoom: this.zoom};
 
-        const stacks = mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
-        if (Object.keys(stacks).length) {
-            actor.send('getGlyphs', {uid: this.uid, stacks}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    glyphMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            glyphMap = {};
-        }
-
-        const icons = Object.keys(options.iconDependencies);
-        if (icons.length) {
-            actor.send('getImages', {icons, source: this.source, tileID: this.tileID, type: 'icons'}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    iconMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            iconMap = {};
-        }
-
-        const patterns = Object.keys(options.patternDependencies);
-        if (patterns.length) {
-            actor.send('getImages', {icons: patterns, source: this.source, tileID: this.tileID, type: 'patterns'}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    patternMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            patternMap = {};
-        }
-
-        PerformanceUtils.endMeasure(m);
-
-        maybePrepare.call(this);
-
-        function maybePrepare() {
+        const maybePrepare = () => {
             if (error) {
                 return callback(error);
             } else if (glyphMap && iconMap && patternMap) {
@@ -273,7 +232,50 @@ class WorkerTile {
                 });
                 PerformanceUtils.endMeasure(m);
             }
+        };
+
+        const stacks = mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
+        if (Object.keys(stacks).length) {
+            actor.send('getGlyphs', {uid: this.uid, stacks}, (err, result) => {
+                if (!error) {
+                    error = err;
+                    glyphMap = result;
+                    maybePrepare();
+                }
+            }, undefined, false, taskMetadata);
+        } else {
+            glyphMap = {};
         }
+
+        const icons = Object.keys(options.iconDependencies);
+        if (icons.length) {
+            actor.send('getImages', {icons, source: this.source, tileID: this.tileID, type: 'icons'}, (err, result) => {
+                if (!error) {
+                    error = err;
+                    iconMap = result;
+                    maybePrepare();
+                }
+            }, undefined, false, taskMetadata);
+        } else {
+            iconMap = {};
+        }
+
+        const patterns = Object.keys(options.patternDependencies);
+        if (patterns.length) {
+            actor.send('getImages', {icons: patterns, source: this.source, tileID: this.tileID, type: 'patterns'}, (err, result) => {
+                if (!error) {
+                    error = err;
+                    patternMap = result;
+                    maybePrepare();
+                }
+            }, undefined, false, taskMetadata);
+        } else {
+            patternMap = {};
+        }
+
+        PerformanceUtils.endMeasure(m);
+
+        maybePrepare();
     }
 }
 

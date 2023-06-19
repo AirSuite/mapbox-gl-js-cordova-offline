@@ -3,13 +3,14 @@
 import Tile from './tile.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
 import TileCache from './tile_cache.js';
-import {asyncAll, keysDifference, values} from '../util/util.js';
+import {asyncAll, keysDifference, values, clamp} from '../util/util.js';
 import Context from '../gl/context.js';
 import Point from '@mapbox/point-geometry';
 import browser from '../util/browser.js';
-import {OverscaledTileID} from './tile_id.js';
+import {OverscaledTileID, CanonicalTileID} from './tile_id.js';
 import assert from 'assert';
 import SourceFeatureState from './source_state.js';
+import {mercatorXfromLng} from '../geo/mercator_coordinate.js';
 
 import type {Source} from './source.js';
 import type {SourceSpecification} from '../style-spec/types.js';
@@ -48,10 +49,10 @@ class SourceCache extends Evented {
     _minTileCacheSize: ?number;
     _maxTileCacheSize: ?number;
     _paused: boolean;
+    _isRaster: boolean;
     _shouldReloadOnResume: boolean;
     _coveredTiles: {[_: number | string]: boolean};
     transform: Transform;
-    _isIdRenderable: (id: number, symbolLayer?: boolean) => boolean;
     used: boolean;
     usedForTerrain: boolean;
     _state: SourceFeatureState;
@@ -88,21 +89,27 @@ class SourceCache extends Evented {
 
         this._source = source;
         this._tiles = {};
+        // $FlowFixMe[method-unbinding]
         this._cache = new TileCache(0, this._unloadTile.bind(this));
         this._timers = {};
         this._cacheTimers = {};
-        this._minTileCacheSize = null;
-        this._maxTileCacheSize = null;
+        this._minTileCacheSize = source.minTileCacheSize;
+        this._maxTileCacheSize = source.maxTileCacheSize;
         this._loadedParentTiles = {};
 
         this._coveredTiles = {};
         this._state = new SourceFeatureState();
+        this._isRaster =
+            this._source.type === 'raster' ||
+            this._source.type === 'raster-dem' ||
+            // $FlowFixMe[prop-missing]
+            (this._source.type === 'custom' && this._source._dataType === 'raster');
     }
 
     onAdd(map: MapboxMap) {
         this.map = map;
-        this._minTileCacheSize = map ? map._minTileCacheSize : null;
-        this._maxTileCacheSize = map ? map._maxTileCacheSize : null;
+        this._minTileCacheSize = this._minTileCacheSize === undefined && map ? map._minTileCacheSize : this._minTileCacheSize;
+        this._maxTileCacheSize = this._maxTileCacheSize === undefined && map ? map._maxTileCacheSize : this._maxTileCacheSize;
     }
 
     /**
@@ -164,6 +171,7 @@ class SourceCache extends Evented {
         }
 
         this._state.coalesceChanges(this._tiles, this.map ? this.map.painter : null);
+
         for (const i in this._tiles) {
             const tile = this._tiles[i];
             tile.upload(context);
@@ -238,6 +246,7 @@ class SourceCache extends Evented {
             tile.state = state;
         }
 
+        // $FlowFixMe[method-unbinding]
         this._loadTile(tile, this._tileLoaded.bind(this, tile, id, state));
     }
 
@@ -283,7 +292,7 @@ class SourceCache extends Evented {
             }
         }
 
-        function fillBorder(tile, borderTile) {
+        function fillBorder(tile: Tile, borderTile: Tile) {
             if (!tile.dem || tile.dem.borderReady) return;
             tile.needsHillshadePrepare = true;
             tile.needsDEMTextureUpload = true;
@@ -735,9 +744,8 @@ class SourceCache extends Evented {
      * @private
      */
     _addTile(tileID: OverscaledTileID): Tile {
-        let tile = this._tiles[tileID.key];
-        if (tile)
-            return tile;
+        let tile: ?Tile = this._tiles[tileID.key];
+        if (tile) return tile;
 
         tile = this._cache.getAndRemove(tileID);
         if (tile) {
@@ -755,8 +763,8 @@ class SourceCache extends Evented {
         const cached = Boolean(tile);
         if (!cached) {
             const painter = this.map ? this.map.painter : null;
-            const isRaster = this._source.type === 'raster' || this._source.type === 'raster-dem';
-            tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, painter, isRaster);
+            tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, painter, this._isRaster);
+            // $FlowFixMe[method-unbinding]
             this._loadTile(tile, this._tileLoaded.bind(this, tile, tileID.key, tile.state));
         }
 
@@ -848,6 +856,9 @@ class SourceCache extends Evented {
         const transform = this.transform;
         if (!transform) return tileResults;
 
+        const isGlobe = transform.projection.name === 'globe';
+        const centerX = mercatorXfromLng(transform.center.lng);
+
         for (const tileID in this._tiles) {
             const tile = this._tiles[tileID];
             if (visualizeQueryGeometry) {
@@ -858,9 +869,41 @@ class SourceCache extends Evented {
                 continue;
             }
 
-            const tileResult = queryGeometry.containsTile(tile, transform, use3DQuery);
-            if (tileResult) {
-                tileResults.push(tileResult);
+            // An array of wrap values for the tile [-1, 0, 1]. The default value is 0 but -1 or 1 wrapping
+            // might be required in globe view due to globe's surface being continuous.
+            let tilesToCheck;
+
+            if (isGlobe) {
+                // Compare distances to copies of the tile to see if a wrapped one should be used.
+                const id = tile.tileID.canonical;
+                assert(tile.tileID.wrap === 0);
+
+                if (id.z === 0) {
+                    // Render the zoom level 0 tile twice as the query polygon might span over the antimeridian
+                    const distances = [
+                        Math.abs(clamp(centerX, ...tileBoundsX(id, -1)) - centerX),
+                        Math.abs(clamp(centerX, ...tileBoundsX(id, 1)) - centerX)
+                    ];
+
+                    tilesToCheck = [0, distances.indexOf(Math.min(...distances)) * 2 - 1];
+                } else {
+                    const distances = [
+                        Math.abs(clamp(centerX, ...tileBoundsX(id, -1)) - centerX),
+                        Math.abs(clamp(centerX, ...tileBoundsX(id, 0)) - centerX),
+                        Math.abs(clamp(centerX, ...tileBoundsX(id, 1)) - centerX)
+                    ];
+
+                    tilesToCheck = [distances.indexOf(Math.min(...distances)) - 1];
+                }
+            } else {
+                tilesToCheck = [0];
+            }
+
+            for (const wrap of tilesToCheck) {
+                const tileResult = queryGeometry.containsTile(tile, transform, use3DQuery, wrap);
+                if (tileResult) {
+                    tileResults.push(tileResult);
+                }
             }
         }
         return tileResults;
@@ -951,6 +994,17 @@ class SourceCache extends Evented {
      * @returns {Object} Returns `this` | Promise.
      */
     _preloadTiles(transform: Transform | Array<Transform>, callback: Callback<any>) {
+        if (!this._sourceLoaded) {
+            const waitUntilSourceLoaded = () => {
+                if (!this._sourceLoaded) return;
+                this._source.off('data', waitUntilSourceLoaded);
+                this._preloadTiles(transform, callback);
+            };
+
+            this._source.on('data', waitUntilSourceLoaded);
+            return;
+        }
+
         const coveringTilesIDs: Map<number, OverscaledTileID> = new Map();
         const transforms = Array.isArray(transform) ? transform : [transform];
 
@@ -977,10 +1031,9 @@ class SourceCache extends Evented {
         }
 
         const tileIDs = Array.from(coveringTilesIDs.values());
-        const isRaster = this._source.type === 'raster' || this._source.type === 'raster-dem';
 
         asyncAll(tileIDs, (tileID, done) => {
-            const tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, this.map.painter, isRaster);
+            const tile = new Tile(tileID, this._source.tileSize * tileID.overscaleFactor(), this.transform.tileZoom, this.map.painter, this._isRaster);
             this._loadTile(tile, (err) => {
                 if (this._source.type === 'raster-dem' && tile.dem) this._backfillDEM(tile);
                 done(err, tile);
@@ -1001,8 +1054,13 @@ function compareTileId(a: OverscaledTileID, b: OverscaledTileID): number {
     return a.overscaledZ - b.overscaledZ || bWrap - aWrap || b.canonical.y - a.canonical.y || b.canonical.x - a.canonical.x;
 }
 
-function isRasterType(type): boolean {
-    return type === 'raster' || type === 'image' || type === 'video';
+function isRasterType(type: string): boolean {
+    return type === 'raster' || type === 'image' || type === 'video' || type === 'custom';
+}
+
+function tileBoundsX(id: CanonicalTileID, wrap: number): [number, number] {
+    const tiles = 1 << id.z;
+    return [id.x / tiles + wrap, (id.x + 1) / tiles + wrap];
 }
 
 export default SourceCache;

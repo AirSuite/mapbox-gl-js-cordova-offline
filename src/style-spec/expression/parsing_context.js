@@ -73,7 +73,7 @@ class ParsingContext {
             expr = ['literal', expr];
         }
 
-        function annotate(parsed, type, typeAnnotation: 'assert' | 'coerce' | 'omit') {
+        function annotate(parsed: Expression, type: Type, typeAnnotation: 'assert' | 'coerce' | 'omit') {
             if (typeAnnotation === 'assert') {
                 return new Assertion(type, [parsed]);
             } else if (typeAnnotation === 'coerce') {
@@ -155,7 +155,7 @@ class ParsingContext {
      * parsing, is copied by reference rather than cloned.
      * @private
      */
-    concat(index: number, expectedType?: ?Type, bindings?: Array<[string, Expression]>) {
+    concat(index: number, expectedType?: ?Type, bindings?: Array<[string, Expression]>): ParsingContext {
         const path = typeof index === 'number' ? this.path.concat(index) : this.path;
         const scope = bindings ? this.scope.concat(bindings) : this.scope;
         return new ParsingContext(

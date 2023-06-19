@@ -8,12 +8,14 @@
 
 attribute vec2 a_pos_normal;
 attribute vec4 a_data;
+// Includes in order: a_uv_x, a_split_index, a_clip_start, a_clip_end
+// to reduce attribute count on older devices.
+// Only line-gradient and line-trim-offset will requires a_packed info.
+#if defined(RENDER_LINE_GRADIENT) || defined(RENDER_LINE_TRIM_OFFSET)
+attribute highp vec4 a_packed;
+#endif
 
-#ifdef RENDER_LINE_GRADIENT
-// Includes in order: a_uv_x, a_split_index, a_linesofar
-// to reduce attribute count on older devices
-attribute vec3 a_packed;
-#else
+#ifdef RENDER_LINE_DASH
 attribute float a_linesofar;
 #endif
 
@@ -25,23 +27,21 @@ uniform lowp float u_device_pixel_ratio;
 varying vec2 v_normal;
 varying vec2 v_width2;
 varying float v_gamma_scale;
+varying highp vec4 v_uv;
 
 #ifdef RENDER_LINE_DASH
 uniform vec2 u_texsize;
-uniform mediump vec3 u_scale;
-varying vec2 v_tex_a;
-varying vec2 v_tex_b;
+uniform float u_tile_units_to_pixels;
+varying vec2 v_tex;
 #endif
 
 #ifdef RENDER_LINE_GRADIENT
 uniform float u_image_height;
-varying highp vec2 v_uv;
 #endif
 
 #pragma mapbox: define highp vec4 color
 #pragma mapbox: define lowp float floorwidth
-#pragma mapbox: define lowp vec4 dash_from
-#pragma mapbox: define lowp vec4 dash_to
+#pragma mapbox: define lowp vec4 dash
 #pragma mapbox: define lowp float blur
 #pragma mapbox: define lowp float opacity
 #pragma mapbox: define mediump float gapwidth
@@ -51,8 +51,7 @@ varying highp vec2 v_uv;
 void main() {
     #pragma mapbox: initialize highp vec4 color
     #pragma mapbox: initialize lowp float floorwidth
-    #pragma mapbox: initialize lowp vec4 dash_from
-    #pragma mapbox: initialize lowp vec4 dash_to
+    #pragma mapbox: initialize lowp vec4 dash
     #pragma mapbox: initialize lowp float blur
     #pragma mapbox: initialize lowp float opacity
     #pragma mapbox: initialize mediump float gapwidth
@@ -107,27 +106,26 @@ void main() {
     v_gamma_scale = 1.0;
 #endif
 
-#ifdef RENDER_LINE_GRADIENT
+#if defined(RENDER_LINE_GRADIENT) || defined(RENDER_LINE_TRIM_OFFSET)
     float a_uv_x = a_packed[0];
     float a_split_index = a_packed[1];
-    float a_linesofar = a_packed[2];
+    highp float a_clip_start = a_packed[2];
+    highp float a_clip_end = a_packed[3];
+#ifdef RENDER_LINE_GRADIENT
     highp float texel_height = 1.0 / u_image_height;
     highp float half_texel_height = 0.5 * texel_height;
-    v_uv = vec2(a_uv_x, a_split_index * texel_height - half_texel_height);
+
+    v_uv = vec4(a_uv_x, a_split_index * texel_height - half_texel_height, a_clip_start, a_clip_end);
+#else
+    v_uv = vec4(a_uv_x, 0.0, a_clip_start, a_clip_end);
+#endif
 #endif
 
 #ifdef RENDER_LINE_DASH
-    float tileZoomRatio = u_scale.x;
-    float fromScale = u_scale.y;
-    float toScale = u_scale.z;
+    float scale = dash.z == 0.0 ? 0.0 : u_tile_units_to_pixels / dash.z;
+    float height = dash.y;
 
-    float scaleA = dash_from.z == 0.0 ? 0.0 : tileZoomRatio / (dash_from.z * fromScale);
-    float scaleB = dash_to.z == 0.0 ? 0.0 : tileZoomRatio / (dash_to.z * toScale);
-    float heightA = dash_from.y;
-    float heightB = dash_to.y;
-
-    v_tex_a = vec2(a_linesofar * scaleA / floorwidth, (-normal.y * heightA + dash_from.x + 0.5) / u_texsize.y);
-    v_tex_b = vec2(a_linesofar * scaleB / floorwidth, (-normal.y * heightB + dash_to.x + 0.5) / u_texsize.y);
+    v_tex = vec2(a_linesofar * scale / floorwidth, (-normal.y * height + dash.x + 0.5) / u_texsize.y);
 #endif
 
     v_width2 = vec2(outset, inset);

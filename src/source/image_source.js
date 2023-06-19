@@ -12,6 +12,7 @@ import MercatorCoordinate from '../geo/mercator_coordinate.js';
 import browser from '../util/browser.js';
 import tileTransform, {getTilePoint} from '../geo/projection/tile_transform.js';
 import {mat3, vec3} from 'gl-matrix';
+import window from '../util/window.js';
 
 import type {Source} from './source.js';
 import type {CanvasSourceSpecification} from './canvas_source.js';
@@ -19,6 +20,7 @@ import type Map from '../ui/map.js';
 import type Dispatcher from '../util/dispatcher.js';
 import type Tile from './tile.js';
 import type {Callback} from '../types/callback.js';
+import type {Cancelable} from '../types/cancelable.js';
 import type VertexBuffer from '../gl/vertex_buffer.js';
 import type {
     ImageSourceSpecification,
@@ -31,7 +33,7 @@ type Coordinates = [[number, number], [number, number], [number, number], [numbe
 // perspective correction for texture mapping, see https://github.com/mapbox/mapbox-gl-js/issues/9158
 // adapted from https://math.stackexchange.com/a/339033/48653
 
-function basisToPoints(x1, y1, x2, y2, x3, y3, x4, y4) {
+function basisToPoints(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number) {
     const m = [x1, x2, x3, y1, y2, y3, 1, 1, 1];
     const s = [x4, y4, 1];
     const ma = mat3.adjoint([], m);
@@ -39,7 +41,7 @@ function basisToPoints(x1, y1, x2, y2, x3, y3, x4, y4) {
     return mat3.multiply(m, [sx, 0, 0, 0, sy, 0, 0, 0, sz], m);
 }
 
-function getPerspectiveTransform(w, h, x1, y1, x2, y2, x3, y3, x4, y4) {
+function getPerspectiveTransform(w: number, h: number, x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number) {
     const s = basisToPoints(0, 0, w, 0, 0, h, w, h);
     const m = basisToPoints(x1, y1, x2, y2, x3, y3, x4, y4);
     mat3.multiply(m, mat3.adjoint(s, s), m);
@@ -88,6 +90,7 @@ function getPerspectiveTransform(w, h, x1, y1, x2, y2, x3, y3, x4, y4) {
  *
  * map.removeSource('some id');  // remove
  * @see [Example: Add an image](https://www.mapbox.com/mapbox-gl-js/example/image-on-a-map/)
+ * @see [Example: Animate a series of images](https://www.mapbox.com/mapbox-gl-js/example/animate-images/)
  */
 class ImageSource extends Evented implements Source {
     type: string;
@@ -105,12 +108,15 @@ class ImageSource extends Evented implements Source {
     dispatcher: Dispatcher;
     map: Map;
     texture: Texture | null;
-    image: ImageData;
+    image: HTMLImageElement | ImageBitmap | ImageData;
+    // $FlowFixMe
     tileID: CanonicalTileID;
     _boundsArray: ?RasterBoundsArray;
     boundsBuffer: ?VertexBuffer;
     boundsSegments: ?SegmentVector;
     _loaded: boolean;
+    _dirty: boolean;
+    _imageRequest: ?Cancelable;
     perspectiveTransform: [number, number];
 
     /**
@@ -132,27 +138,32 @@ class ImageSource extends Evented implements Source {
         this.setEventedParent(eventedParent);
 
         this.options = options;
+        this._dirty = false;
     }
 
-    load(newCoordinates?: Coordinates, successCallback?: () => void) {
-        this._loaded = false;
+    load(newCoordinates?: Coordinates, loaded?: boolean) {
+        this._loaded = loaded || false;
         this.fire(new Event('dataloading', {dataType: 'source'}));
 
         this.url = this.options.url;
 
-        getImage(this.map._requestManager.transformRequest(this.url, ResourceType.Image), (err, image) => {
+        this._imageRequest = getImage(this.map._requestManager.transformRequest(this.url, ResourceType.Image), (err, image) => {
+            this._imageRequest = null;
             this._loaded = true;
             if (err) {
                 this.fire(new ErrorEvent(err));
             } else if (image) {
-                this.image = browser.getImageData(image);
+                const {HTMLImageElement} = window;
+                if (image instanceof HTMLImageElement) {
+                    this.image = browser.getImageData(image);
+                } else {
+                    this.image = image;
+                }
+                this._dirty = true;
                 this.width = this.image.width;
                 this.height = this.image.height;
                 if (newCoordinates) {
                     this.coordinates = newCoordinates;
-                }
-                if (successCallback) {
-                    successCallback();
                 }
                 this._finishLoading();
             }
@@ -170,9 +181,9 @@ class ImageSource extends Evented implements Source {
      * @param {Object} options Options object.
      * @param {string} [options.url] Required image URL.
      * @param {Array<Array<number>>} [options.coordinates] Four geographical coordinates,
-     *   represented as arrays of longitude and latitude numbers, which define the corners of the image.
-     *   The coordinates start at the top left corner of the image and proceed in clockwise order.
-     *   They do not have to represent a rectangle.
+     *     represented as arrays of longitude and latitude numbers, which define the corners of the image.
+     *     The coordinates start at the top left corner of the image and proceed in clockwise order.
+     *     They do not have to represent a rectangle.
      * @returns {ImageSource} Returns itself to allow for method chaining.
      * @example
      * // Add to an image source to the map with some initial URL and coordinates
@@ -201,8 +212,12 @@ class ImageSource extends Evented implements Source {
         if (!this.image || !options.url) {
             return this;
         }
+        if (this._imageRequest && options.url !== this.options.url) {
+            this._imageRequest.cancel();
+            this._imageRequest = null;
+        }
         this.options.url = options.url;
-        this.load(options.coordinates, () => { this.texture = null; });
+        this.load(options.coordinates, this._loaded);
         return this;
     }
 
@@ -213,18 +228,28 @@ class ImageSource extends Evented implements Source {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.load();
+    }
+
+    // $FlowFixMe[method-unbinding]
+    onRemove() {
+        if (this._imageRequest) {
+            this._imageRequest.cancel();
+            this._imageRequest = null;
+        }
+        if (this.texture) this.texture.destroy();
     }
 
     /**
      * Sets the image's coordinates and re-renders the map.
      *
      * @param {Array<Array<number>>} coordinates Four geographical coordinates,
-     *   represented as arrays of longitude and latitude numbers, which define the corners of the image.
-     *   The coordinates start at the top left corner of the image and proceed in clockwise order.
-     *   They do not have to represent a rectangle.
+     *     represented as arrays of longitude and latitude numbers, which define the corners of the image.
+     *     The coordinates start at the top left corner of the image and proceed in clockwise order.
+     *     They do not have to represent a rectangle.
      * @returns {ImageSource} Returns itself to allow for method chaining.
      * @example
      * // Add an image source to the map with some initial coordinates
@@ -255,6 +280,7 @@ class ImageSource extends Evented implements Source {
         // may be outside the tile, because raster tiles aren't clipped when rendering.
 
         // transform the geo coordinates into (zoom 0) tile space coordinates
+        // $FlowFixMe[method-unbinding]
         const cornerCoords = coordinates.map(MercatorCoordinate.fromLngLat);
 
         // Compute the coordinates of the tile we'll use to hold this image's
@@ -270,6 +296,7 @@ class ImageSource extends Evented implements Source {
         return this;
     }
 
+    // $FlowFixMe[method-unbinding]
     _clear() {
         this._boundsArray = undefined;
     }
@@ -309,15 +336,21 @@ class ImageSource extends Evented implements Source {
         this.boundsSegments = SegmentVector.simpleSegment(0, 0, 4, 2);
     }
 
+    // $FlowFixMe[method-unbinding]
     prepare() {
         if (Object.keys(this.tiles).length === 0 || !this.image) return;
 
         const context = this.map.painter.context;
         const gl = context.gl;
 
-        if (!this.texture) {
-            this.texture = new Texture(context, this.image, gl.RGBA);
-            this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+        if (this._dirty) {
+            if (!this.texture) {
+                this.texture = new Texture(context, this.image, gl.RGBA);
+                this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            } else {
+                this.texture.update(this.image);
+            }
+            this._dirty = false;
         }
 
         this._prepareData(context);

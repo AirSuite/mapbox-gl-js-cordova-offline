@@ -23,13 +23,13 @@ import window from '../util/window.js';
 import Point from '@mapbox/point-geometry';
 import assert from 'assert';
 import {vec3} from 'gl-matrix';
-import MercatorCoordinate from '../geo/mercator_coordinate.js';
+import MercatorCoordinate, {latFromMercatorY, mercatorScale} from '../geo/mercator_coordinate.js';
 
 import type {Vec3} from 'gl-matrix';
 
 export type InputEvent = MouseEvent | TouchEvent | KeyboardEvent | WheelEvent;
 
-const isMoving = p => p.zoom || p.drag || p.pitch || p.rotate;
+const isMoving = (p: { [string]: any }) => p.zoom || p.drag || p.pitch || p.rotate;
 
 class RenderFrameEvent extends Event {
     type: 'renderFrame';
@@ -221,6 +221,7 @@ class HandlerManager {
         ];
 
         for (const [target, type, listenerOptions] of this._listeners) {
+            // $FlowFixMe[method-unbinding]
             const listener = target === window.document ? this.handleWindowEvent : this.handleEvent;
             target.addEventListener((type: any), (listener: any), listenerOptions);
         }
@@ -228,6 +229,7 @@ class HandlerManager {
 
     destroy() {
         for (const [target, type, listenerOptions] of this._listeners) {
+            // $FlowFixMe[method-unbinding]
             const listener = target === window.document ? this.handleWindowEvent : this.handleEvent;
             target.removeEventListener((type: any), (listener: any), listenerOptions);
         }
@@ -236,47 +238,62 @@ class HandlerManager {
     _addDefaultHandlers(options: { interactive: boolean, pitchWithRotate: boolean, clickTolerance: number }) {
         const map = this._map;
         const el = map.getCanvasContainer();
+        // $FlowFixMe[method-unbinding]
         this._add('mapEvent', new MapEventHandler(map, options));
 
         const boxZoom = map.boxZoom = new BoxZoomHandler(map, options);
+        // $FlowFixMe[method-unbinding]
         this._add('boxZoom', boxZoom);
 
         const tapZoom = new TapZoomHandler();
         const clickZoom = new ClickZoomHandler();
         map.doubleClickZoom = new DoubleClickZoomHandler(clickZoom, tapZoom);
+        // $FlowFixMe[method-unbinding]
         this._add('tapZoom', tapZoom);
+        // $FlowFixMe[method-unbinding]
         this._add('clickZoom', clickZoom);
 
         const tapDragZoom = new TapDragZoomHandler();
+        // $FlowFixMe[method-unbinding]
         this._add('tapDragZoom', tapDragZoom);
 
         const touchPitch = map.touchPitch = new TouchPitchHandler(map);
+        // $FlowFixMe[method-unbinding]
         this._add('touchPitch', touchPitch);
 
         const mouseRotate = new MouseRotateHandler(options);
         const mousePitch = new MousePitchHandler(options);
         map.dragRotate = new DragRotateHandler(options, mouseRotate, mousePitch);
+        // $FlowFixMe[method-unbinding]
         this._add('mouseRotate', mouseRotate, ['mousePitch']);
+        // $FlowFixMe[method-unbinding]
         this._add('mousePitch', mousePitch, ['mouseRotate']);
 
         const mousePan = new MousePanHandler(options);
         const touchPan = new TouchPanHandler(map, options);
         map.dragPan = new DragPanHandler(el, mousePan, touchPan);
+        // $FlowFixMe[method-unbinding]
         this._add('mousePan', mousePan);
+        // $FlowFixMe[method-unbinding]
         this._add('touchPan', touchPan, ['touchZoom', 'touchRotate']);
 
         const touchRotate = new TouchRotateHandler();
         const touchZoom = new TouchZoomHandler();
         map.touchZoomRotate = new TouchZoomRotateHandler(el, touchZoom, touchRotate, tapDragZoom);
+        // $FlowFixMe[method-unbinding]
         this._add('touchRotate', touchRotate, ['touchPan', 'touchZoom']);
+        // $FlowFixMe[method-unbinding]
         this._add('touchZoom', touchZoom, ['touchPan', 'touchRotate']);
 
+        // $FlowFixMe[method-unbinding]
         this._add('blockableMapEvent', new BlockableMapEventHandler(map));
 
         const scrollZoom = map.scrollZoom = new ScrollZoomHandler(map, this);
+        // $FlowFixMe[method-unbinding]
         this._add('scrollZoom', scrollZoom, ['mousePan']);
 
         const keyboard = map.keyboard = new KeyboardHandler();
+        // $FlowFixMe[method-unbinding]
         this._add('keyboard', keyboard);
 
         for (const name of ['boxZoom', 'doubleClickZoom', 'tapDragZoom', 'touchPitch', 'dragRotate', 'dragPan', 'touchZoomRotate', 'scrollZoom', 'keyboard']) {
@@ -303,26 +320,30 @@ class HandlerManager {
         this._changes = [];
     }
 
-    isActive() {
+    isActive(): boolean {
         for (const {handler} of this._handlers) {
             if (handler.isActive()) return true;
         }
         return false;
     }
 
-    isZooming() {
+    isZooming(): boolean {
         return !!this._eventsInProgress.zoom || this._map.scrollZoom.isZooming();
     }
 
-    isRotating() {
+    isRotating(): boolean {
         return !!this._eventsInProgress.rotate;
     }
 
-    isMoving() {
-        return Boolean(isMoving(this._eventsInProgress)) || this.isZooming();
+    isMoving(): boolean {
+        return !!isMoving(this._eventsInProgress) || this.isZooming();
     }
 
-    _blockedByActive(activeHandlers: { [string]: Handler }, allowed: Array<string>, myName: string) {
+    _isDragging(): boolean {
+        return !!this._eventsInProgress.drag;
+    }
+
+    _blockedByActive(activeHandlers: { [string]: Handler }, allowed: Array<string>, myName: string): boolean {
         for (const name in activeHandlers) {
             if (name === myName) continue;
             if (!allowed || allowed.indexOf(name) < 0) {
@@ -336,7 +357,7 @@ class HandlerManager {
         this.handleEvent(e, `${e.type}Window`);
     }
 
-    _getMapTouches(touches: TouchList) {
+    _getMapTouches(touches: TouchList): TouchList {
         const mapTouches = [];
         for (const t of touches) {
             const target = ((t.target: any): Node);
@@ -470,12 +491,12 @@ class HandlerManager {
         const map = this._map;
         const tr = map.transform;
 
-        const eventStarted = (type) => {
+        const eventStarted = (type: string) => {
             const newEvent = combinedEventsInProgress[type];
             return newEvent && !this._eventsInProgress[type];
         };
 
-        const eventEnded = (type) => {
+        const eventEnded = (type: string) => {
             const event = this._eventsInProgress[type];
             return event && !this._handlersById[event.handlerName].isActive();
         };
@@ -491,18 +512,29 @@ class HandlerManager {
             if (preZoom !== tr.zoom) this._map._update(true);
         }
 
+        // Catches double click and double tap zooms when camera is constrained over terrain
+        if (tr._isCameraConstrained) map._stop(true);
+
         if (!hasChange(combinedResult)) {
-            return this._fireEvents(combinedEventsInProgress, deactivatedHandlers, true);
+            this._fireEvents(combinedEventsInProgress, deactivatedHandlers, true);
+            return;
         }
+
         let {panDelta, zoomDelta, bearingDelta, pitchDelta, around, aroundCoord, pinchAround} = combinedResult;
+
+        if (tr._isCameraConstrained) {
+            // Catches wheel zoom events when camera is constrained over terrain
+            if (zoomDelta > 0) zoomDelta = 0;
+            tr._isCameraConstrained = false;
+        }
 
         if (pinchAround !== undefined) {
             around = pinchAround;
         }
 
-        if (eventStarted("drag") && around) {
+        if ((zoomDelta || eventStarted("drag")) && around) {
             this._dragOrigin = toVec3(tr.pointCoordinate3D(around));
-            // Construct the tracking ellipsoid every time user changes the drag origin.
+            // Construct the tracking ellipsoid every time user changes the zoom or drag origin.
             // Direction of the ray will define size of the shape and hence defining the available range of movement
             this._trackingEllipsoid.setup(tr._camera.position, this._dragOrigin);
         }
@@ -521,14 +553,32 @@ class HandlerManager {
         // Compute Mercator 3D camera offset based on screenspace panDelta
         const panVec = [0, 0, 0];
         if (panDelta) {
-            assert(this._dragOrigin, '_dragOrigin should have been setup with a previous dragstart');
+            if (tr.projection.name === 'mercator') {
+                assert(this._dragOrigin, '_dragOrigin should have been setup with a previous dragstart');
+                const startPoint = this._trackingEllipsoid.projectRay(tr.screenPointToMercatorRay(around).dir);
+                const endPoint = this._trackingEllipsoid.projectRay(tr.screenPointToMercatorRay(around.sub(panDelta)).dir);
+                panVec[0] = endPoint[0] - startPoint[0];
+                panVec[1] = endPoint[1] - startPoint[1];
 
-            const startPoint = tr.pointCoordinate(around);
-            const endPoint = tr.pointCoordinate(around.sub(panDelta));
+            } else {
+                const startPoint = tr.pointCoordinate(around);
+                if (tr.projection.name === 'globe') {
+                    // Compute pan vector directly in pixel coordinates for the globe.
+                    // Rotate the globe a bit faster when dragging near poles to compensate
+                    // different pixel-per-meter ratios (ie. pixel-to-physical-rotation is lower)
+                    panDelta = panDelta.rotate(-tr.angle);
+                    const scale = tr._pixelsPerMercatorPixel / tr.worldSize;
+                    panVec[0] = -panDelta.x * mercatorScale(latFromMercatorY(startPoint.y)) * scale;
+                    panVec[1] = -panDelta.y * mercatorScale(tr.center.lat) * scale;
 
-            if (startPoint && endPoint) {
-                panVec[0] = endPoint.x - startPoint.x;
-                panVec[1] = endPoint.y - startPoint.y;
+                } else {
+                    const endPoint = tr.pointCoordinate(around.sub(panDelta));
+
+                    if (startPoint && endPoint) {
+                        panVec[0] = endPoint.x - startPoint.x;
+                        panVec[1] = endPoint.y - startPoint.y;
+                    }
+                }
             }
         }
 
@@ -563,7 +613,6 @@ class HandlerManager {
         this._map._update();
         if (!combinedResult.noInertia) this._inertia.record(combinedResult);
         this._fireEvents(combinedEventsInProgress, deactivatedHandlers, true);
-
     }
 
     _fireEvents(newEventsInProgress: { [string]: Object }, deactivatedHandlers: Object, allowEndAnimation: boolean) {
@@ -620,7 +669,7 @@ class HandlerManager {
             this._updatingCamera = true;
             const inertialEase = this._inertia._onMoveEnd(this._map.dragPan._inertiaOptions);
 
-            const shouldSnapToNorth = bearing => bearing !== 0 && -this._bearingSnap < bearing && bearing < this._bearingSnap;
+            const shouldSnapToNorth = (bearing: number) => bearing !== 0 && -this._bearingSnap < bearing && bearing < this._bearingSnap;
 
             if (inertialEase) {
                 if (shouldSnapToNorth(inertialEase.bearing || this._map.getBearing())) {
@@ -638,11 +687,11 @@ class HandlerManager {
 
     }
 
-    _fireEvent(type: string, e: *) {
+    _fireEvent(type: string, e: any) {
         this._map.fire(new Event(type, e ? {originalEvent: e} : {}));
     }
 
-    _requestFrame() {
+    _requestFrame(): number {
         this._map.triggerRepaint();
         return this._map._renderTaskQueue.add(timeStamp => {
             this._frameId = undefined;

@@ -15,7 +15,7 @@ import type {StyleSpecification} from '../types.js';
  * this will convert (a) "stop" functions, and (b) legacy filters to their
  * expression equivalents.
  */
-export default function(style: StyleSpecification) {
+export default function(style: StyleSpecification): StyleSpecification {
     const converted = [];
 
     eachLayer(style, (layer) => {
@@ -27,6 +27,9 @@ export default function(style: StyleSpecification) {
     eachProperty(style, {paint: true, layout: true}, ({path, value, reference, set}) => {
         if (isExpression(value)) return;
         if (typeof value === 'object' && !Array.isArray(value)) {
+            // $FlowFixMe[prop-missing]
+            // $FlowFixMe[incompatible-call]
+            // $FlowFixMe[incompatible-variance]
             set(convertFunction(value, reference));
             converted.push(path.join('.'));
         } else if (reference.tokens && typeof value === 'string') {

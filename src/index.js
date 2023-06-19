@@ -1,5 +1,7 @@
 // @flow
 
+import {PerformanceUtils} from './util/performance.js';
+
 import assert from 'assert';
 import {supported} from '@mapbox/mapbox-gl-supported';
 
@@ -26,7 +28,6 @@ import WorkerPool from './util/worker_pool.js';
 import {prewarm, clearPrewarmedResources} from './util/global_worker_pool.js';
 import {clearTileCache} from './util/tile_request_cache.js';
 import {WorkerPerformanceUtils} from './util/worker_performance_utils.js';
-import {PerformanceUtils} from './util/performance.js';
 import {FreeCameraOptions} from './ui/free_camera.js';
 import browser from './util/browser.js';
 
@@ -53,7 +54,8 @@ const exported = {
     config,
     /**
      * Initializes resources like WebWorkers that can be shared across maps to lower load
-     * times in some situations. `mapboxgl.workerUrl` and `mapboxgl.workerCount`, if being
+     * times in some situations. [`mapboxgl.workerUrl`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#workerurl)
+     * and [`mapboxgl.workerCount`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#workercount), if being
      * used, must be set before `prewarm()` is called to have an effect.
      *
      * By default, the lifecycle of these resources is managed automatically, and they are
@@ -61,10 +63,10 @@ const exported = {
      * resources ahead of time and ensures they are not cleared when the last `Map`
      * is removed from the page. This allows them to be re-used by new `Map` instances that
      * are created later. They can be manually cleared by calling
-     * `mapboxgl.clearPrewarmedResources()`. This is only necessary if your web page
-     * remains active but stops using maps altogether. `prewarm()` is idempotent
-     * and has guards against being executed multiple times, and any resources
-     * allocated by `prewarm()` are created synchronously.
+     * [`mapboxgl.clearPrewarmedResources()`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#clearprewarmedresources).
+     * This is only necessary if your web page remains active but stops using maps altogether.
+     * `prewarm()` is idempotent and has guards against being executed multiple times,
+     * and any resources allocated by `prewarm()` are created synchronously.
      *
      * This is primarily useful when using Mapbox GL JS maps in a single page app,
      * in which a user navigates between various views, resulting in
@@ -76,7 +78,7 @@ const exported = {
      */
     prewarm,
     /**
-     * Clears up resources that have previously been created by `mapboxgl.prewarm()`.
+     * Clears up resources that have previously been created by [`mapboxgl.prewarm()](https://docs.mapbox.com/mapbox-gl-js/api/properties/#prewarm)`.
      * Note that this is typically not necessary. You should only call this function
      * if you expect the user of your app to not return to a Map view at any point
      * in your application.
@@ -241,9 +243,9 @@ Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPer
  * @function supported
  * @param {Object} [options]
  * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`,
- *   the function will return `false` if the performance of Mapbox GL JS would
- *   be dramatically worse than expected (for example, a software WebGL renderer
- *   would be used).
+ *     the function will return `false` if the performance of Mapbox GL JS would
+ *     be dramatically worse than expected (for example, a software WebGL renderer
+ *     would be used).
  * @return {boolean}
  * @example
  * // Show an alert if the browser does not support Mapbox GL
@@ -261,7 +263,7 @@ Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPer
  * @param {string} pluginURL URL pointing to the Mapbox RTL text plugin source.
  * @param {Function} callback Called with an error argument if there is an error, or no arguments if the plugin loads successfully.
  * @param {boolean} lazy If set to `true`, MapboxGL will defer loading the plugin until right-to-left text is encountered, and
- *    right-to-left text will be rendered only after the plugin finishes loading.
+ *     right-to-left text will be rendered only after the plugin finishes loading.
  * @example
  * mapboxgl.setRTLTextPlugin('https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.2.0/mapbox-gl-rtl-text.js');
  * @see [Example: Add support for right-to-left scripts](https://www.mapbox.com/mapbox-gl-js/example/mapbox-gl-rtl-text/)

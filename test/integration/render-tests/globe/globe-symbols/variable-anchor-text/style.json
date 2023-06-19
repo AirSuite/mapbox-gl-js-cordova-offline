@@ -11,7 +11,8 @@
     }
   },
   "center": [ 0, 0 ],
-  "zoom": 1.5,
+  "zoom": 1.0,
+  "fog": {},
   "sources": {
     "point": {
       "type": "geojson",

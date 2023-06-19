@@ -9,14 +9,16 @@ import offscreenCanvasSupported from '../util/offscreen_canvas_supported.js';
 import {OverscaledTileID} from './tile_id.js';
 import RasterTileSource from './raster_tile_source.js';
 // ensure DEMData is registered for worker transfer on main thread:
-import '../data/dem_data.js';
+import DEMData from '../data/dem_data.js';
 
 import type {Source} from './source.js';
 import type Dispatcher from '../util/dispatcher.js';
 import type Tile from './tile.js';
 import type {Callback} from '../types/callback.js';
+import type {TextureImage} from '../render/texture.js';
 import type {RasterDEMSourceSpecification} from '../style-spec/types.js';
 
+// $FlowFixMe[method-unbinding]
 class RasterDEMTileSource extends RasterTileSource implements Source {
     encoding: "mapbox" | "terrarium";
 
@@ -32,7 +34,8 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
         const url = this.map._requestManager.normalizeTileURL(tile.tileID.canonical.url(this.tiles, this.scheme), false, this.tileSize);
         tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), imageLoaded.bind(this));
 
-        function imageLoaded(err, img, cacheControl, expires) {
+        // $FlowFixMe[missing-this-annot]
+        function imageLoaded(err: ?Error, img: ?TextureImage, cacheControl: ?string, expires: ?string) {
             delete tile.request;
             if (tile.aborted) {
                 tile.state = 'unloaded';
@@ -52,6 +55,8 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                 if (!borderReady && !tile.neighboringTiles) {
                     tile.neighboringTiles = this._getNeighboringTiles(tile.tileID);
                 }
+
+                // $FlowFixMe[incompatible-call]
                 const rawImageData = transfer ? img : browser.getImageData(img, padding);
                 const params = {
                     uid: tile.uid,
@@ -69,7 +74,8 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
             }
         }
 
-        function done(err, dem) {
+        // $FlowFixMe[missing-this-annot]
+        function done(err: ?Error, dem: ?DEMData) {
             if (err) {
                 tile.state = 'errored';
                 callback(err);
@@ -116,6 +122,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
         return neighboringTiles;
     }
 
+    // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile) {
         if (tile.demTexture) this.map.painter.saveTileTexture(tile.demTexture);
         if (tile.fbo) {

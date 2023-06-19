@@ -11,14 +11,12 @@ import config from '../../../src/util/config.js';
 import webpSupported from '../../../src/util/webp_supported.js';
 
 test('ajax', (t) => {
-    t.beforeEach(callback => {
+    t.beforeEach(() => {
         window.useFakeXMLHttpRequest();
-        callback();
     });
 
-    t.afterEach(callback => {
+    t.afterEach(() => {
         window.restore();
-        callback();
     });
 
     t.test('getArrayBuffer, 404', (t) => {
@@ -84,7 +82,7 @@ test('ajax', (t) => {
         });
         getJSON({url:'api.mapbox.com'}, (error) => {
             t.equal(error.status, 401);
-            t.equal(error.message, "Unauthorized: you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens-and-token-scopes");
+            t.equal(error.message, "Unauthorized: you may have provided an invalid Mapbox access token. See https://docs.mapbox.com/api/overview/#access-tokens-and-token-scopes");
             t.end();
         });
         window.server.respond();

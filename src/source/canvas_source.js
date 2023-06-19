@@ -124,11 +124,13 @@ class CanvasSource extends ImageSource {
             return;
         }
 
+        // $FlowFixMe[missing-this-annot]
         this.play = function() {
             this._playing = true;
             this.map.triggerRepaint();
         };
 
+        // $FlowFixMe[missing-this-annot]
         this.pause = function() {
             if (this._playing) {
                 this.prepare();
@@ -162,6 +164,7 @@ class CanvasSource extends ImageSource {
         return this.canvas;
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.load();
@@ -170,6 +173,7 @@ class CanvasSource extends ImageSource {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     onRemove() {
         this.pause();
     }
@@ -181,14 +185,15 @@ class CanvasSource extends ImageSource {
      * @instance
      * @memberof CanvasSource
      * @param {Array<Array<number>>} coordinates Four geographical coordinates,
-     *   represented as arrays of longitude and latitude numbers, which define the corners of the canvas.
-     *   The coordinates start at the top left corner of the canvas and proceed in clockwise order.
-     *   They do not have to represent a rectangle.
+     *     represented as arrays of longitude and latitude numbers, which define the corners of the canvas.
+     *     The coordinates start at the top left corner of the canvas and proceed in clockwise order.
+     *     They do not have to represent a rectangle.
      * @returns {CanvasSource} Returns itself to allow for method chaining.
      */
 
     // setCoordinates inherited from ImageSource
 
+    // $FlowFixMe[method-unbinding]
     prepare() {
         let resize = false;
         if (this.canvas.width !== this.width) {

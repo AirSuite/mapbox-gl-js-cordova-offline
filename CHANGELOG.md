@@ -1,3 +1,217 @@
+## 2.15.0
+
+## Features ✨ and improvements 🏁
+
+* Improve performance of symbol layers with identical or no text. Eliminate stuttering when zooming on maps with many identical symbols. ([#12669](https://github.com/mapbox/mapbox-gl-js/pull/12669))
+* Improve performance of clustered sources: 20% faster loading & 40–60% less memory overhead. Improve performance of symbol collisions. ([#12682](https://github.com/mapbox/mapbox-gl-js/pull/12682))
+* Add `respectPrefersReducedMotion` map option ([#12694](https://github.com/mapbox/mapbox-gl-js/pull/12694))
+* Add the `isPointOnSurface` map method to determine if the given point is located on a visible map surface. ([#12695](https://github.com/mapbox/mapbox-gl-js/pull/12695))
+
+## Bug fixes 🐞
+
+* Fix inconsistent spacing in the Scale control ([#12644](https://github.com/mapbox/mapbox-gl-js/pull/12644)) (h/t [kathirgounder](https://github.com/kathirgounder))
+* Fix tiles preloading when a source is not yet loaded ([#12699](https://github.com/mapbox/mapbox-gl-js/pull/12699))
+
+## 2.14.1
+
+## Bug fixes 🐞
+
+* Fix a bug where certain bundling configurations involving Vite or ESBuild could produce a broken build. [#12658](https://github.com/mapbox/mapbox-gl-js/pull/12658)
+
+## 2.14.0
+
+### Features ✨ and improvements 🏁
+
+* Support `referrerPolicy` option for the `transformRequest` function when using fetch ([#12590](https://github.com/mapbox/mapbox-gl-js/pull/12590)) (h/t [robertcepa](https://github.com/robertcepa))
+
+## Bug fixes 🐞
+
+* Enable anisotropic filtering on tiles beyond 20 degrees pitch to prevent it from compromising image crispness on flat or low-tilted maps. ([#12577](https://github.com/mapbox/mapbox-gl-js/pull/12577))
+* Fix LngLatBounds.extend() with literal LngLat object. ([#12605](https://github.com/mapbox/mapbox-gl-js/pull/12605))
+* Add arrow characters to the map of verticalized character ([#12608](https://github.com/mapbox/mapbox-gl-js/pull/12608)) (h/t [kkokkojeong](https://github.com/kkokkojeong))
+* Disable panning inertia if `prefers-reduced-motion` is enabled ([#12631](https://github.com/mapbox/mapbox-gl-js/pull/12631))
+
+## 2.13.0
+
+### Features ✨ and improvements 🏁
+
+* Improve rendering performance of terrain slightly by reducing its GPU memory footprint. ([#12472](https://github.com/mapbox/mapbox-gl-js/pull/12472))
+* Add methods for changing a raster tile source dynamically (e.g. `setTiles`, `setUrl`). ([#12352](https://github.com/mapbox/mapbox-gl-js/pull/12352))
+
+### Bug fixes 🐞
+
+* Fix `line-border-color` when used with `line-trim-offset` ([#12461](https://github.com/mapbox/mapbox-gl-js/pull/12461))
+* Fix potential infinite loop when calling `fitBounds` with globe projection ([#12488](https://github.com/mapbox/mapbox-gl-js/pull/12488))
+* Fix `map.getBounds()` returning incorrect bounds with adaptive projections. ([#12503](https://github.com/mapbox/mapbox-gl-js/pull/12503))
+* Introduce skirts for terrain globe mode ([#12523](https://github.com/mapbox/mapbox-gl-js/pull/12523))
+* Fix blur on draped lines while zoom-in ([#12510](https://github.com/mapbox/mapbox-gl-js/pull/12510))
+* Fix map pan speed while pinching in ([#12543](https://github.com/mapbox/mapbox-gl-js/pull/12543))
+* Fix negative-width diacritics handling ([#12554](https://github.com/mapbox/mapbox-gl-js/pull/12554))
+* Fixes `undefined is not an object` in `coalesceChanges` ([#12497](https://github.com/mapbox/mapbox-gl-js/pull/12497)) (h/t [nick-romano](https://github.com/nick-romano))
+
+## 2.12.1
+
+### Bug fixes 🐞
+
+* Fix a rare bug where certain diacritical characters could break the rendering of a symbol layer. ([#12554](https://github.com/mapbox/mapbox-gl-js/pull/12554))
+
+## 2.12.0
+
+### Features ✨ and improvements 🏁
+
+* Improve performance of patterns and line dashes and improve their appearance when zooming. ([#12326](https://github.com/mapbox/mapbox-gl-js/pull/12326))
+* Improve performance of text and icon placement. ([#12351](https://github.com/mapbox/mapbox-gl-js/pull/12351))
+* Improve performance of loading terrain data ([#12397](https://github.com/mapbox/mapbox-gl-js/pull/12397))
+* Allow zooming towards terrain at a safe distance without pitching the camera ([#12354](https://github.com/mapbox/mapbox-gl-js/pull/12354))
+* Allow for pitch override in `cameraForBounds`, `fitBounds` and `fitScreenCoordinates` camera APIs. ([#12367](https://github.com/mapbox/mapbox-gl-js/pull/12367))
+
+### Bug fixes 🐞
+
+* Fix `getBounds` when used around the poles with a globe projection. ([#12315](https://github.com/mapbox/mapbox-gl-js/pull/12315))
+* Fix incorrect transition flag in `*-pattern` and `line-dasharray` properties ([#12372](https://github.com/mapbox/mapbox-gl-js/pull/12372))
+* Fix symbols filtering when using `center-to-distance` along with terrain. ([#12413](https://github.com/mapbox/mapbox-gl-js/pull/12413))
+* Fix fog rendering artifact on lower resolution terrain tiles ([#12423](https://github.com/mapbox/mapbox-gl-js/pull/12423))
+* Fix an issue where Geolocate control would throw an error if it's removed before determining geolocation support ([#12332](https://github.com/mapbox/mapbox-gl-js/pull/12332)) (h/t [tmcw](https://github.com/tmcw))
+
+## 2.11.1
+
+### Bug fixes 🐞
+
+* Fix support for line breaks in labels that follow line geometries ([#12377](https://github.com/mapbox/mapbox-gl-js/pull/12377))
+
+## 2.11.0
+
+### Features ✨ and improvements 🏁
+
+* Add support for `cameraForBounds` with globe projection ([#12138](https://github.com/mapbox/mapbox-gl-js/pull/12138))
+* Add support for `fitBounds` and `fitScreenCoordinates` with globe projection ([#12211](https://github.com/mapbox/mapbox-gl-js/pull/12211))
+* Improve support for `getBounds` with globe projection. ([#12286](https://github.com/mapbox/mapbox-gl-js/pull/12286))
+* Improve symbol placement performance with globe projection ([#12105](https://github.com/mapbox/mapbox-gl-js/pull/12105))
+* Add new marker styling option `occludedOpacity` allowing the user to set the opacity of a marker that's behind 3D terrain (h/t [jacadzaca](https://github.com/jacadzaca)) ([#12258](https://github.com/mapbox/mapbox-gl-js/pull/12258))
+* Cancel `ImageSource` image request when underlying resource is no longer used ([#12266](https://github.com/mapbox/mapbox-gl-js/pull/12266)) (h/t [maciejmatu](https://github.com/maciejmatu))
+* Add object literal support in `LngLatBounds.extend` ([#12270](https://github.com/mapbox/mapbox-gl-js/pull/12270)) (h/t [stampyzfanz](https://github.com/stampyzfanz))
+* Add live performance counters. Mapbox-gl-js v2.11.0 collects certain performance and feature usage counters so we can better benchmark the library and invest in its performance. The performance counters have been carefully designed so that user-level metrics and identifiers are not collected. ([#12343](https://github.com/mapbox/mapbox-gl-js/pull/12343))
+
+### Bug fixes 🐞
+
+* Fix elevation of pole geometry when exaggerated terrain is used ([#12133](https://github.com/mapbox/mapbox-gl-js/pull/12133))
+* Fix `GeolocateControl` sometimes not working in iOS16 WebView ([#12239](https://github.com/mapbox/mapbox-gl-js/pull/12239))
+* Fix map crashing on conformal projections at the south pole ([#12172](https://github.com/mapbox/mapbox-gl-js/pull/12172))
+* Fix pixel flickering between tiles on darker styles in globe view. ([#12145](https://github.com/mapbox/mapbox-gl-js/pull/12145))
+* Fix occasional missing tiles at bottom of screen during globe-mercator transition ([#12137](https://github.com/mapbox/mapbox-gl-js/pull/12137))
+* Fix incorrectly requiring three finger drags to change pitch with cooperative gestures while in fullscreen. ([#12165](https://github.com/mapbox/mapbox-gl-js/pull/12165))
+* Fix jumping when scrolling with mouse when crossing the antimeridian on projections that wrap. ([#12238](https://github.com/mapbox/mapbox-gl-js/pull/12238))
+* Fix terrain error being fired when using `map.getStyle()` with globe view ([#12163](https://github.com/mapbox/mapbox-gl-js/pull/12163))
+* Fix occasional artifacts appearing in the ocean with terrain or globe enabled. ([#12279](https://github.com/mapbox/mapbox-gl-js/pull/12279))
+* Fix invalid AABB calculation as part of the globe tile cover ([#12207](https://github.com/mapbox/mapbox-gl-js/pull/12207))
+* Fix incorrect shading of corners in fill extrusions when ambient occlusion is enabled. ([#12214](https://github.com/mapbox/mapbox-gl-js/pull/12214))
+* Fix potential performance regression on image source updates ([#12212](https://github.com/mapbox/mapbox-gl-js/pull/12212))
+* Fix memory leak when removing maps ([#12224](https://github.com/mapbox/mapbox-gl-js/pull/12224)) (h/t [joewoodhouse](https://github.com/joewoodhouse))
+* Fix updating marker position when toggling between world copied projections and projections without ([#12242](https://github.com/mapbox/mapbox-gl-js/pull/12242))
+* Fix missing icons in some styles. ([#12299](https://github.com/mapbox/mapbox-gl-js/pull/12299))
+* Fix overwriting all feature ids while setting promoteIds on other layers with an object. ([#12322](https://github.com/mapbox/mapbox-gl-js/pull/12322)) (h/t [yongjun21](https://github.com/yongjun21))
+* Fix cursor returning to original state after a popup with `trackPointer` is removed ([#12230](https://github.com/mapbox/mapbox-gl-js/pull/12230)) (h/t [camouflagedName](https://github.com/camouflagedName))
+
+## 2.10.0
+
+### Features ✨ and improvements 🏁
+
+* Add new marker styling option `rotationAlignment: 'horizon'` allowing marker rotation to match the curvature of the horizon in globe view. ([#11894](https://github.com/mapbox/mapbox-gl-js/pull/11894))
+* Improve panning precision on Globe View and relax constraints on lower zoom levels. ([#12114](https://github.com/mapbox/mapbox-gl-js/pull/12114))
+* Add unit option to number-format expression. ([#11839](https://github.com/mapbox/mapbox-gl-js/pull/11839)) (h/t [varna](https://github.com/varna))
+* Add screen reader alert for cooperative gestures warning message. ([#12058](https://github.com/mapbox/mapbox-gl-js/pull/12058))
+* Improve rendering performance on globe view. ([#12050](https://github.com/mapbox/mapbox-gl-js/pull/12050))
+* Improve tile loading performance on low zoom levels. ([#12061](https://github.com/mapbox/mapbox-gl-js/pull/12061))
+* Improve globe-mercator transition and map load performance with globe projection. ([#12039](https://github.com/mapbox/mapbox-gl-js/pull/12039))
+
+
+### Bug fixes 🐞
+
+* Fix a bug where `id` expression didn't correctly handle a value of 0. ([#12000](https://github.com/mapbox/mapbox-gl-js/pull/12000))
+* Fix precision errors in depth pack/unpack. ([#12005](https://github.com/mapbox/mapbox-gl-js/pull/12005))
+* Fix `cooperativeGestures` preventing panning on mobile while in fullscreen. ([#12058](https://github.com/mapbox/mapbox-gl-js/pull/12058))
+* Fix misplaced raster tiles after toggling `setStyle` with a globe projection. ([#12049](https://github.com/mapbox/mapbox-gl-js/pull/12049))
+* Fix exception on creating map in an iframe with sandbox attribute. ([#12101](https://github.com/mapbox/mapbox-gl-js/pull/12101))
+* Fix "improve map" link in the attribution to include location even if map hash is disabled. ([#12122](https://github.com/mapbox/mapbox-gl-js/pull/12122))
+* Fix Chrome console warnings about ignored event cancel on touch interactions. ([#12121](https://github.com/mapbox/mapbox-gl-js/pull/12121)) (h/t [jschaf](https://github.com/jschaf))
+
+## 2.9.2
+
+### Bug fixes 🐞
+
+* Add a workaround in `ScaleControl` to support localization in browsers without `NumberFormat` support. ([#12068](https://github.com/mapbox/mapbox-gl-js/pull/12068))
+* Fix `GeolocateControl` not working in Safari. ([#12080](https://github.com/mapbox/mapbox-gl-js/pull/12080))
+
+## 2.9.1
+
+### Bug fixes 🐞
+
+* Fix missing lines on some Windows devices. ([#12017](https://github.com/mapbox/mapbox-gl-js/pull/12017))
+
+## 2.9.0
+
+### Features ✨
+
+* Add `globe` projection. This new projection displays the map as a 3d globe and can be enabled by either passing `projection: globe` to the map constructor or by calling `map.setProjection('globe')`. All layers are supported by globe except for Custom Layers and Sky.
+* Extend atmospheric `fog` with three new style specification properties: `high-color`, `space-color` and `star-intensity` to allow the design of atmosphere around the globe and night skies. ([#11590](https://github.com/mapbox/mapbox-gl-js/pull/11590))
+* Add a new line layer paint property in the style specification: `line-trim-offset` that can be used to create a custom fade out with improved update performance over `line-gradient`. ([#11570](https://github.com/mapbox/mapbox-gl-js/pull/11570))
+* Add an option for providing a geolocation adapter to `GeolocateControl`. ([#10400](https://github.com/mapbox/mapbox-gl-js/pull/10400)) (h/t [behnammodi](https://github.com/behnammodi))
+* Add `Map.Title` property to locale options to localise the map `aria-label`. ([#11549](https://github.com/mapbox/mapbox-gl-js/pull/11549)) (h/t [andrewharvey](https://github.com/andrewharvey))
+* Allow duplicated coordinates in tile request URLs. ([#11441](https://github.com/mapbox/mapbox-gl-js/pull/11441)) (h/t [ozero](https://github.com/ozero))
+
+### Bug fixes 🐞
+
+* Fix an issue which causes line layers to occasionally flicker. ([#11848](https://github.com/mapbox/mapbox-gl-js/pull/11848))
+* Fix markers in fog sometimes becoming more visible when behind terrain. ([#11658](https://github.com/mapbox/mapbox-gl-js/pull/11658))
+* Fix an issue where setting terrain exageration to 0 could prevent the zoom to be resolved. ([#11830](https://github.com/mapbox/mapbox-gl-js/pull/11830))
+* Copy stylesheet to allow toggling different styles using setStyle without overwriting some of the properties. ([#11942](https://github.com/mapbox/mapbox-gl-js/pull/11942))
+
+## 2.8.2
+
+### Bug fixes 🐞
+
+* Fix an issue where the special bundle for CSP-restricted environments was not compatible with further minification in some bundling setups. ([#11790](https://github.com/mapbox/mapbox-gl-js/pull/11790))
+
+## 2.8.1
+
+### Bug fixes 🐞
+
+* Fix the special bundle for CSP-restricted environments that broke in the 2.8.0 release. ([#11739](https://github.com/mapbox/mapbox-gl-js/pull/11739))
+
+## 2.8.0
+
+### Performance improvements 🏁
+
+* Improve memory usage by freeing memory more eagerly after loading tiles. ([#11434](https://github.com/mapbox/mapbox-gl-js/pull/11434))
+* Improve memory usage by reducing repeated line labels on overscaled tiles. ([#11414](https://github.com/mapbox/mapbox-gl-js/pull/11414))
+* Improve performance when placing many symbols on terrain. ([#11466](https://github.com/mapbox/mapbox-gl-js/pull/11466))
+
+### Bug fixes 🐞
+
+* Fix `map.fitBounds()`, `map.fitScreenCoordinates()`, and `map.cameraForBounds()` incorrectly matching bounds with non-zero bearing. ([#11568](https://github.com/mapbox/mapbox-gl-js/pull/11568)) (h/t [TannerPerrien](https://github.com/TannerPerrien))
+* Improve control button appearance by applying `border-radius` more consistently. ([#11423](https://github.com/mapbox/mapbox-gl-js/pull/11423)) (h/t [nagix](https://github.com/nagix))
+* Fix `ScaleControl` displaying incorrect units with some projections.([#11657](https://github.com/mapbox/mapbox-gl-js/pull/11657))
+* Fix performance regression when animating image sources. ([#11564](https://github.com/mapbox/mapbox-gl-js/pull/11564))
+* Fix `MapDataEvent.isSourceLoaded()` to check if specific source has loaded. ([#11393](https://github.com/mapbox/mapbox-gl-js/pull/11393))
+* Fix map not wrapping after moving the map with no inertia. ([#11448](https://github.com/mapbox/mapbox-gl-js/pull/11448))
+* Fix popup not removing event listeners when `closeOnClick:true`. ([#11540](https://github.com/mapbox/mapbox-gl-js/pull/11540))
+* Fix camera occasionally intersecting terrain when DEM data loads while zooming. ([#11461](https://github.com/mapbox/mapbox-gl-js/pull/11461), [#11578](https://github.com/mapbox/mapbox-gl-js/pull/11578))
+* Increase clarity of line layers with the terrain on high DPI devices. ([#11531](https://github.com/mapbox/mapbox-gl-js/pull/11531))
+* Fix canvas size if more than one parent container has a transform CSS property. ([#11493](https://github.com/mapbox/mapbox-gl-js/pull/11493))
+* Fix error on calling `map.removeImage()` on animated image. ([#11580](https://github.com/mapbox/mapbox-gl-js/pull/11580))
+* Fix occasional issue with `fill-extrusion` layers not rendering on tile borders when used with terrain. ([#11530](https://github.com/mapbox/mapbox-gl-js/pull/11530))
+
+### Workflow 🛠️
+
+* Upgrade Flow from `v0.108.0` to `v0.142.0` and enable type-first mode, greatly improving performance of type-checking. ([#11426](https://github.com/mapbox/mapbox-gl-js/issues/11426))
+
+## 2.7.1
+
+### 🐞 Bug fixes
+
+* Work around a [Safari rendering bug](https://bugs.webkit.org/show_bug.cgi?id=237918#c3) by disabling WebGL context antialiasing for Safari 15.4 and 15.5. ([#11615](https://github.com/mapbox/mapbox-gl-js/pull/11615))
+* Fix disabling cooperative gesture handling when map is fullscreen in Safari. ([#11619](https://github.com/mapbox/mapbox-gl-js/pull/11619))
+
 ## 2.7.0
 
 ### Features ✨ and improvements 🏁

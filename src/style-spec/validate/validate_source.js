@@ -1,3 +1,4 @@
+// @flow
 
 import ValidationError from '../error/validation_error.js';
 import {unbundle} from '../util/unbundle_jsonlint.js';
@@ -7,11 +8,14 @@ import validateExpression from './validate_expression.js';
 import validateString from './validate_string.js';
 import getType from '../util/get_type.js';
 
+import type {StyleReference} from '../reference/latest.js';
+import type {ValidationOptions} from './validate.js';
+
 const objectElementValidators = {
     promoteId: validatePromoteId
 };
 
-export default function validateSource(options) {
+export default function validateSource(options: ValidationOptions): Array<ValidationError> {
     const value = options.value;
     const key = options.key;
     const styleSpec = options.styleSpec;
@@ -91,14 +95,24 @@ export default function validateSource(options) {
         return validateEnum({
             key: `${key}.type`,
             value: value.type,
-            valueSpec: {values: ['vector', 'raster', 'raster-dem', 'geojson', 'video', 'image']},
+            valueSpec: {values: getSourceTypeValues(styleSpec)},
             style,
             styleSpec
         });
     }
 }
 
-function validatePromoteId({key, value}) {
+function getSourceTypeValues(styleSpec: StyleReference) {
+    return styleSpec.source.reduce((memo, source) => {
+        const sourceType = styleSpec[source];
+        if (sourceType.type.type === 'enum') {
+            memo = memo.concat(Object.keys(sourceType.type.values));
+        }
+        return memo;
+    }, []);
+}
+
+function validatePromoteId({key, value}: $Shape<ValidationOptions>) {
     if (getType(value) === 'string') {
         return validateString({key, value});
     } else {

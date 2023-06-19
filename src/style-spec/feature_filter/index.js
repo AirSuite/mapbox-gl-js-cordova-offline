@@ -15,7 +15,7 @@ export type FeatureFilter = {filter: FilterExpression, dynamicFilter?: FilterExp
 export default createFilter;
 export {isExpressionFilter, isDynamicFilter, extractStaticFilter};
 
-function isExpressionFilter(filter: any) {
+function isExpressionFilter(filter: any): boolean {
     if (filter === true || filter === false) {
         return true;
     }
@@ -73,6 +73,7 @@ function createFilter(filter: any, layerType?: string = 'fill'): FeatureFilter {
     }
 
     if (!isExpressionFilter(filter)) {
+        // $FlowFixMe[incompatible-call]
         filter = convertFilter(filter);
     }
     const filterExp = ((filter: any): string[] | string | boolean);
@@ -253,11 +254,11 @@ function collapsedExpression(expression: any): any {
 }
 
 // Comparison function to sort numbers and strings
-function compare(a, b) {
+function compare(a: number, b: number) {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function geometryNeeded(filter) {
+function geometryNeeded(filter: Array<any> | boolean) {
     if (!Array.isArray(filter)) return false;
     if (filter[0] === 'within') return true;
     for (let index = 1; index < filter.length; index++) {

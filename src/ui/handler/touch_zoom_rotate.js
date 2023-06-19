@@ -4,6 +4,7 @@ import Point from '@mapbox/point-geometry';
 import * as DOM from '../../util/dom.js';
 import type Map from '../map.js';
 import type {HandlerResult} from '../handler_manager.js';
+import {isFullscreen} from '../../util/util.js';
 
 class TwoTouchHandler {
 
@@ -24,7 +25,7 @@ class TwoTouchHandler {
     }
 
     _start(points: [Point, Point]) {} //eslint-disable-line
-    _move(points: [Point, Point], pinchAround: Point, e: TouchEvent) { return {}; } //eslint-disable-line
+    _move(points: [Point, Point], pinchAround: ?Point, e: TouchEvent): ?HandlerResult { return {}; } //eslint-disable-line
 
     touchstart(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) {
         //console.log(e.target, e.targetTouches.length ? e.targetTouches[0].target : null);
@@ -40,7 +41,7 @@ class TwoTouchHandler {
         this._start([points[0], points[1]]);
     }
 
-    touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) {
+    touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>): ?HandlerResult {
         const firstTouches = this._firstTwoTouches;
         if (!firstTouches) return;
 
@@ -103,7 +104,7 @@ function getTouchById(mapTouches: Array<Touch>, points: Array<Point>, identifier
 
 const ZOOM_THRESHOLD = 0.1;
 
-function getZoomDelta(distance, lastDistance) {
+function getZoomDelta(distance: number, lastDistance: number) {
     return Math.log(distance / lastDistance) / Math.LN2;
 }
 
@@ -122,7 +123,7 @@ export class TouchZoomHandler extends TwoTouchHandler {
         this._startDistance = this._distance = points[0].dist(points[1]);
     }
 
-    _move(points: [Point, Point], pinchAround: Point) {
+    _move(points: [Point, Point], pinchAround: ?Point): ?HandlerResult {
         const lastDistance = this._distance;
         this._distance = points[0].dist(points[1]);
         if (!this._active && Math.abs(getZoomDelta(this._distance, this._startDistance)) < ZOOM_THRESHOLD) return;
@@ -138,7 +139,7 @@ export class TouchZoomHandler extends TwoTouchHandler {
 
 const ROTATION_THRESHOLD = 25; // pixels along circumference of touch circle
 
-function getBearingDelta(a, b) {
+function getBearingDelta(a: Point, b: Point) {
     return a.angleWith(b) * 180 / Math.PI;
 }
 
@@ -157,14 +158,15 @@ export class TouchRotateHandler extends TwoTouchHandler {
         this._minDiameter = points[0].dist(points[1]);
     }
 
-    _move(points: [Point, Point], pinchAround: Point) {
+    _move(points: [Point, Point], pinchAround: ?Point): ?HandlerResult {
         const lastVector = this._vector;
         this._vector = points[0].sub(points[1]);
 
-        if (!this._active && this._isBelowThreshold(this._vector)) return;
+        if (!lastVector || (!this._active && this._isBelowThreshold(this._vector))) return;
         this._active = true;
 
         return {
+            // $FlowFixMe[incompatible-call] - Flow doesn't infer that this._vectoris not null
             bearingDelta: getBearingDelta(this._vector, lastVector),
             pinchAround
         };
@@ -185,14 +187,17 @@ export class TouchRotateHandler extends TwoTouchHandler {
         const circumference = Math.PI * this._minDiameter;
         const threshold = ROTATION_THRESHOLD / circumference * 360;
 
-        const bearingDeltaSinceStart = getBearingDelta(vector, this._startVector);
+        const startVector = this._startVector;
+        if (!startVector) return false;
+
+        const bearingDeltaSinceStart = getBearingDelta(vector, startVector);
         return Math.abs(bearingDeltaSinceStart) < threshold;
     }
 }
 
 /* PITCH */
 
-function isVertical(vector) {
+function isVertical(vector: Point) {
     return Math.abs(vector.y) > Math.abs(vector.x);
 }
 
@@ -231,13 +236,13 @@ export class TouchPitchHandler extends TwoTouchHandler {
 
     }
 
-    _move(points: [Point, Point], center: Point, e: TouchEvent): ?HandlerResult {
+    _move(points: [Point, Point], center: ?Point, e: TouchEvent): ?HandlerResult {
         const lastPoints = this._lastPoints;
         if (!lastPoints) return;
         const vectorA = points[0].sub(lastPoints[0]);
         const vectorB = points[1].sub(lastPoints[1]);
 
-        if (this._map._cooperativeGestures && e.touches.length < 3) return;
+        if (this._map._cooperativeGestures && !isFullscreen() && e.touches.length < 3) return;
 
         this._valid = this.gestureBeginsVertically(vectorA, vectorB, e.timeStamp);
 

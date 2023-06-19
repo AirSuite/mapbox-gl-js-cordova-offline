@@ -1,3 +1,4 @@
+// @flow
 
 import validate from './validate.js';
 import ValidationError from '../error/validation_error.js';
@@ -6,7 +7,14 @@ import {isFunction} from '../function/index.js';
 import {unbundle, deepUnbundle} from '../util/unbundle_jsonlint.js';
 import {supportsPropertyExpression} from '../util/properties.js';
 
-export default function validateProperty(options, propertyType) {
+import type {ValidationOptions} from './validate.js';
+
+export type PropertyValidationOptions = ValidationOptions & {
+    objectKey: string;
+    layerType: string;
+}
+
+export default function validateProperty(options: PropertyValidationOptions, propertyType: string): Array<ValidationError> {
     const key = options.key;
     const style = options.style;
     const styleSpec = options.styleSpec;
@@ -32,12 +40,13 @@ export default function validateProperty(options, propertyType) {
         return [new ValidationError(key, value, `unknown property "${propertyKey}"`)];
     }
 
-    let tokenMatch;
+    let tokenMatch: ?RegExp$matchResult;
     if (getType(value) === 'string' && supportsPropertyExpression(valueSpec) && !valueSpec.tokens && (tokenMatch = /^{([^}]+)}$/.exec(value))) {
+        const example = `\`{ "type": "identity", "property": ${tokenMatch ? JSON.stringify(tokenMatch[1]) : '"_"'} }\``;
         return [new ValidationError(
             key, value,
             `"${propertyKey}" does not support interpolation syntax\n` +
-                `Use an identity property function instead: \`{ "type": "identity", "property": ${JSON.stringify(tokenMatch[1])} }\`.`)];
+                `Use an identity property function instead: ${example}.`)];
     }
 
     const errors = [];

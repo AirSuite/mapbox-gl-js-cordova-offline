@@ -70,11 +70,11 @@ class GeoJSONSource extends Evented implements Source {
     minzoom: number;
     maxzoom: number;
     tileSize: number;
-    attribution: string;
+    attribution: string | void;
     promoteId: ?PromoteIdSpecification;
 
-    isTileClipped: boolean;
-    reparseOverscaled: boolean;
+    isTileClipped: boolean | void;
+    reparseOverscaled: boolean | void;
     _data: GeoJSON | string;
     _options: GeoJSONSourceSpecification;
     workerOptions: GeoJSONWorkerOptions;
@@ -148,6 +148,7 @@ class GeoJSONSource extends Evented implements Source {
         }, options.workerOptions);
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.setData(this._data);
@@ -195,6 +196,7 @@ class GeoJSONSource extends Evented implements Source {
      * @example
      * // Assuming the map has a layer named 'clusters' and a source 'earthquakes'
      * // The following creates a camera animation on cluster feature click
+     * // the clicked layer should be filtered to only include clusters, e.g. `filter: ['has', 'point_count']`
      * map.on('click', 'clusters', (e) => {
      *     const features = map.queryRenderedFeatures(e.point, {
      *         layers: ['clusters']
@@ -229,6 +231,7 @@ class GeoJSONSource extends Evented implements Source {
      * @returns {GeoJSONSource} Returns itself to allow for method chaining.
      * @example
      * // Retrieve cluster children on click
+     * // the clicked layer should be filtered to only include clusters, e.g. `filter: ['has', 'point_count']`
      * map.on('click', 'clusters', (e) => {
      *     const features = map.queryRenderedFeatures(e.point, {
      *         layers: ['clusters']
@@ -242,7 +245,6 @@ class GeoJSONSource extends Evented implements Source {
      *         }
      *     });
      * });
-     *
      */
     getClusterChildren(clusterId: number, callback: Callback<Array<GeoJSONFeature>>): this {
         this.actor.send('geojson.getClusterChildren', {clusterId, source: this.id}, callback);
@@ -259,6 +261,7 @@ class GeoJSONSource extends Evented implements Source {
      * @returns {GeoJSONSource} Returns itself to allow for method chaining.
      * @example
      * // Retrieve cluster leaves on click
+     * // the clicked layer should be filtered to only include clusters, e.g. `filter: ['has', 'point_count']`
      * map.on('click', 'clusters', (e) => {
      *     const features = map.queryRenderedFeatures(e.point, {
      *         layers: ['clusters']
@@ -375,6 +378,7 @@ class GeoJSONSource extends Evented implements Source {
         }, undefined, message === 'loadTile');
     }
 
+    // $FlowFixMe[method-unbinding]
     abortTile(tile: Tile) {
         if (tile.request) {
             tile.request.cancel();
@@ -383,11 +387,13 @@ class GeoJSONSource extends Evented implements Source {
         tile.aborted = true;
     }
 
+    // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile) {
         tile.unloadVectorData();
         this.actor.send('removeTile', {uid: tile.uid, type: this.type, source: this.id});
     }
 
+    // $FlowFixMe[method-unbinding]
     onRemove() {
         if (this._pendingLoad) {
             this._pendingLoad.cancel();

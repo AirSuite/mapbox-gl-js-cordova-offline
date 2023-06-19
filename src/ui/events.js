@@ -409,11 +409,11 @@ export type MapBoxZoomEvent = {
  * @property {Object} [source] The [style spec representation of the source](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/) if the event has a `dataType` of `source`.
  * @property {string} [sourceId] The `id` of the [`source`](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/) that triggered the event, if the event has a `dataType` of `source`. Same as the `id` of the object in the `source` property.
  * @property {string} [sourceDataType] Included if the event has a `dataType` of `source` and the event signals
- * that internal data has been received or changed. Possible values are `metadata`, `content` and `visibility`.
+ *     that internal data has been received or changed. Possible values are `metadata`, `content` and `visibility`.
  * @property {Object} [tile] The tile being loaded or changed, if the event has a `dataType` of `source` and
- * the event is related to loading of a tile.
+ *     the event is related to loading of a tile.
  * @property {Coordinate} [coord] The coordinate of the tile if the event has a `dataType` of `source` and
- * the event is related to loading of a tile.
+ *     the event is related to loading of a tile.
  * @example
  * // Example of a MapDataEvent of type "sourcedata"
  * map.on('sourcedata', (e) => {
@@ -1485,10 +1485,21 @@ export type MapEvent =
     | 'styleimagemissing'
 
     /**
+     * Fired immediately after all style resources have been downloaded
+     * and the first visually complete rendering of the base style has occurred.
+     *
      * @event style.load
      * @memberof Map
      * @instance
-     * @private
+     * @example
+     * // Initialize the map
+     * const map = new mapboxgl.Map({});
+     * // Set an event listener that fires
+     * // when the map has finished loading.
+     * map.on('style.load', () => {
+     *     console.log('A style load event occurred.');
+     * });
+     * @see [Example: Persist layers when switching base style](https://www.mapbox.com/mapbox-gl-js/example/style-switch)
      */
     | 'style.load'
 
@@ -1510,4 +1521,31 @@ export type MapEvent =
      * });
      */
     | 'speedindexcompleted'
+
+    /**
+     * Fired after RTL text plugin state changes.
+     *
+     * @event pluginStateChange
+     * @instance
+     * @private
+     */
+    | 'pluginStateChange'
+
+    /**
+     * Fired in worker.js after sprite loaded.
+     *
+     * @event pluginStateChange
+     * @instance
+     * @private
+     */
+    | 'isSpriteLoaded'
+
+    /**
+     * Fired in style.js after layer order changed.
+     *
+     * @event pluginStateChange
+     * @instance
+     * @private
+     */
+    | 'neworder'
 ;

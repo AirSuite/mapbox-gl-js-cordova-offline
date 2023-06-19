@@ -8,6 +8,7 @@ import type Map from '../ui/map.js';
 import type Tile from './tile.js';
 import type {OverscaledTileID} from './tile_id.js';
 import type {Callback} from '../types/callback.js';
+import type {MapEvent} from '../ui/events.js';
 import {CanonicalTileID} from './tile_id.js';
 
 /**
@@ -49,12 +50,17 @@ export interface Source {
     tileID?: CanonicalTileID;
     reparseOverscaled?: boolean,
     vectorLayerIds?: Array<string>,
+    minTileCacheSize?: ?number;
+    maxTileCacheSize?: ?number;
+    language?: ?string;
+    worldview?: ?string;
 
     hasTransition(): boolean;
     loaded(): boolean;
 
     fire(event: Event): mixed;
-    on(type: *, listener: (Object) => any): Evented;
+    on(type: MapEvent, listener: (Object) => any): Evented;
+    off(type: MapEvent, listener: (Object) => any): Evented;
     setEventedParent(parent: ?Evented, data?: Object | () => Object): Evented;
 
     +onAdd?: (map: Map) => void;
@@ -64,6 +70,7 @@ export interface Source {
     +hasTile?: (tileID: OverscaledTileID) => boolean;
     +abortTile?: (tile: Tile, callback: Callback<void>) => void;
     +unloadTile?: (tile: Tile, callback: Callback<void>) => void;
+    +reload?: () => void;
 
     /**
      * @returns A plain (stringifiable) JS object representing the current state of the source.
@@ -96,17 +103,19 @@ import geojson from '../source/geojson_source.js';
 import video from '../source/video_source.js';
 import image from '../source/image_source.js';
 import canvas from '../source/canvas_source.js';
+import custom from '../source/custom_source.js';
 
 import type {SourceSpecification} from '../style-spec/types.js';
 
-const sourceTypes = {
+const sourceTypes: {[string]: Class<Source>} = {
     vector,
     raster,
     'raster-dem': rasterDem,
     geojson,
     video,
     image,
-    canvas
+    canvas,
+    custom
 };
 
 /*
@@ -120,6 +129,7 @@ const sourceTypes = {
  * @returns {Source}
  */
 export const create = function(id: string, specification: SourceSpecification, dispatcher: Dispatcher, eventedParent: Evented): Source {
+    // $FlowFixMe[prop-missing]
     const source = new sourceTypes[specification.type](id, (specification: any), dispatcher, eventedParent);
 
     if (source.id !== id) {

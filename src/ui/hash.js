@@ -12,7 +12,7 @@ import type Map from './map.js';
  *
  * @returns {Hash} `this`
  */
-class Hash {
+export default class Hash {
     _map: ?Map;
     _updateHash: () => ?TimeoutID;
     _hashName: ?string;
@@ -26,6 +26,7 @@ class Hash {
         ], this);
 
         // Mobile Safari doesn't allow updating the hash more than 100 times per 30 seconds.
+        // $FlowFixMe[method-unbinding]
         this._updateHash = throttle(this._updateHashUnthrottled.bind(this), 30 * 1000 / 100);
     }
 
@@ -37,6 +38,7 @@ class Hash {
      */
     addTo(map: Map): this {
         this._map = map;
+        // $FlowFixMe[method-unbinding]
         window.addEventListener('hashchange', this._onHashChange, false);
         map.on('moveend', this._updateHash);
         return this;
@@ -51,6 +53,7 @@ class Hash {
         if (!this._map) return this;
 
         this._map.off('moveend', this._updateHash);
+        // $FlowFixMe[method-unbinding]
         window.removeEventListener('hashchange', this._onHashChange, false);
         clearTimeout(this._updateHash());
 
@@ -58,29 +61,11 @@ class Hash {
         return this;
     }
 
-    getHashString(mapFeedback?: boolean): string {
+    getHashString(): string {
         const map = this._map;
         if (!map) return '';
-        const center = map.getCenter(),
-            zoom = Math.round(map.getZoom() * 100) / 100,
-            // derived from equation: 512px * 2^z / 360 / 10^d < 0.5px
-            precision = Math.ceil((zoom * Math.LN2 + Math.log(512 / 360 / 0.5)) / Math.LN10),
-            m = Math.pow(10, precision),
-            lng = Math.round(center.lng * m) / m,
-            lat = Math.round(center.lat * m) / m,
-            bearing = map.getBearing(),
-            pitch = map.getPitch();
-        let hash = '';
-        if (mapFeedback) {
-            // new map feedback site has some constraints that don't allow
-            // us to use the same hash format as we do for the Map hash option.
-            hash += `/${lng}/${lat}/${zoom}`;
-        } else {
-            hash += `${zoom}/${lat}/${lng}`;
-        }
 
-        if (bearing || pitch) hash += (`/${Math.round(bearing * 10) / 10}`);
-        if (pitch) hash += (`/${Math.round(pitch)}`);
+        const hash = getHashString(map);
 
         if (this._hashName) {
             const hashName = this._hashName;
@@ -142,7 +127,25 @@ class Hash {
         const location = window.location.href.replace(/(#.+)?$/, this.getHashString());
         window.history.replaceState(window.history.state, null, location);
     }
-
 }
 
-export default Hash;
+export function getHashString(map: Map, mapFeedback?: boolean): string {
+    const center = map.getCenter(),
+        zoom = Math.round(map.getZoom() * 100) / 100,
+        // derived from equation: 512px * 2^z / 360 / 10^d < 0.5px
+        precision = Math.ceil((zoom * Math.LN2 + Math.log(512 / 360 / 0.5)) / Math.LN10),
+        m = Math.pow(10, precision),
+        lng = Math.round(center.lng * m) / m,
+        lat = Math.round(center.lat * m) / m,
+        bearing = map.getBearing(),
+        pitch = map.getPitch();
+
+    // new map feedback site has some constraints that don't allow
+    // us to use the same hash format as we do for the Map hash option.
+    let hash = mapFeedback ? `/${lng}/${lat}/${zoom}` : `${zoom}/${lat}/${lng}`;
+
+    if (bearing || pitch) hash += (`/${Math.round(bearing * 10) / 10}`);
+    if (pitch) hash += (`/${Math.round(pitch)}`);
+
+    return hash;
+}

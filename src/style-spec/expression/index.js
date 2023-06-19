@@ -29,25 +29,25 @@ import type Point from '@mapbox/point-geometry';
 import type {CanonicalTileID} from '../../source/tile_id.js';
 import type {FeatureDistanceData} from '../feature_filter/index.js';
 
-export type Feature = {
-    +type: 1 | 2 | 3 | 'Unknown' | 'Point' | 'MultiPoint' | 'LineString' | 'MultiLineString' | 'Polygon' | 'MultiPolygon',
-    +id?: any,
-    +properties: {[_: string]: any},
-    +patterns?: {[_: string]: {"min": string, "mid": string, "max": string}},
-    +geometry?: Array<Array<Point>>
-};
+export interface Feature {
+    +type: 1 | 2 | 3 | 'Unknown' | 'Point' | 'LineString' | 'Polygon';
+    +id?: number | null;
+    +properties: {[_: string]: any};
+    +patterns?: {[_: string]: string};
+    +geometry?: Array<Array<Point>>;
+}
 
 export type FeatureState = {[_: string]: any};
 
-export type GlobalProperties = $ReadOnly<{
-    zoom: number,
-    pitch?: number,
-    heatmapDensity?: number,
-    lineProgress?: number,
-    skyRadialProgress?: number,
-    isSupportedScript?: (_: string) => boolean,
-    accumulated?: Value
-}>;
+export interface GlobalProperties {
+    +zoom: number;
+    +pitch?: number;
+    +heatmapDensity?: number;
+    +lineProgress?: number;
+    +skyRadialProgress?: number;
+    +isSupportedScript?: (_: string) => boolean;
+    +accumulated?: Value;
+}
 
 export class StyleExpression {
     expression: Expression;
@@ -69,7 +69,7 @@ export class StyleExpression {
         this._evaluator.globals = globals;
         this._evaluator.feature = feature;
         this._evaluator.featureState = featureState;
-        this._evaluator.canonical = canonical;
+        this._evaluator.canonical = canonical || null;
         this._evaluator.availableImages = availableImages || null;
         this._evaluator.formattedSection = formattedSection;
         this._evaluator.featureTileCoord = featureTileCoord || null;
@@ -82,7 +82,7 @@ export class StyleExpression {
         this._evaluator.globals = globals;
         this._evaluator.feature = feature || null;
         this._evaluator.featureState = featureState || null;
-        this._evaluator.canonical = canonical;
+        this._evaluator.canonical = canonical || null;
         this._evaluator.availableImages = availableImages || null;
         this._evaluator.formattedSection = formattedSection || null;
         this._evaluator.featureTileCoord = featureTileCoord || null;
@@ -110,7 +110,7 @@ export class StyleExpression {
     }
 }
 
-export function isExpression(expression: mixed) {
+export function isExpression(expression: mixed): boolean {
     return Array.isArray(expression) && expression.length > 0 &&
         typeof expression[0] === 'string' && expression[0] in definitions;
 }
@@ -192,18 +192,18 @@ export class ZoomDependentExpression<Kind: EvaluationKind> {
     }
 }
 
-export type ConstantExpression = {
+export type ConstantExpression = interface {
     kind: 'constant',
     +evaluate: (globals: GlobalProperties, feature?: Feature, featureState?: FeatureState, canonical?: CanonicalTileID, availableImages?: Array<string>) => any,
 }
 
-export type SourceExpression = {
+export type SourceExpression = interface {
     kind: 'source',
     isStateDependent: boolean,
     +evaluate: (globals: GlobalProperties, feature?: Feature, featureState?: FeatureState, canonical?: CanonicalTileID, availableImages?: Array<string>, formattedSection?: FormattedSection) => any,
 };
 
-export type CameraExpression = {
+export type CameraExpression = interface {
     kind: 'camera',
     +evaluate: (globals: GlobalProperties, feature?: Feature, featureState?: FeatureState, canonical?: CanonicalTileID, availableImages?: Array<string>) => any,
     +interpolationFactor: (input: number, lower: number, upper: number) => number,
@@ -211,14 +211,14 @@ export type CameraExpression = {
     interpolationType: ?InterpolationType
 };
 
-export type CompositeExpression = {
-    kind: 'composite',
-    isStateDependent: boolean,
-    +evaluate: (globals: GlobalProperties, feature?: Feature, featureState?: FeatureState, canonical?: CanonicalTileID, availableImages?: Array<string>, formattedSection?: FormattedSection) => any,
-    +interpolationFactor: (input: number, lower: number, upper: number) => number,
-    zoomStops: Array<number>,
-    interpolationType: ?InterpolationType
-};
+export interface CompositeExpression {
+    kind: 'composite';
+    isStateDependent: boolean;
+    +evaluate: (globals: GlobalProperties, feature?: Feature, featureState?: FeatureState, canonical?: CanonicalTileID, availableImages?: Array<string>, formattedSection?: FormattedSection) => any;
+    +interpolationFactor: (input: number, lower: number, upper: number) => number;
+    zoomStops: Array<number>;
+    interpolationType: ?InterpolationType;
+}
 
 export type StylePropertyExpression =
     | ConstantExpression
@@ -255,14 +255,18 @@ export function createPropertyExpression(expression: mixed, propertySpec: StyleP
 
     if (!zoomCurve) {
         return success(isFeatureConstant ?
+            // $FlowFixMe[method-unbinding]
             (new ZoomConstantExpression('constant', expression.value): ConstantExpression) :
+            // $FlowFixMe[method-unbinding]
             (new ZoomConstantExpression('source', expression.value): SourceExpression));
     }
 
     const interpolationType = zoomCurve instanceof Interpolate ? zoomCurve.interpolation : undefined;
 
     return success(isFeatureConstant ?
+        // $FlowFixMe[method-unbinding]
         (new ZoomDependentExpression('camera', expression.value, zoomCurve.labels, interpolationType): CameraExpression) :
+        // $FlowFixMe[method-unbinding]
         (new ZoomDependentExpression('composite', expression.value, zoomCurve.labels, interpolationType): CompositeExpression));
 }
 
@@ -384,7 +388,7 @@ function getExpectedType(spec: StylePropertySpecification): Type {
 }
 
 function getDefaultValue(spec: StylePropertySpecification): Value {
-    if (spec.type === 'color' && isFunction(spec.default)) {
+    if (spec.type === 'color' && (isFunction(spec.default) || Array.isArray(spec.default))) {
         // Special case for heatmap-color: it uses the 'default:' to define a
         // default color ramp, but createExpression expects a simple value to fall
         // back to in case of runtime errors

@@ -96,14 +96,14 @@ class SectionOptions {
         this.imageName = null;
     }
 
-    static forText(scale: number | null, fontStack: string) {
+    static forText(scale: ?number, fontStack: string): SectionOptions {
         const textOptions = new SectionOptions();
         textOptions.scale = scale || 1;
         textOptions.fontStack = fontStack;
         return textOptions;
     }
 
-    static forImage(imageName: string) {
+    static forImage(imageName: string): SectionOptions {
         const imageOptions = new SectionOptions();
         imageOptions.imageName = imageName;
         return imageOptions;
@@ -124,7 +124,7 @@ class TaggedString {
         this.imageSectionID = null;
     }
 
-    static fromFeature(text: Formatted, defaultFontStack: string) {
+    static fromFeature(text: Formatted, defaultFontStack: string): TaggedString {
         const result = new TaggedString();
         for (let i = 0; i < text.sections.length; i++) {
             const section = text.sections[i];
@@ -153,8 +153,8 @@ class TaggedString {
         return this.sectionIndex[index];
     }
 
-    getCharCode(index: number): number {
-        return this.text.charCodeAt(index);
+    getCodePoint(index: number): number {
+        return this.text.codePointAt(index);
     }
 
     verticalizePunctuation(skipContextChecking: boolean) {
@@ -190,7 +190,7 @@ class TaggedString {
         return this.text;
     }
 
-    getMaxScale() {
+    getMaxScale(): number {
         return this.sectionIndex.reduce((max, index) => Math.max(max, this.sections[index].scale), 0);
     }
 
@@ -216,7 +216,7 @@ class TaggedString {
             return;
         }
 
-        this.text += String.fromCharCode(nextImageSectionCharCode);
+        this.text += String.fromCodePoint(nextImageSectionCharCode);
         this.sections.push(SectionOptions.forImage(imageName));
         this.sectionIndex.push(this.sections.length - 1);
     }
@@ -260,7 +260,6 @@ function shapeText(text: Formatted,
                    translate: [number, number],
                    writingMode: 1 | 2,
                    allowVerticalPlacement: boolean,
-                   symbolPlacement: string,
                    layoutTextSize: number,
                    layoutTextSizeThisZoom: number): Shaping | false {
     const logicalInput = TaggedString.fromFeature(text, defaultFontStack);
@@ -269,15 +268,14 @@ function shapeText(text: Formatted,
         logicalInput.verticalizePunctuation(allowVerticalPlacement);
     }
 
-    let lines: Array<TaggedString>;
+    let lines: Array<TaggedString> = [];
+
+    const lineBreaks = determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, layoutTextSize);
 
     const {processBidirectionalText, processStyledBidirectionalText} = rtlTextPlugin;
     if (processBidirectionalText && logicalInput.sections.length === 1) {
         // Bidi doesn't have to be style-aware
-        lines = [];
-        const untaggedLines =
-            processBidirectionalText(logicalInput.toString(),
-                                     determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        const untaggedLines = processBidirectionalText(logicalInput.toString(), lineBreaks);
         for (const line of untaggedLines) {
             const taggedLine = new TaggedString();
             taggedLine.text = line;
@@ -288,13 +286,8 @@ function shapeText(text: Formatted,
             lines.push(taggedLine);
         }
     } else if (processStyledBidirectionalText) {
-        // Need version of mapbox-gl-rtl-text with style support for combining RTL text
-        // with formatting
-        lines = [];
-        const processedLines =
-            processStyledBidirectionalText(logicalInput.text,
-                                           logicalInput.sectionIndex,
-                                           determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        // Need version of mapbox-gl-rtl-text with style support for combining RTL text with formatting
+        const processedLines = processStyledBidirectionalText(logicalInput.text, logicalInput.sectionIndex, lineBreaks);
         for (const line of processedLines) {
             const taggedLine = new TaggedString();
             taggedLine.text = line[0];
@@ -303,7 +296,7 @@ function shapeText(text: Formatted,
             lines.push(taggedLine);
         }
     } else {
-        lines = breakLines(logicalInput, determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        lines = breakLines(logicalInput, lineBreaks);
     }
 
     const positionedLines = [];
@@ -386,7 +379,7 @@ function determineAverageLineWidth(logicalInput: TaggedString,
 
     for (let index = 0; index < logicalInput.length(); index++) {
         const section = logicalInput.getSection(index);
-        totalWidth += getGlyphAdvance(logicalInput.getCharCode(index), section, glyphMap, imagePositions, spacing, layoutTextSize);
+        totalWidth += getGlyphAdvance(logicalInput.getCodePoint(index), section, glyphMap, imagePositions, spacing, layoutTextSize);
     }
 
     const lineCount = Math.max(1, Math.ceil(totalWidth / maxWidth));
@@ -485,11 +478,7 @@ function determineLineBreaks(logicalInput: TaggedString,
                              maxWidth: number,
                              glyphMap: {[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}},
                              imagePositions: {[_: string]: ImagePosition},
-                             symbolPlacement: string,
                              layoutTextSize: number): Array<number> {
-    if (symbolPlacement !== 'point')
-        return [];
-
     if (!logicalInput)
         return [];
 
@@ -502,7 +491,7 @@ function determineLineBreaks(logicalInput: TaggedString,
 
     for (let i = 0; i < logicalInput.length(); i++) {
         const section = logicalInput.getSection(i);
-        const codePoint = logicalInput.getCharCode(i);
+        const codePoint = logicalInput.getCodePoint(i);
         if (!whitespace[codePoint]) currentX += getGlyphAdvance(codePoint, section, glyphMap, imagePositions, spacing, layoutTextSize);
 
         // Ideographic characters, spaces, and word-breaking punctuation that often appear without
@@ -517,7 +506,7 @@ function determineLineBreaks(logicalInput: TaggedString,
                         currentX,
                         targetWidth,
                         potentialLineBreaks,
-                        calculatePenalty(codePoint, logicalInput.getCharCode(i + 1), ideographicBreak && hasServerSuggestedBreakpoints),
+                        calculatePenalty(codePoint, logicalInput.getCodePoint(i + 1), ideographicBreak && hasServerSuggestedBreakpoints),
                         false));
             }
         }
@@ -625,7 +614,7 @@ function shapeLines(shaping: Shaping,
         for (let i = 0; i < line.length(); i++) {
             const section = line.getSection(i);
             const sectionIndex = line.getSectionIndex(i);
-            const codePoint = line.getCharCode(i);
+            const codePoint = line.getCodePoint(i);
 
             let sectionScale = section.scale;
             let metrics = null;

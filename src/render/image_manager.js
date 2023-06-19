@@ -82,6 +82,10 @@ class ImageManager extends Evented {
         }
     }
 
+    hasImage(id: string): boolean {
+        return !!this.getImage(id);
+    }
+
     getImage(id: string): ?StyleImage {
         return this.images[id];
     }
@@ -248,6 +252,7 @@ class ImageManager extends Evented {
             this.dirty = false;
         }
 
+        if (!this.atlasTexture) return; // Flow can't infer that atlasTexture is defined here
         this.atlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
     }
 

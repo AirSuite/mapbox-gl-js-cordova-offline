@@ -8,17 +8,19 @@ import assert from 'assert';
 import Marker from '../marker.js';
 import LngLat from '../../geo/lng_lat.js';
 import throttle from '../../util/throttle.js';
+import {mercatorZfromAltitude} from '../../geo/mercator_coordinate.js';
 
 import type Map from '../map.js';
 import type {AnimationOptions, CameraOptions} from '../camera.js';
 
 type Options = {
-    positionOptions?: PositionOptions,
-    fitBoundsOptions?: AnimationOptions & CameraOptions,
-    trackUserLocation?: boolean,
-    showAccuracyCircle?: boolean,
-    showUserLocation?: boolean,
-    showUserHeading?: boolean
+    positionOptions: PositionOptions,
+    fitBoundsOptions: AnimationOptions & CameraOptions,
+    trackUserLocation: boolean,
+    showAccuracyCircle: boolean,
+    showUserLocation: boolean,
+    showUserHeading: boolean,
+    geolocation: Geolocation,
 };
 
 type DeviceOrientationEvent = {
@@ -30,7 +32,7 @@ type DeviceOrientationEvent = {
     webkitCompassHeading?: number,
 }
 
-const defaultOptions: Options = {
+const defaultOptions = {
     positionOptions: {
         enableHighAccuracy: false,
         maximumAge: 0,
@@ -44,31 +46,6 @@ const defaultOptions: Options = {
     showUserLocation: true,
     showUserHeading: false
 };
-
-let supportsGeolocation;
-
-function checkGeolocationSupport(callback) {
-    if (supportsGeolocation !== undefined) {
-        callback(supportsGeolocation);
-
-    } else if (window.navigator.permissions !== undefined) {
-        // navigator.permissions has incomplete browser support
-        // http://caniuse.com/#feat=permissions-api
-        // Test for the case where a browser disables Geolocation because of an
-        // insecure origin
-        window.navigator.permissions.query({name: 'geolocation'}).then((p) => {
-            supportsGeolocation = p.state !== 'denied';
-            callback(supportsGeolocation);
-        });
-
-    } else {
-        supportsGeolocation = !!window.navigator.geolocation;
-        callback(supportsGeolocation);
-    }
-}
-
-let numberOfWatches = 0;
-let noTimeout = false;
 
 /**
  * A `GeolocateControl` control provides a button that uses the browser's geolocation
@@ -98,6 +75,7 @@ let noTimeout = false;
  * @param {Object} [options.showAccuracyCircle=true] By default, if `showUserLocation` is `true`, a transparent circle will be drawn around the user location indicating the accuracy (95% confidence level) of the user's location. Set to `false` to disable. Always disabled when `showUserLocation` is `false`.
  * @param {Object} [options.showUserLocation=true] By default a dot will be shown on the map at the user's location. Set to `false` to disable.
  * @param {Object} [options.showUserHeading=false] If `true` an arrow will be drawn next to the user location dot indicating the device's heading. This only has affect when `trackUserLocation` is `true`.
+ * @param {Object} [options.geolocation=window.navigator.geolocation] `window.navigator.geolocation` by default; you can provide an object with the same shape to customize geolocation handling.
  *
  * @example
  * map.addControl(new mapboxgl.GeolocateControl({
@@ -127,9 +105,14 @@ class GeolocateControl extends Evented {
     _heading: ?number;
     _updateMarkerRotationThrottled: Function;
 
-    constructor(options: Options) {
+    _numberOfWatches: number;
+    _noTimeout: boolean;
+    _supportsGeolocation: boolean;
+
+    constructor(options: $Shape<Options>) {
         super();
-        this.options = extend({}, defaultOptions, options);
+        const geolocation = window.navigator.geolocation;
+        this.options = extend({geolocation}, defaultOptions, options);
 
         bindAll([
             '_onSuccess',
@@ -143,20 +126,23 @@ class GeolocateControl extends Evented {
             '_onDeviceOrientation'
         ], this);
 
+        // $FlowFixMe[method-unbinding]
         this._updateMarkerRotationThrottled = throttle(this._updateMarkerRotation, 20);
+        this._numberOfWatches = 0;
     }
 
     onAdd(map: Map): HTMLElement {
         this._map = map;
         this._container = DOM.create('div', `mapboxgl-ctrl mapboxgl-ctrl-group`);
-        checkGeolocationSupport(this._setupUI);
+        // $FlowFixMe[method-unbinding]
+        this._checkGeolocationSupport(this._setupUI);
         return this._container;
     }
 
     onRemove() {
         // clear the geolocation watch if exists
         if (this._geolocationWatchID !== undefined) {
-            window.navigator.geolocation.clearWatch(this._geolocationWatchID);
+            this.options.geolocation.clearWatch(this._geolocationWatchID);
             this._geolocationWatchID = (undefined: any);
         }
 
@@ -169,10 +155,33 @@ class GeolocateControl extends Evented {
         }
 
         this._container.remove();
+        // $FlowFixMe[method-unbinding]
         this._map.off('zoom', this._onZoom);
         this._map = (undefined: any);
-        numberOfWatches = 0;
-        noTimeout = false;
+        this._numberOfWatches = 0;
+        this._noTimeout = false;
+    }
+
+    _checkGeolocationSupport(callback: boolean => void) {
+        const updateSupport = (supported: boolean = !!this.options.geolocation) => {
+            this._supportsGeolocation = supported;
+            callback(supported);
+        };
+
+        if (this._supportsGeolocation !== undefined) {
+            callback(this._supportsGeolocation);
+
+        } else if (window.navigator.permissions !== undefined) {
+            // navigator.permissions has incomplete browser support http://caniuse.com/#feat=permissions-api
+            // Test for the case where a browser disables Geolocation because of an insecure origin;
+            // in some environments like iOS16 WebView, permissions reject queries but still support geolocation
+            window.navigator.permissions.query({name: 'geolocation'})
+                .then(p => updateSupport(p.state !== 'denied'))
+                .catch(() => updateSupport());
+
+        } else {
+            updateSupport();
+        }
     }
 
     /**
@@ -330,11 +339,13 @@ class GeolocateControl extends Evented {
 
     _updateCircleRadius() {
         assert(this._circleElement);
-        const y = this._map._containerHeight / 2;
-        const a = this._map.unproject([0, y]);
-        const b = this._map.unproject([100, y]);
-        const metersPerPixel = a.distanceTo(b) / 100;
-        const circleDiameter = Math.ceil(2.0 * this._accuracy / metersPerPixel);
+        const map = this._map;
+        const tr = map.transform;
+
+        const pixelsPerMeter = mercatorZfromAltitude(1.0, tr._center.lat) * tr.worldSize;
+        assert(pixelsPerMeter !== 0.0);
+        const circleDiameter = Math.ceil(2.0 * this._accuracy * pixelsPerMeter);
+
         this._circleElement.style.width = `${circleDiameter}px`;
         this._circleElement.style.height = `${circleDiameter}px`;
     }
@@ -383,7 +394,7 @@ class GeolocateControl extends Evented {
                 if (this._geolocationWatchID !== undefined) {
                     this._clearWatch();
                 }
-            } else if (error.code === 3 && noTimeout) {
+            } else if (error.code === 3 && this._noTimeout) {
                 // this represents a forced error state
                 // this was triggered to force immediate geolocation when a watch is already present
                 // see https://github.com/mapbox/mapbox-gl-js/issues/8214
@@ -409,6 +420,11 @@ class GeolocateControl extends Evented {
     }
 
     _setupUI(supported: boolean) {
+        if (this._map === undefined) {
+            // This control was removed from the map before geolocation
+            // support was determined.
+            return;
+        }
         this._container.addEventListener('contextmenu', (e: MouseEvent) => e.preventDefault());
         this._geolocateButton = DOM.create('button', `mapboxgl-ctrl-geolocate`, this._container);
         DOM.create('span', `mapboxgl-ctrl-icon`, this._geolocateButton).setAttribute('aria-hidden', 'true');
@@ -449,11 +465,12 @@ class GeolocateControl extends Evented {
 
             if (this.options.trackUserLocation) this._watchState = 'OFF';
 
+            // $FlowFixMe[method-unbinding]
             this._map.on('zoom', this._onZoom);
         }
 
-        this._geolocateButton.addEventListener('click',
-            this.trigger.bind(this));
+        // $FlowFixMe[method-unbinding]
+        this._geolocateButton.addEventListener('click', this.trigger.bind(this));
 
         this._setup = true;
 
@@ -545,9 +562,9 @@ class GeolocateControl extends Evented {
             case 'ACTIVE_LOCK':
             case 'ACTIVE_ERROR':
             case 'BACKGROUND_ERROR':
-                // turn off the GeolocateControl
-                numberOfWatches--;
-                noTimeout = false;
+                // turn off the Geolocate Control
+                this._numberOfWatches--;
+                this._noTimeout = false;
                 this._watchState = 'OFF';
                 this._geolocateButton.classList.remove('mapboxgl-ctrl-geolocate-waiting');
                 this._geolocateButton.classList.remove('mapboxgl-ctrl-geolocate-active');
@@ -605,17 +622,17 @@ class GeolocateControl extends Evented {
                 this._geolocateButton.classList.add('mapboxgl-ctrl-geolocate-waiting');
                 this._geolocateButton.setAttribute('aria-pressed', 'true');
 
-                numberOfWatches++;
+                this._numberOfWatches++;
                 let positionOptions;
-                if (numberOfWatches > 1) {
+                if (this._numberOfWatches > 1) {
                     positionOptions = {maximumAge:600000, timeout:0};
-                    noTimeout = true;
+                    this._noTimeout = true;
                 } else {
                     positionOptions = this.options.positionOptions;
-                    noTimeout = false;
+                    this._noTimeout = false;
                 }
 
-                this._geolocationWatchID = window.navigator.geolocation.watchPosition(
+                this._geolocationWatchID = this.options.geolocation.watchPosition(
                     this._onSuccess, this._onError, positionOptions);
 
                 if (this.options.showUserHeading) {
@@ -623,11 +640,12 @@ class GeolocateControl extends Evented {
                 }
             }
         } else {
-            window.navigator.geolocation.getCurrentPosition(
-                this._onSuccess, this._onError, this.options.positionOptions);
+            // $FlowFixMe[method-unbinding]
+            this.options.geolocation.getCurrentPosition(this._onSuccess, this._onError, this.options.positionOptions);
 
             // This timeout ensures that we still call finish() even if
             // the user declines to share their location in Firefox
+            // $FlowFixMe[method-unbinding]
             this._timeoutId = setTimeout(this._finish, 10000 /* 10sec */);
         }
 
@@ -637,8 +655,10 @@ class GeolocateControl extends Evented {
     _addDeviceOrientationListener() {
         const addListener = () => {
             if ('ondeviceorientationabsolute' in window) {
+                // $FlowFixMe[method-unbinding]
                 window.addEventListener('deviceorientationabsolute', this._onDeviceOrientation);
             } else {
+                // $FlowFixMe[method-unbinding]
                 window.addEventListener('deviceorientation', this._onDeviceOrientation);
             }
         };
@@ -659,9 +679,11 @@ class GeolocateControl extends Evented {
     }
 
     _clearWatch() {
-        window.navigator.geolocation.clearWatch(this._geolocationWatchID);
+        this.options.geolocation.clearWatch(this._geolocationWatchID);
 
+        // $FlowFixMe[method-unbinding]
         window.removeEventListener('deviceorientation', this._onDeviceOrientation);
+        // $FlowFixMe[method-unbinding]
         window.removeEventListener('deviceorientationabsolute', this._onDeviceOrientation);
 
         this._geolocationWatchID = (undefined: any);
@@ -715,7 +737,6 @@ export default GeolocateControl;
  * geolocate.on('geolocate', () => {
  *     console.log('A geolocate event has occurred.');
  * });
- *
  */
 
 /**
@@ -740,7 +761,6 @@ export default GeolocateControl;
  * geolocate.on('error', () => {
  *     console.log('An error event has occurred.');
  * });
- *
  */
 
 /**
@@ -765,7 +785,6 @@ export default GeolocateControl;
  * geolocate.on('outofmaxbounds', () => {
  *     console.log('An outofmaxbounds event has occurred.');
  * });
- *
  */
 
 /**
@@ -789,7 +808,6 @@ export default GeolocateControl;
  * geolocate.on('trackuserlocationstart', () => {
  *     console.log('A trackuserlocationstart event has occurred.');
  * });
- *
  */
 
 /**
@@ -813,5 +831,4 @@ export default GeolocateControl;
  * geolocate.on('trackuserlocationend', () => {
  *     console.log('A trackuserlocationend event has occurred.');
  * });
- *
  */

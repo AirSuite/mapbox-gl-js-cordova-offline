@@ -1,11 +1,13 @@
 // @flow
 
 import StyleLayer from '../style_layer.js';
+import MercatorCoordinate from '../../geo/mercator_coordinate.js';
 import type Map from '../../ui/map.js';
 import assert from 'assert';
 import type {ValidationErrors} from '../validate_style.js';
+import type {ProjectionSpecification} from '../../style-spec/types.js';
 
-type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>) => void;
+type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, projection: ?ProjectionSpecification, projectionToMercatorMatrix: ?Array<number>, projectionToMercatorTransition: ?number, centerInMercator: ?Array<number>, pixelsPerMeterRatio: ?number) => void;
 
 /**
  * Interface for custom style layers. This is a specification for
@@ -154,6 +156,8 @@ export type CustomLayerInterface = {
     renderingMode: "2d" | "3d",
     render: CustomRenderMethod,
     prerender: ?CustomRenderMethod,
+    renderToTile: ?(gl: WebGLRenderingContext, tileId: MercatorCoordinate) => void,
+    shouldRerenderTiles: ?() => boolean,
     onAdd: ?(map: Map, gl: WebGLRenderingContext) => void,
     onRemove: ?(map: Map, gl: WebGLRenderingContext) => void
 }
@@ -202,6 +206,14 @@ class CustomStyleLayer extends StyleLayer {
         return this.implementation.prerender !== undefined;
     }
 
+    isLayerDraped(): boolean {
+        return this.implementation.renderToTile !== undefined;
+    }
+
+    shouldRedrape(): boolean {
+        return !!this.implementation.shouldRerenderTiles && this.implementation.shouldRerenderTiles();
+    }
+
     recalculate() {}
     updateTransitions() {}
     hasTransition(): boolean {
@@ -213,12 +225,14 @@ class CustomStyleLayer extends StyleLayer {
         assert(false, "Custom layers cannot be serialized");
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         if (this.implementation.onAdd) {
             this.implementation.onAdd(map, map.painter.context.gl);
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     onRemove(map: Map) {
         if (this.implementation.onRemove) {
             this.implementation.onRemove(map, map.painter.context.gl);

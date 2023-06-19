@@ -3,27 +3,50 @@
 import {extend, pick} from '../util/util';
 
 import { getImage, getmbtileImage, getUint8ArrayImage, ResourceType } from '../util/ajax';
-import { Event, ErrorEvent, Evented } from '../util/evented';
-import loadTileJSON from './load_tilejson';
-import {postTurnstileEvent} from '../util/mapbox';
-import TileBounds from './tile_bounds';
-import Texture from '../render/texture';
-import browser from '../util/browser';
-import webpSupported from '../util/webp_supported';
-import {cacheEntryPossiblyAdded} from '../util/tile_request_cache';
+import {Event, ErrorEvent, Evented} from '../util/evented.js';
+import loadTileJSON from './load_tilejson.js';
+import {postTurnstileEvent} from '../util/mapbox.js';
+import TileBounds from './tile_bounds.js';
+import browser from '../util/browser.js';
 
-import type {Source} from './source';
-import type {OverscaledTileID} from './tile_id';
-import type Map from '../ui/map';
-import type Dispatcher from '../util/dispatcher';
-import type Tile from './tile';
-import type {Callback} from '../types/callback';
-import type {Cancelable} from '../types/cancelable';
+import {cacheEntryPossiblyAdded} from '../util/tile_request_cache.js';
+
+import type {Source} from './source.js';
+import type {OverscaledTileID} from './tile_id.js';
+import type Map from '../ui/map.js';
+import type Painter from '../render/painter.js';
+import type Dispatcher from '../util/dispatcher.js';
+import type Tile from './tile.js';
+import type {Callback} from '../types/callback.js';
+import type {Cancelable} from '../types/cancelable.js';
+
+import type {TextureImage} from '../render/texture.js';
 import type {
     RasterSourceSpecification,
     RasterDEMSourceSpecification
 } from '../style-spec/types.js';
 
+/**
+ * A source containing raster tiles.
+ * See the [Style Specification](https://docs.mapbox.com/mapbox-gl-js/style-spec/sources/#raster) for detailed documentation of options.
+ *
+ * @example
+ * map.addSource('some id', {
+ *     type: 'raster',
+ *     url: 'mapbox://mapbox.satellite',
+ *     tileSize: 256
+ * });
+ *
+ * @example
+ * map.addSource('some id', {
+ *     type: 'raster',
+ *     tiles: ['https://img.nj.gov/imagerywms/Natural2015?bbox={bbox-epsg-3857}&format=image/png&service=WMS&version=1.1.1&request=GetMap&srs=EPSG:3857&transparent=true&width=256&height=256&layers=Natural2015'],
+ *     tileSize: 256
+ * });
+ *
+ * @see [Example: Add a raster tile source](https://docs.mapbox.com/mapbox-gl-js/example/map-tiles/)
+ * @see [Example: Add a WMS source](https://docs.mapbox.com/mapbox-gl-js/example/wms/)
+ */
 class RasterTileSource extends Evented implements Source {
     type: 'raster' | 'raster-dem';
     id: string;
@@ -35,7 +58,7 @@ class RasterTileSource extends Evented implements Source {
 
     bounds: ?[number, number, number, number];
     tileBounds: TileBounds;
-    roundZoom: boolean;
+    roundZoom: boolean | void;
     dispatcher: Dispatcher;
     map: Map;
     tiles: Array<string>;
@@ -62,10 +85,10 @@ class RasterTileSource extends Evented implements Source {
         extend(this, pick(options, ['url', 'scheme', 'tileSize']));
     }
 
-    load() {
+    load(callback?: Callback<void>) {
         this._loaded = false;
         this.fire(new Event('dataloading', {dataType: 'source'}));
-        this._tileJSONRequest = loadTileJSON(this._options, this.map._requestManager, (err, tileJSON) => {
+        this._tileJSONRequest = loadTileJSON(this._options, this.map._requestManager, null, null, (err, tileJSON) => {
             this._tileJSONRequest = null;
             this._loaded = true;
             if (err) {
@@ -82,6 +105,8 @@ class RasterTileSource extends Evented implements Source {
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'metadata'}));
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'content'}));
             }
+
+            if (callback) callback(err);
         });
     }
 
@@ -89,22 +114,78 @@ class RasterTileSource extends Evented implements Source {
         return this._loaded;
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.load();
     }
 
+    /**
+     * Reloads the source data and re-renders the map.
+     *
+     * @example
+     * map.getSource('source-id').reload();
+     */
+    // $FlowFixMe[method-unbinding]
+    reload() {
+        this.cancelTileJSONRequest();
+        this.load(() => this.map.style._clearSource(this.id));
+    }
+
+    /**
+     * Sets the source `tiles` property and re-renders the map.
+     *
+     * @param {string[]} tiles An array of one or more tile source URLs, as in the TileJSON spec.
+     * @returns {RasterTileSource} Returns itself to allow for method chaining.
+     * @example
+     * map.addSource('source-id', {
+     *     type: 'raster',
+     *     tiles: ['https://some_end_point.net/{z}/{x}/{y}.png'],
+     *     tileSize: 256
+     * });
+     *
+     * // Set the endpoint associated with a raster tile source.
+     * map.getSource('source-id').setTiles(['https://another_end_point.net/{z}/{x}/{y}.png']);
+     */
+    setTiles(tiles: Array<string>): this {
+        this._options.tiles = tiles;
+        this.reload();
+
+        return this;
+    }
+
+    /**
+     * Sets the source `url` property and re-renders the map.
+     *
+     * @param {string} url A URL to a TileJSON resource. Supported protocols are `http:`, `https:`, and `mapbox://<Tileset ID>`.
+     * @returns {RasterTileSource} Returns itself to allow for method chaining.
+     * @example
+     * map.addSource('source-id', {
+     *     type: 'raster',
+     *     url: 'mapbox://mapbox.satellite'
+     * });
+     *
+     * // Update raster tile source to a new URL endpoint
+     * map.getSource('source-id').setUrl('mapbox://mapbox.satellite');
+     */
+    setUrl(url: string): this {
+        this.url = url;
+        this._options.url = url;
+        this.reload();
+
+        return this;
+    }
+
+    // $FlowFixMe[method-unbinding]
     onRemove() {
-        if (this._tileJSONRequest) {
-            this._tileJSONRequest.cancel();
-            this._tileJSONRequest = null;
-        }
+        this.cancelTileJSONRequest();
     }
 
     serialize(): RasterSourceSpecification | RasterDEMSourceSpecification {
         return extend({}, this._options);
     }
 
+    // $FlowFixMe[method-unbinding]
     hasTile(tileID: OverscaledTileID): boolean {
         return !this.tileBounds || this.tileBounds.contains(tileID.canonical);
     }
@@ -115,7 +196,28 @@ class RasterTileSource extends Evented implements Source {
 
         if (this._options.mbtiles == undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles){
-          tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), done.bind(this));
+            tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), (error, data, cacheControl, expires) => {
+                delete tile.request;
+
+                if (tile.aborted) {
+                    tile.state = 'unloaded';
+                    return callback(null);
+                }
+
+                if (error) {
+                    tile.state = 'errored';
+                    return callback(error);
+                }
+
+                if (!data) return callback(null);
+
+                if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
+                tile.setTexture(data, this.map.painter);
+                tile.state = 'loaded';
+
+                cacheEntryPossiblyAdded(this.dispatcher);
+                callback(null);
+            });
         }else{
           let Rurl = url.split('/'),
           z = Rurl[0],
@@ -169,41 +271,41 @@ class RasterTileSource extends Evented implements Source {
             }
         }
 
-        function done(err, img, cacheControl, expires) {
+        function done(error, data, cacheControl, expires) {
             delete tile.request;
 
             if (tile.aborted) {
                 tile.state = 'unloaded';
-                callback(null);
-            } else if (err) {
-                tile.state = 'errored';
-                callback(err);
-            } else if (img) {
-                if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
-
-                const context = this.map.painter.context;
-                const gl = context.gl;
-                tile.texture = this.map.painter.getTileTexture(img.width);
-                if (tile.texture) {
-                    tile.texture.update(img, {useMipmap: true});
-                } else {
-                    tile.texture = new Texture(context, img, gl.RGBA, {useMipmap: true});
-                    tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
-
-                    if (context.extTextureFilterAnisotropic) {
-                        gl.texParameterf(gl.TEXTURE_2D, context.extTextureFilterAnisotropic.TEXTURE_MAX_ANISOTROPY_EXT, context.extTextureFilterAnisotropicMax);
-                    }
-                }
-
-                tile.state = 'loaded';
-
-                cacheEntryPossiblyAdded(this.dispatcher);
-
-                callback(null);
+                return callback(null);
             }
+
+            if (error) {
+                tile.state = 'errored';
+                return callback(error);
+            }
+
+            if (!data) return callback(null);
+
+            if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
+            tile.setTexture(data, this.map.painter);
+            tile.state = 'loaded';
+
+            cacheEntryPossiblyAdded(this.dispatcher);
+            callback(null);
         }
     }
 
+    static loadTileData(tile: Tile, data: TextureImage, painter: Painter) {
+        tile.setTexture(data, painter);
+    }
+
+    static unloadTileData(tile: Tile, painter: Painter) {
+        if (tile.texture) {
+            painter.saveTileTexture(tile.texture);
+        }
+    }
+
+    // $FlowFixMe[method-unbinding]
     abortTile(tile: Tile, callback: Callback<void>) {
         if (tile.request) {
             tile.request.cancel();
@@ -212,6 +314,7 @@ class RasterTileSource extends Evented implements Source {
         callback();
     }
 
+    // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile, callback: Callback<void>) {
         if (tile.texture) this.map.painter.saveTileTexture(tile.texture);
         callback();
@@ -219,6 +322,12 @@ class RasterTileSource extends Evented implements Source {
 
     hasTransition(): boolean {
         return false;
+    }
+
+    cancelTileJSONRequest() {
+        if (!this._tileJSONRequest) return;
+        this._tileJSONRequest.cancel();
+        this._tileJSONRequest = null;
     }
 }
 

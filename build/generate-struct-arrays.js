@@ -14,7 +14,7 @@ import fs from 'fs';
 import ejs from 'ejs';
 import {extend} from '../src/util/util.js';
 import {createLayout, viewTypes} from '../src/util/struct_array.js';
-import type {ViewType, StructArrayLayout} from '../src/util/struct_array.js';
+import type {ViewType, StructArrayLayout, StructArrayMember} from '../src/util/struct_array.js';
 
 const structArrayLayoutJs = ejs.compile(fs.readFileSync('src/util/struct_array_layout.js.ejs', 'utf8'), {strict: true});
 const structArrayJs = ejs.compile(fs.readFileSync('src/util/struct_array.js.ejs', 'utf8'), {strict: true});
@@ -33,7 +33,7 @@ const arraysWithStructAccessors = [];
 const arrayTypeEntries = new Set();
 const layoutCache = {};
 
-function normalizeMembers(members, usedTypes) {
+function normalizeMembers(members: Array<StructArrayMember>, usedTypes: Set<string | ViewType>) {
     return members.map((member) => {
         if (usedTypes && !usedTypes.has(member.type)) {
             usedTypes.add(member.type);
@@ -70,7 +70,7 @@ function createStructArrayType(name: string, layout: StructArrayLayout, includeS
     }
 }
 
-function createStructArrayLayoutType({members, size, alignment}) {
+function createStructArrayLayoutType({members, size, alignment}: StructArrayLayout) {
     const usedTypes = new Set(['Uint8']);
     members = normalizeMembers(members, usedTypes);
 
@@ -106,7 +106,7 @@ function sizeOf(type: ViewType): number {
     return viewTypes[type].BYTES_PER_ELEMENT;
 }
 
-function camelize (str) {
+function camelize (str: string) {
     return str.replace(/(?:^|[-_])(.)/g, (_, x) => {
         return /^[0-9]$/.test(x) ? _ : x.toUpperCase();
     });
@@ -148,11 +148,12 @@ for (const name in layoutAttributes) {
 }
 
 // Globe extension arrays
-createStructArrayType('fill_extrusion_ext', fillExtrusionAttributesExt, true);
+createStructArrayType('fill_extrusion_ext', fillExtrusionAttributesExt);
 
 // symbol layer specific arrays
 import {
     symbolLayoutAttributes,
+    symbolGlobeExtAttributes,
     dynamicLayoutAttributes,
     placementOpacityAttributes,
     collisionBox,
@@ -168,6 +169,7 @@ import {
 } from '../src/data/bucket/symbol_attributes.js';
 
 createStructArrayType(`symbol_layout`, symbolLayoutAttributes);
+createStructArrayType(`symbol_globe_ext`, symbolGlobeExtAttributes);
 createStructArrayType(`symbol_dynamic_layout`, dynamicLayoutAttributes);
 createStructArrayType(`symbol_opacity`, placementOpacityAttributes);
 createStructArrayType('collision_box', collisionBox, true);
@@ -181,9 +183,10 @@ createStructArrayType('symbol_instance', symbolInstance, true);
 createStructArrayType('glyph_offset', glyphOffset, true);
 createStructArrayType('symbol_line_vertex', lineVertex, true);
 
-import globeAttributes, {atmosphereLayout} from '../src/terrain/globe_attributes.js';
+import globeAttributes from '../src/terrain/globe_attributes.js';
+import {atmosphereLayout} from '../src/render/atmosphere_attributes.js';
 createStructArrayType('globe_vertex', globeAttributes);
-createStructArrayType('globe_atmosphere_vertex', atmosphereLayout);
+createStructArrayType('atmosphere_vertex', atmosphereLayout);
 
 // feature index array
 createStructArrayType('feature_index', createLayout([
@@ -245,7 +248,7 @@ createStructArrayLayoutType(createLayout([{
 createStructArrayType(`fill_extrusion_centroid`, centroidAttributes, true);
 
 // Globe extension arrays
-createStructArrayType('circle_globe_ext', circleGlobeAttributesExt, true);
+createStructArrayType('circle_globe_ext', circleGlobeAttributesExt);
 
 const layouts = Object.keys(layoutCache).map(k => layoutCache[k]);
 

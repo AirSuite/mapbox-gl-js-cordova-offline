@@ -6,6 +6,8 @@ import assert from 'assert';
 import SymbolBucket from '../../data/bucket/symbol_bucket.js';
 import resolveTokens from '../../util/resolve_tokens.js';
 import properties from './symbol_style_layer_properties.js';
+import type {FormattedSection} from '../../style-spec/expression/types/formatted.js';
+import type {FormattedSectionExpression} from '../../style-spec/expression/definitions/format.js';
 
 import {
     Transitionable,
@@ -96,7 +98,7 @@ class SymbolStyleLayer extends StyleLayer {
         this._setPaintOverrides();
     }
 
-    getValueAndResolveTokens(name: *, feature: Feature, canonical: CanonicalTileID, availableImages: Array<string>): string {
+    getValueAndResolveTokens(name: any, feature: Feature, canonical: CanonicalTileID, availableImages: Array<string>): string {
         const value = this.layout.get(name).evaluate(feature, {}, canonical, availableImages);
         const unevaluated = this._unevaluatedLayout._values[name];
         if (!unevaluated.isDataDriven() && !isExpression(unevaluated.value) && value) {
@@ -106,14 +108,16 @@ class SymbolStyleLayer extends StyleLayer {
         return value;
     }
 
-    createBucket(parameters: BucketParameters<*>): SymbolBucket {
+    createBucket(parameters: BucketParameters<SymbolStyleLayer>): SymbolBucket {
         return new SymbolBucket(parameters);
     }
 
+    // $FlowFixMe[method-unbinding]
     queryRadius(): number {
         return 0;
     }
 
+    // $FlowFixMe[method-unbinding]
     queryIntersectsFeature(): boolean {
         assert(false); // Should take a different path in FeatureIndex
         return false;
@@ -129,13 +133,16 @@ class SymbolStyleLayer extends StyleLayer {
             const styleExpression = new StyleExpression(override, overriden.property.specification);
             let expression = null;
             if (overriden.value.kind === 'constant' || overriden.value.kind === 'source') {
+                // $FlowFixMe[method-unbinding]
                 expression = (new ZoomConstantExpression('source', styleExpression): SourceExpression);
             } else {
+                // $FlowFixMe[method-unbinding]
                 expression = (new ZoomDependentExpression('composite',
                                                           styleExpression,
                                                           overriden.value.zoomStops,
                                                           overriden.value._interpolationType): CompositeExpression);
             }
+            // $FlowFixMe[prop-missing]
             this.paint._values[overridable] = new PossiblyEvaluatedPropertyValue(overriden.property,
                                                                                  expression,
                                                                                  overriden.parameters);
@@ -154,7 +161,7 @@ class SymbolStyleLayer extends StyleLayer {
         const property = properties.paint.properties[propertyName];
         let hasOverrides = false;
 
-        const checkSections = (sections) => {
+        const checkSections = (sections: Array<FormattedSection> | Array<FormattedSectionExpression>) => {
             for (const section of sections) {
                 if (property.overrides && property.overrides.hasOverride(section)) {
                     hasOverrides = true;

@@ -117,14 +117,17 @@ class NavigationControl {
         if (this.options.showZoom) {
             this._setButtonTitle(this._zoomInButton, 'ZoomIn');
             this._setButtonTitle(this._zoomOutButton, 'ZoomOut');
+            // $FlowFixMe[method-unbinding]
             map.on('zoom', this._updateZoomButtons);
             this._updateZoomButtons();
         }
         if (this.options.showCompass) {
             this._setButtonTitle(this._compass, 'ResetBearing');
             if (this.options.visualizePitch) {
+                // $FlowFixMe[method-unbinding]
                 map.on('pitch', this._rotateCompassArrow);
             }
+            // $FlowFixMe[method-unbinding]
             map.on('rotate', this._rotateCompassArrow);
             this._rotateCompassArrow();
             this._handler = new MouseRotateWrapper(map, this._compass, this.options.visualizePitch);
@@ -137,12 +140,15 @@ class NavigationControl {
         if (!map) return;
         this._container.remove();
         if (this.options.showZoom) {
+            // $FlowFixMe[method-unbinding]
             map.off('zoom', this._updateZoomButtons);
         }
         if (this.options.showCompass) {
             if (this.options.visualizePitch) {
+                // $FlowFixMe[method-unbinding]
                 map.off('pitch', this._rotateCompassArrow);
             }
+            // $FlowFixMe[method-unbinding]
             map.off('rotate', this._rotateCompassArrow);
             if (this._handler) this._handler.off();
             this._handler = undefined;
@@ -172,8 +178,8 @@ class MouseRotateWrapper {
     element: HTMLElement;
     mouseRotate: MouseRotateHandler;
     mousePitch: MousePitchHandler;
-    _startPos: Point;
-    _lastPos: Point;
+    _startPos: ?Point;
+    _lastPos: ?Point;
 
     constructor(map: Map, element: HTMLElement, pitch?: boolean = false) {
         this._clickTolerance = 10;
@@ -183,10 +189,15 @@ class MouseRotateWrapper {
         if (pitch) this.mousePitch = new MousePitchHandler({clickTolerance: map.dragRotate._mousePitch._clickTolerance});
 
         bindAll(['mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend', 'reset'], this);
+        // $FlowFixMe[method-unbinding]
         element.addEventListener('mousedown', this.mousedown);
+        // $FlowFixMe[method-unbinding]
         element.addEventListener('touchstart', this.touchstart, {passive: false});
+        // $FlowFixMe[method-unbinding]
         element.addEventListener('touchmove', this.touchmove);
+        // $FlowFixMe[method-unbinding]
         element.addEventListener('touchend', this.touchend);
+        // $FlowFixMe[method-unbinding]
         element.addEventListener('touchcancel', this.reset);
     }
 
@@ -199,32 +210,43 @@ class MouseRotateWrapper {
     move(e: MouseEvent, point: Point) {
         const map = this.map;
         const r = this.mouseRotate.mousemoveWindow(e, point);
-        if (r && r.bearingDelta) map.setBearing(map.getBearing() + r.bearingDelta);
+        const delta = r && r.bearingDelta;
+        if (delta) map.setBearing(map.getBearing() + delta);
         if (this.mousePitch) {
             const p = this.mousePitch.mousemoveWindow(e, point);
-            if (p && p.pitchDelta) map.setPitch(map.getPitch() + p.pitchDelta);
+            const delta = p && p.pitchDelta;
+            if (delta) map.setPitch(map.getPitch() + delta);
         }
     }
 
     off() {
         const element = this.element;
+        // $FlowFixMe[method-unbinding]
         element.removeEventListener('mousedown', this.mousedown);
+        // $FlowFixMe[method-unbinding]
         element.removeEventListener('touchstart', this.touchstart, {passive: false});
+        // $FlowFixMe[method-unbinding]
         element.removeEventListener('touchmove', this.touchmove);
+        // $FlowFixMe[method-unbinding]
         element.removeEventListener('touchend', this.touchend);
+        // $FlowFixMe[method-unbinding]
         element.removeEventListener('touchcancel', this.reset);
         this.offTemp();
     }
 
     offTemp() {
         DOM.enableDrag();
+        // $FlowFixMe[method-unbinding]
         window.removeEventListener('mousemove', this.mousemove);
+        // $FlowFixMe[method-unbinding]
         window.removeEventListener('mouseup', this.mouseup);
     }
 
     mousedown(e: MouseEvent) {
         this.down(extend({}, e, {ctrlKey: true, preventDefault: () => e.preventDefault()}), DOM.mousePos(this.element, e));
+        // $FlowFixMe[method-unbinding]
         window.addEventListener('mousemove', this.mousemove);
+        // $FlowFixMe[method-unbinding]
         window.addEventListener('mouseup', this.mouseup);
     }
 

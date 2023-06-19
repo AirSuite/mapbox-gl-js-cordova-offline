@@ -3,16 +3,18 @@
 import assert from 'assert';
 import Point from '@mapbox/point-geometry';
 
-type ClippedPolygon = {
+export type ClippedPolygon = {
     polygon: Array<Array<Point>>,
-    bounds: Array<Point>
+    bounds: [Point, Point]
 };
 
-function clipPolygon(polygons: Array<Array<Point>>, clipAxis1: number, clipAxis2: number, axis: number): Array<Array<Point>> {
-    const intersectX = (ring, ax, ay, bx, by, x) => {
+type PolygonArray = Array<Array<Array<Point>>>;
+
+function clipPolygon(polygons: PolygonArray, clipAxis1: number, clipAxis2: number, axis: number): PolygonArray {
+    const intersectX = (ring: Array<Point>, ax: number, ay: number, bx: number, by: number, x: number) => {
         ring.push(new Point(x, ay + (by - ay) * ((x - ax) / (bx - ax))));
     };
-    const intersectY = (ring, ax, ay, bx, by, y) => {
+    const intersectY = (ring: Array<Point>, ax: number, ay: number, bx: number, by: number, y: number) => {
         ring.push(new Point(ax + (bx - ax) * ((y - ay) / (by - ay)), y));
     };
 
@@ -73,14 +75,14 @@ function clipPolygon(polygons: Array<Array<Point>>, clipAxis1: number, clipAxis2
     return polygonsClipped;
 }
 
-export function subdividePolygons(polygons: Array<Array<Point>>, bounds: Array<Point>, gridSizeX: number, gridSizeY: number, padding: number = 0.0, splitFn: Function): Array<ClippedPolygon> {
+export function subdividePolygons(polygons: PolygonArray, bounds: [Point, Point], gridSizeX: number, gridSizeY: number, padding: number = 0.0, splitFn: Function): Array<ClippedPolygon> {
     const outPolygons = [];
 
     if (!polygons.length || !gridSizeX || !gridSizeY) {
         return outPolygons;
     }
 
-    const addResult = (clipped, bounds) => {
+    const addResult = (clipped: PolygonArray, bounds: [Point, Point]) => {
         for (const polygon of clipped) {
             outPolygons.push({polygon, bounds});
         }

@@ -13,6 +13,8 @@ import {fixedLngLat, fixedNum} from '../../util/fixed.js';
 import Fog from '../../../src/style/fog.js';
 import Color from '../../../src/style-spec/util/color.js';
 import {MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
+import {performanceEvent_} from '../../../src/util/mapbox.js';
+import assert from 'assert';
 
 function createStyleSource() {
     return {
@@ -24,15 +26,37 @@ function createStyleSource() {
     };
 }
 
+// Mock implementation of elevation
+const createElevation = (func, exaggeration) => {
+    return {
+        _exaggeration: exaggeration,
+        isDataAvailableAtPoint(_) {
+            return true;
+        },
+        getAtPointOrZero(point, def) {
+            return this.getAtPoint(point, def) || 0;
+        },
+        getAtPoint(point, def) {
+            return func(point) * this.exaggeration() || def;
+        },
+        getForTilePoints() {
+            return false;
+        },
+        getMinElevationBelowMSL: () => 0,
+
+        exaggeration() {
+            return this._exaggeration;
+        }
+    };
+};
+
 test('Map', (t) => {
-    t.beforeEach((callback) => {
+    t.beforeEach(() => {
         window.useFakeXMLHttpRequest();
-        callback();
     });
 
-    t.afterEach((callback) => {
+    t.afterEach(() => {
         window.restore();
-        callback();
     });
 
     t.test('constructor', (t) => {
@@ -46,6 +70,8 @@ test('Map', (t) => {
         t.ok(map.keyboard.isEnabled());
         t.ok(map.scrollZoom.isEnabled());
         t.ok(map.touchZoomRotate.isEnabled());
+        t.notok(map._language);
+        t.notok(map._worldview);
         t.throws(() => {
             new Map({
                 container: 'anElementIdWhichDoesNotExistInTheDocument',
@@ -53,6 +79,62 @@ test('Map', (t) => {
             });
         }, new Error("Container 'anElementIdWhichDoesNotExistInTheDocument' not found"), 'throws on invalid map container id');
         t.end();
+    });
+
+    t.test('disablePerformanceMetricsCollection', (t) => {
+        const map = createMap(t, {performanceMetricsCollection: false});
+        map.once('idle', () => {
+            map.triggerRepaint();
+            map.once('idle', () => {
+                t.ok(map._fullyLoaded);
+                t.ok(map._loaded);
+                t.equals(window.server.requests.length, 0);
+                t.end();
+            });
+        });
+    });
+
+    t.test('default performance metrics collection', (t) => {
+        const map = createMap(t);
+        map._requestManager._customAccessToken = 'access-token';
+        map.once('idle', () => {
+            map.triggerRepaint();
+            map.once('idle', () => {
+                t.ok(map._fullyLoaded);
+                t.ok(map._loaded);
+                const reqBody = window.server.requests[0].requestBody;
+                const performanceEvent = JSON.parse(reqBody.slice(1, reqBody.length - 1));
+                t.equals(performanceEvent.event, 'gljs.performance');
+                performanceEvent_.pendingRequest = null;
+                t.end();
+            });
+        });
+    });
+
+    t.test('performance metrics event stores explicit projection', (t) => {
+        const map = createMap(t, {projection: 'globe', zoom: 20});
+        map._requestManager._customAccessToken = 'access-token';
+        map.once('idle', () => {
+            map.triggerRepaint();
+            map.once('idle', () => {
+                t.ok(map._fullyLoaded);
+                t.ok(map._loaded);
+                const reqBody = window.server.requests[0].requestBody;
+                const performanceEvent = JSON.parse(reqBody.slice(1, reqBody.length - 1));
+                const checkMetric = (data, metricName, metricValue) => {
+                    for (const metric of data) {
+                        if (metric.name === metricName) {
+                            t.equals(metric.value, metricValue);
+                            return;
+                        }
+                    }
+                    assert(false);
+                };
+                checkMetric(performanceEvent.attributes, 'projection', 'globe');
+                performanceEvent_.pendingRequest = null;
+                t.end();
+            });
+        });
     });
 
     t.test('warns when map container is not empty', (t) => {
@@ -162,6 +244,64 @@ test('Map', (t) => {
 
         function fail() { t.ok(false); }
         function pass() { t.end(); }
+    });
+
+    t.test('#cameraForBounds', (t) => {
+        t.test('crossing globe-mercator threshold globe -> mercator does not affect cameraForBounds result', (t) => {
+            const map = createMap(t);
+            map.setProjection('globe');
+            const bb = [[-133, 16], [-132, 18]];
+
+            let transform;
+
+            map.setZoom(0);
+            map._updateProjectionTransition();
+
+            t.equal(map.transform.projection.name, "globe");
+
+            transform = map.cameraForBounds(bb);
+            t.deepEqual(fixedLngLat(transform.center, 4), {lng: -132.5, lat: 17.0027});
+            t.equal(fixedNum(transform.zoom, 3), 6.071);
+
+            map.setZoom(10);
+            map._updateProjectionTransition();
+
+            t.equal(map.transform.projection.name, "mercator");
+
+            transform = map.cameraForBounds(bb);
+            t.deepEqual(fixedLngLat(transform.center, 4), {lng: -132.5, lat: 17.0027});
+            t.equal(fixedNum(transform.zoom, 3), 6.071);
+            t.end();
+        });
+
+        t.test('crossing globe-mercator threshold mercator -> globe does not affect cameraForBounds result', (t) => {
+            const map = createMap(t);
+            map.setProjection('globe');
+            const bb = [[-133, 16], [-68, 50]];
+
+            let transform;
+
+            map.setZoom(10);
+            map._updateProjectionTransition();
+
+            t.equal(map.transform.projection.name, "mercator");
+
+            transform = map.cameraForBounds(bb);
+            t.deepEqual(fixedLngLat(transform.center, 4), {lng: -100.5, lat: 34.716});
+            t.equal(fixedNum(transform.zoom, 3), 0.75);
+
+            map.setZoom(0);
+            map._updateProjectionTransition();
+
+            t.equal(map.transform.projection.name, "globe");
+
+            transform = map.cameraForBounds(bb);
+            t.deepEqual(fixedLngLat(transform.center, 4), {lng: -100.5, lat: 34.716});
+            t.equal(fixedNum(transform.zoom, 3), 0.75);
+            t.end();
+        });
+
+        t.end();
     });
 
     t.test('#setStyle', (t) => {
@@ -315,6 +455,7 @@ test('Map', (t) => {
                 t.equal(initStyleObj.setTerrain.callCount, 1);
                 t.ok(map.style.terrain);
                 t.equal(map.getTerrain(), null);
+                t.equal(map.getStyle().terrain, undefined);
                 t.end();
             });
         });
@@ -330,6 +471,7 @@ test('Map', (t) => {
                 t.equal(initStyleObj.setTerrain.callCount, 1);
                 t.ok(map.style.terrain);
                 t.equal(map.getTerrain(), null);
+                t.equal(map.getStyle().terrain, undefined);
                 map.setZoom(12); // Above threshold for Mercator transition
                 map.once('render', () => {
                     t.notOk(map.style.terrain);
@@ -349,11 +491,14 @@ test('Map', (t) => {
                 t.equal(initStyleObj.setTerrain.callCount, 0);
                 t.notOk(map.style.terrain);
                 t.equal(map.getTerrain(), null);
+                t.equal(map.getStyle().terrain, undefined);
                 map.setZoom(3); // Below threshold for Mercator transition
                 map.once('render', () => {
                     t.equal(initStyleObj.setTerrain.callCount, 1);
                     t.ok(map.style.terrain);
                     t.equal(map.getTerrain(), null);
+                    t.true(map.painter._terrain.isUsingMockSource());
+                    t.equal(map.getStyle().terrain, undefined);
                     t.end();
                 });
             });
@@ -395,6 +540,26 @@ test('Map', (t) => {
             });
         });
 
+        t.test('Toggling globe and mercator projections at high zoom levels returns expected `map.getProjection()` result', (t) => {
+            const style = createStyle();
+            const map = createMap(t, {style});
+            t.spy(map.painter, 'clearBackgroundTiles');
+
+            map.on('load', () => {
+                map.setZoom(7);
+                t.equal(map.getProjection().name, 'mercator');
+
+                map.setProjection('globe');
+                t.equal(map.getProjection().name, 'globe');
+
+                map.setZoom(4);
+                t.equal(map.getProjection().name, 'globe');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 0);
+
+                t.end();
+            });
+        });
+
         t.test('https://github.com/mapbox/mapbox-gl-js/issues/11352', (t) => {
             const styleSheet = new window.CSSStyleSheet();
             styleSheet.insertRule('.mapboxgl-canary { background-color: rgb(250, 128, 114); }', 0);
@@ -409,8 +574,8 @@ test('Map', (t) => {
                 t.equal(map.getProjection().name, 'globe');
                 t.ok(map.style.terrain);
                 t.equal(map.getTerrain(), null);
-                t.ok(style.terrain);
-                t.equal(style.terrain.source, '');
+                // Should not overwrite style: https://github.com/mapbox/mapbox-gl-js/issues/11939
+                t.equal(style.terrain, undefined);
                 map.remove();
 
                 map = new Map({style, container: div, testMode: true});
@@ -423,7 +588,8 @@ test('Map', (t) => {
 
         t.test('https://github.com/mapbox/mapbox-gl-js/issues/11367', (t) => {
             const style1 = createStyle();
-            const map = createMap(t, {style1});
+            const map = createMap(t, {style: style1});
+            map.setZoom(3);
             map.on('style.load', () => {
                 map.setProjection('globe');
                 t.equal(map.getProjection().name, 'globe');
@@ -497,6 +663,174 @@ test('Map', (t) => {
             t.end();
         });
 
+        t.test('Setting globe and then terrain correctly sets terrain mock source', (t) => {
+            const style = createStyle();
+            const map = createMap(t, {style, projection: 'globe'});
+            map.setZoom(3);
+            map.on('style.load', () => {
+                map.addSource('mapbox-dem', {
+                    'type': 'raster-dem',
+                    'url': 'mapbox://mapbox.terrain-rgb',
+                    'tileSize': 512,
+                    'maxzoom': 14
+                });
+                map.once('render', () => {
+                    t.true(map.painter._terrain.isUsingMockSource());
+                    map.setTerrain({'source': 'mapbox-dem'});
+                    map.once('render', () => {
+                        t.false(map.painter._terrain.isUsingMockSource());
+                        map.setTerrain(null);
+                        map.once('render', () => {
+                            t.true(map.painter._terrain.isUsingMockSource());
+                            t.end();
+                        });
+                    });
+                });
+            });
+        });
+
+        t.test('Setting terrain and then globe correctly sets terrain mock source', (t) => {
+            const style = createStyle();
+            const map = createMap(t, {style});
+            map.setZoom(3);
+            map.on('style.load', () => {
+                map.addSource('mapbox-dem', {
+                    'type': 'raster-dem',
+                    'url': 'mapbox://mapbox.terrain-rgb',
+                    'tileSize': 512,
+                    'maxzoom': 14
+                });
+                map.setTerrain({'source': 'mapbox-dem'});
+                map.once('render', () => {
+                    t.false(map.painter._terrain.isUsingMockSource());
+                    map.setProjection('globe');
+                    t.false(map.painter._terrain.isUsingMockSource());
+                    map.setTerrain(null);
+                    map.once('render', () => {
+                        t.true(map.painter._terrain.isUsingMockSource());
+                        t.end();
+                    });
+                });
+            });
+        });
+
+        t.test('should apply different styles when toggling setStyle (https://github.com/mapbox/mapbox-gl-js/issues/11939)', (t) => {
+            const styleWithTerrainExaggeration = {
+                'version': 8,
+                'sources': {
+                    'mapbox-dem': {
+                        'type': 'raster-dem',
+                        'tiles': ['http://example.com/{z}/{x}/{y}.png']
+                    }
+                },
+                'terrain': {
+                    'source': 'mapbox-dem',
+                    'exaggeration': 500
+                },
+                'layers': []
+            };
+
+            const styleWithoutTerrainExaggeration = {
+                'version': 8,
+                'sources': {
+                    'mapbox-dem': {
+                        'type': 'raster-dem',
+                        'tiles': ['http://example.com/{z}/{x}/{y}.png']
+                    }
+                },
+                'terrain': {
+                    'source': 'mapbox-dem'
+                },
+                'layers': []
+            };
+
+            const map = createMap(t, {style: styleWithTerrainExaggeration});
+
+            map.on('style.load', () => {
+                t.equal(map.getTerrain().exaggeration, 500);
+
+                map.setStyle(styleWithoutTerrainExaggeration);
+                t.equal(map.getTerrain().exaggeration, 1);
+
+                map.setStyle(styleWithTerrainExaggeration);
+                t.equal(map.getTerrain().exaggeration, 500);
+
+                t.equal(styleWithoutTerrainExaggeration.terrain.exaggeration, undefined);
+                t.equal(styleWithTerrainExaggeration.terrain.exaggeration, 500);
+                t.end();
+            });
+        });
+
+        t.test('should apply different projections when toggling setStyle (https://github.com/mapbox/mapbox-gl-js/issues/11916)', (t) => {
+            const styleWithWinkelTripel = {
+                'version': 8,
+                'sources': {},
+                'projection': {'name': 'winkelTripel'},
+                'layers': []
+            };
+
+            const styleWithGlobe = {
+                'version': 8,
+                'sources': {},
+                'projection': {'name': 'globe'},
+                'layers': []
+            };
+
+            const map = createMap(t, {style: styleWithWinkelTripel});
+
+            map.on('style.load', () => {
+                t.equal(map.getProjection().name, 'winkelTripel');
+
+                map.setStyle(styleWithGlobe);
+                t.equal(map.getProjection().name, 'globe');
+
+                map.setStyle(styleWithWinkelTripel);
+                t.equal(map.getProjection().name, 'winkelTripel');
+
+                t.equal(styleWithGlobe.projection.name, 'globe');
+                t.equal(styleWithWinkelTripel.projection.name, 'winkelTripel');
+                t.end();
+            });
+        });
+
+        t.test('should apply fog default values when toggling different fog styles with setStyle', (t) => {
+            const styleA = {
+                'version': 8,
+                'sources': {},
+                'fog': {'color': 'red'},
+                'layers': []
+            };
+
+            const styleB = {
+                'version': 8,
+                'sources': {},
+                'fog':  {
+                    'color': '#0F2127',
+                    'high-color': '#000',
+                    'horizon-blend': 0.5,
+                    'space-color': '#000'
+                },
+                'layers': []
+            };
+
+            const map = createMap(t, {style: styleA});
+
+            map.on('style.load', () => {
+                t.equal(map.getFog()['color'], 'red');
+                t.equal(map.getFog()['high-color'], '#245cdf');
+
+                map.setStyle(styleB);
+                t.equal(map.getFog()['color'], '#0F2127');
+                t.equal(map.getFog()['high-color'], '#000');
+
+                map.setStyle(styleA);
+                t.equal(map.getFog()['color'], 'red');
+                t.equal(map.getFog()['high-color'], '#245cdf');
+
+                t.end();
+            });
+        });
+
         t.test('updating fog results in correct transitions', (t) => {
             t.test('sets fog with transition', (t) => {
                 const fog = new Fog({
@@ -508,35 +842,57 @@ test('Map', (t) => {
 
                 fog.set({'color': 'red'});
                 fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
+                fog.recalculate({zoom: 16, now: 1500});
                 t.deepEqual(fog.properties.get('color'), new Color(1, 0.5, 0.5, 1));
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
+                fog.recalculate({zoom: 16, now: 3000});
                 t.deepEqual(fog.properties.get('color'), new Color(1, 0.0, 0.0, 1));
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
+                fog.recalculate({zoom: 16, now: 3500});
                 t.deepEqual(fog.properties.get('color'), new Color(1, 0.0, 0.0, 1));
 
                 fog.set({'range-transition': {duration: 3000}});
                 fog.set({'range': [2, 5]});
                 fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
-                t.deepEqual(fog.properties.get('range')[0], 1);
-                t.deepEqual(fog.properties.get('range')[1], 3);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
+                fog.recalculate({zoom: 16, now: 1500});
+                t.deepEqual(fog.properties.get('range')[0], 1.25);
+                t.deepEqual(fog.properties.get('range')[1], 7.5);
+                fog.recalculate({zoom: 16, now: 3000});
                 t.deepEqual(fog.properties.get('range')[0], 2);
                 t.deepEqual(fog.properties.get('range')[1], 5);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
+                fog.recalculate({zoom: 16, now: 3500});
                 t.deepEqual(fog.properties.get('range')[0], 2);
                 t.deepEqual(fog.properties.get('range')[1], 5);
 
                 fog.set({'horizon-blend-transition': {duration: 3000}});
                 fog.set({'horizon-blend': 0.5});
                 fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
-                t.deepEqual(fog.properties.get('horizon-blend'), 0.25);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
+                fog.recalculate({zoom: 16, now: 1500});
+                t.deepEqual(fog.properties.get('horizon-blend'), 0.3);
+                fog.recalculate({zoom: 16, now: 3000});
                 t.deepEqual(fog.properties.get('horizon-blend'), 0.5);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
+                fog.recalculate({zoom: 16, now: 3500});
                 t.deepEqual(fog.properties.get('horizon-blend'), 0.5);
+
+                fog.set({'star-intensity-transition': {duration: 3000}});
+                fog.set({'star-intensity': 0.5});
+                fog.updateTransitions({transition: true}, {});
+                fog.recalculate({zoom: 16, now: 1500});
+                t.deepEqual(fog.properties.get('star-intensity'), 0.25);
+                fog.recalculate({zoom: 16, now: 3000});
+                t.deepEqual(fog.properties.get('star-intensity'), 0.5);
+                fog.recalculate({zoom: 16, now: 3500});
+                t.deepEqual(fog.properties.get('star-intensity'), 0.5);
+
+                fog.set({'high-color-transition': {duration: 3000}});
+                fog.set({'high-color': 'blue'});
+                fog.updateTransitions({transition: true}, {});
+                fog.recalculate({zoom: 16, now: 3000});
+                t.deepEqual(fog.properties.get('high-color'), new Color(0.0, 0.0, 1.0, 1));
+
+                fog.set({'space-color-transition': {duration: 3000}});
+                fog.set({'space-color': 'blue'});
+                fog.updateTransitions({transition: true}, {});
+                fog.recalculate({zoom: 16, now: 5000});
+                t.deepEqual(fog.properties.get('space-color'), new Color(0.0, 0.0, 1.0, 1));
 
                 t.end();
             });
@@ -547,7 +903,7 @@ test('Map', (t) => {
 
                 fog.set({color: [444]}, {validate: false});
                 fog.updateTransitions({transition: false}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 10});
+                fog.recalculate({zoom: 16, now: 10});
 
                 t.ok(fogSpy.calledOnce);
                 t.deepEqual(fog.properties.get('color'), [444]);
@@ -654,9 +1010,8 @@ test('Map', (t) => {
 
     t.test('#isSourceLoaded', (t) => {
 
-        t.afterEach((callback) => {
+        t.afterEach(() => {
             Map.prototype._detectMissingCSS.restore();
-            callback();
         });
 
         function setupIsSourceLoaded(tileState, callback) {
@@ -1064,16 +1419,23 @@ test('Map', (t) => {
     });
 
     t.test('#getBounds', (t) => {
-        const map = createMap(t, {zoom: 0});
-        t.deepEqual(parseFloat(map.getBounds().getCenter().lng.toFixed(10)), 0, 'getBounds');
-        t.deepEqual(parseFloat(map.getBounds().getCenter().lat.toFixed(10)), 0, 'getBounds');
 
-        t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
-            [ -70.31249999999976, -57.326521225216965 ],
-            [ 70.31249999999977, 57.32652122521695 ] ]));
+        t.test('default bounds', (t) => {
+            const map = createMap(t, {zoom: 0});
+            t.deepEqual(parseFloat(map.getBounds().getCenter().lng.toFixed(10)), 0, 'getBounds');
+            t.deepEqual(parseFloat(map.getBounds().getCenter().lat.toFixed(10)), 0, 'getBounds');
+
+            t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
+                [ -70.31249999999976, -57.326521225216965 ],
+                [ 70.31249999999977, 57.32652122521695 ] ])
+            );
+
+            t.end();
+
+        });
 
         t.test('rotated bounds', (t) => {
-            const map = createMap(t, {zoom: 1, bearing: 45, skipCSSStub: true});
+            const map = createMap(t, {zoom: 1, bearing: 45});
             t.deepEqual(
                 toFixed([[-49.718445552178764, -44.44541580601936], [49.7184455522, 44.445415806019355]]),
                 toFixed(map.getBounds().toArray())
@@ -1089,7 +1451,7 @@ test('Map', (t) => {
         });
 
         t.test('padded bounds', (t) => {
-            const map = createMap(t, {zoom: 1, bearing: 45, skipCSSStub: true});
+            const map = createMap(t, {zoom: 1, bearing: 45});
 
             map.setPadding({
                 left: 100,
@@ -1108,7 +1470,7 @@ test('Map', (t) => {
 
         t.test('bounds cut off at poles (#10261)', (t) => {
             const map = createMap(t,
-                {zoom: 2, center: [0, 90], pitch: 80, skipCSSStub: true});
+                {zoom: 2, center: [0, 90], pitch: 80});
             const bounds = map.getBounds();
             t.same(bounds.getNorth().toFixed(6), MAX_MERCATOR_LATITUDE);
             t.same(
@@ -1124,6 +1486,141 @@ test('Map', (t) => {
             t.same(
                 toFixed(sBounds.toArray()),
                 toFixed([[ -23.3484820899, -85.0511287798 ], [ 23.3484820899, -77.6464759596]])
+            );
+
+            t.end();
+        });
+
+        t.test('on globe', (t) => {
+            const map = createMap(t, {zoom: 0, projection: 'globe'});
+
+            let bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                toFixed([[ -73.8873304141, -73.8873304141, ], [ 73.8873304141, 73.8873304141]])
+            );
+
+            map.jumpTo({zoom: 0, center: [0, 90]});
+            bounds = map.getBounds();
+            t.same(bounds.getNorth(), 90);
+            t.same(
+                toFixed(bounds.toArray()),
+                toFixed([[ -180, 11.1637985859 ], [ 180, 90 ]])
+            );
+
+            map.jumpTo({zoom: 0, center: [0, -90]});
+            bounds = map.getBounds();
+            t.same(bounds.getSouth(), -90);
+            t.same(
+                toFixed(bounds.toArray()),
+                toFixed([[ -180, -90 ], [ 180, -11.1637985859]])
+            );
+
+            map.jumpTo({zoom: 2, center: [0, 45], bearing: 0, pitch: 20});
+            bounds = map.getBounds();
+            t.notSame(bounds.getNorth(), 90);
+
+            map.jumpTo({zoom: 2, center: [0, -45], bearing: 180, pitch: -20});
+            bounds = map.getBounds();
+            t.notSame(bounds.getSouth(), -90);
+
+            t.end();
+        });
+
+        t.test('on Albers', (t) => {
+            const map = createMap(t, {projection: 'albers'});
+
+            let bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -65.1780745470, -85.0511290000, ],
+                    [ 51.0506680427, 79.9819510537 ]
+                ]
+            );
+
+            map.jumpTo({zoom: 0, center: [-96, 37.5]});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -180, -45.1620125974 ],
+                    [ 21.1488460355, 85.0511290000 ]
+                ]
+            );
+
+            map.jumpTo({zoom: 3.3, center: [-99, 42], bearing: 24});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -108.2217655978, 34.8501901832 ],
+                    [ -88.9997447442, 49.1066330318 ]
+                ]
+            );
+
+            map.jumpTo({zoom: 3.3, center: [-99, 42], bearing: 24});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -108.2217655978, 34.8501901832 ],
+                    [ -88.9997447442, 49.1066330318 ]
+                ]
+            );
+
+            map.setPitch(50);
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -106.5868397979, 34.9358140751 ],
+                    [ -77.8438130022, 58.8683265070 ]
+                ]
+            );
+            t.end();
+        });
+
+        t.test('on Winkel Tripel', (t) => {
+            const map = createMap(t, {projection: 'winkelTripel'});
+
+            let bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -89.7369085165, -57.5374138724 ],
+                    [ 89.7369085165, 57.5374138724 ]
+                ]
+            );
+
+            map.jumpTo({zoom: 2, center: [-20, -70]});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -58.0047683883, -82.4864361385 ],
+                    [ 7.3269895739, -57.3283436312 ]
+                ]
+            );
+
+            map.jumpTo({zoom: 2, center: [-70, -20]});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -92.4701297641, -34.6981068954 ],
+                    [ -51.1668245330, -5.6697541071 ]
+                ]
+            );
+
+            map.jumpTo({pitch: 50, bearing: -20});
+            bounds = map.getBounds();
+            t.same(
+                toFixed(bounds.toArray()),
+                [
+                    [ -111.9596616309, -38.1908385183 ],
+                    [ -52.4906377771, 22.9304574207 ]
+                ]
             );
 
             t.end();
@@ -1581,6 +2078,7 @@ test('Map', (t) => {
             options = {name: 'lambertConformalConic', center: [20, 25], parallels: [30, -30]};
             map.setProjection(options);
             t.deepEqual(map.getProjection(), options);
+            t.notOk(map._showingGlobe());
             t.end();
         });
 
@@ -1594,6 +2092,7 @@ test('Map', (t) => {
                     parallels: [29.5, 45.5]
                 });
                 t.deepEqual(map.getProjection(), map.transform.getProjection());
+                t.notOk(map._showingGlobe());
                 t.end();
             });
         });
@@ -1606,6 +2105,7 @@ test('Map', (t) => {
                     center: [0, 0],
                 });
                 t.deepEqual(map.getProjection(), map.transform.getProjection());
+                t.ok(map._showingGlobe());
                 t.end();
             });
 
@@ -1623,16 +2123,67 @@ test('Map', (t) => {
                     name: 'mercator',
                     center: [0, 0],
                 });
+                t.notOk(map._showingGlobe());
                 t.end();
             });
-
         });
 
-        t.test('defaults to style sheet projection',  (t) => {
+        t.test('Crossing globe-to-mercator zoom threshold sets mercator transition and calculates matrices', (t) => {
             const map = createMap(t, {projection: 'globe'});
-            map.setZoom(12);
-            map.once('render', () => {
-                t.end();
+
+            map.on('load', () => {
+
+                t.spy(map.transform, 'setMercatorFromTransition');
+                t.spy(map.transform, '_calcMatrices');
+
+                t.equal(map.transform.setMercatorFromTransition.callCount, 0);
+                t.equal(map.transform.mercatorFromTransition, false);
+                t.equal(map.transform._calcMatrices.callCount, 0);
+
+                map.setZoom(7);
+
+                map.once('render', () => {
+                    t.equal(map.transform.setMercatorFromTransition.callCount, 1);
+                    t.equal(map.transform.mercatorFromTransition, true);
+                    t.equal(map.transform._calcMatrices.callCount, 3);
+                    t.end();
+
+                });
+            });
+        });
+
+        t.test('Changing zoom on globe does not clear tiles', (t) => {
+            const map = createMap(t, {projection: 'globe'});
+            t.spy(map.painter, 'clearBackgroundTiles');
+            map.on('load', () => {
+                t.equal(map.painter.clearBackgroundTiles.callCount, 0);
+                t.deepEqual(map.getProjection().name, 'globe');
+                t.deepEqual(map.transform.getProjection().name, `globe`);
+                t.ok(map._showingGlobe());
+
+                map.setZoom(12);
+                map.once('render', () => {
+                    t.equal(map.painter.clearBackgroundTiles.callCount, 0);
+                    t.deepEqual(map.getProjection().name, 'globe');
+                    t.deepEqual(map.transform.getProjection().name, `mercator`);
+                    t.notOk(map._showingGlobe());
+
+                    map.setProjection({name: 'mercator'});
+                    t.equal(map.painter.clearBackgroundTiles.callCount, 0);
+                    t.deepEqual(map.getProjection().name, 'mercator');
+                    t.deepEqual(map.transform.getProjection().name, `mercator`);
+                    t.notOk(map._showingGlobe());
+
+                    map.setZoom(3);
+                    map.once('render', () => {
+                        map.setProjection({name: 'globe'});
+                        t.equal(map.painter.clearBackgroundTiles.callCount, 1);
+                        t.deepEqual(map.getProjection().name, 'globe');
+                        t.deepEqual(map.transform.getProjection().name, `globe`);
+                        t.ok(map._showingGlobe());
+                        t.end();
+                    });
+                });
             });
         });
 
@@ -1647,29 +2198,33 @@ test('Map', (t) => {
                 "layers": []
             }});
             const style = map.style;
+            t.spy(map.painter, 'clearBackgroundTiles');
 
             map.on('load', () =>  {
                 // Defaults to style projection
                 t.equal(style.serialize().projection.name, 'albers');
                 t.equal(map.transform.getProjection().name, 'albers');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 1);
 
                 // Runtime api overrides style projection
                 // Stylesheet projection not changed by runtime apis
                 map.setProjection({name: 'winkelTripel'});
                 t.equal(style.serialize().projection.name, 'albers');
                 t.equal(map.transform.getProjection().name, 'winkelTripel');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 2);
 
                 // Runtime api overrides stylesheet projection
-                map.style.setState(Object.assign({}, style.serialize(), {projection: {name: 'naturalEarth'}}));
+                style.setState(Object.assign({}, style.serialize(), {projection: {name: 'naturalEarth'}}));
                 t.equal(style.serialize().projection.name, 'naturalEarth');
                 t.equal(map.transform.getProjection().name, 'winkelTripel');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 2);
 
                 // Unsetting runtime projection reveals stylesheet projection
                 map.setProjection(null);
-                style._updateProjection();
                 t.equal(style.serialize().projection.name, 'naturalEarth');
                 t.equal(map.transform.getProjection().name, 'naturalEarth');
                 t.equal(map.getProjection().name, 'naturalEarth');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 3);
 
                 // Unsetting stylesheet projection reveals mercator
                 const stylesheet = style.serialize();
@@ -1677,6 +2232,43 @@ test('Map', (t) => {
                 style.setState(stylesheet);
                 t.equal(style.serialize().projection, undefined);
                 t.equal(map.transform.getProjection().name, 'mercator');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 4);
+
+                t.end();
+            });
+        });
+
+        t.test('setProjection(null) reveals globe when in style', (t) => {
+            const map = createMap(t, {style: {
+                "version": 8,
+                "projection": {
+                    "name": "globe"
+                },
+                "sources": {},
+                "layers": []
+            }});
+            const style = map.style;
+
+            t.spy(map.painter, 'clearBackgroundTiles');
+
+            map.on('load', () =>  {
+                // Defaults to style projection
+                t.equal(style.serialize().projection.name, 'globe');
+                t.equal(map.transform.getProjection().name, 'globe');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 1);
+
+                // Runtime api overrides stylesheet projection
+                map.setProjection('albers');
+                t.equal(style.serialize().projection.name, 'globe');
+                t.equal(map.transform.getProjection().name, 'albers');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 2);
+
+                // Unsetting runtime projection reveals stylesheet projection
+                map.setProjection(null);
+                t.equal(style.serialize().projection.name, 'globe');
+                t.equal(map.transform.getProjection().name, 'globe');
+                t.equal(map.getProjection().name, 'globe');
+                t.equal(map.painter.clearBackgroundTiles.callCount, 3);
 
                 t.end();
             });
@@ -1823,6 +2415,74 @@ test('Map', (t) => {
         });
     });
 
+    t.test('#remove deletes gl resources used by the globe', (t) => {
+        const style = extend(createStyle(), {zoom: 1});
+        const map = createMap(t, {style});
+        map.setProjection("globe");
+
+        map.on('style.load', () => {
+            map.once('render', () => {
+                map.remove();
+                const buffers = map.painter.globeSharedBuffers;
+                t.ok(buffers);
+
+                const checkBuffer = (name) => buffers[name] && ('buffer' in buffers[name]);
+
+                t.false(checkBuffer('_poleIndexBuffer'));
+                t.false(checkBuffer('_gridBuffer'));
+                t.false(checkBuffer('_gridIndexBuffer'));
+                t.false(checkBuffer('_poleNorthVertexBuffer'));
+                t.false(checkBuffer('_poleSouthVertexBuffer'));
+                t.false(checkBuffer('_wireframeIndexBuffer'));
+
+                t.end();
+            });
+        });
+    });
+
+    t.test('#remove deletes gl resources used by the atmosphere', (t) => {
+        const style = extend(createStyle(), {zoom: 1});
+        const map = createMap(t, {style});
+
+        map.on('style.load', () => {
+            map.once('render', () => {
+                const atmosphereBuffers = map.painter.atmosphereBuffer;
+
+                t.ok(atmosphereBuffers);
+
+                t.true(atmosphereBuffers.vertexBuffer.buffer);
+                t.true(atmosphereBuffers.indexBuffer.buffer);
+
+                map.remove();
+
+                t.false(atmosphereBuffers.vertexBuffer.buffer);
+                t.false(atmosphereBuffers.indexBuffer.buffer);
+
+                t.end();
+            });
+        });
+    });
+
+    t.test('#remove does not leak event listeners on container', (t) => {
+        const container = window.document.createElement('div');
+        container.addEventListener = t.spy();
+        container.removeEventListener = t.spy();
+
+        t.stub(Map.prototype, '_detectMissingCSS');
+        t.stub(Map.prototype, '_authenticate');
+
+        const map = new Map({
+            container,
+            testMode: true
+        });
+        map.remove();
+
+        t.equal(container.addEventListener.callCount, container.removeEventListener.callCount);
+        t.equal(container.addEventListener.callCount, 1);
+        t.equal(container.removeEventListener.callCount, 1);
+        t.end();
+    });
+
     t.test('#addControl', (t) => {
         const map = createMap(t);
         const control = {
@@ -1881,15 +2541,67 @@ test('Map', (t) => {
         t.end();
     });
 
+    function pointToFixed(p, n = 8) {
+        return {
+            'x': p.x.toFixed(n),
+            'y': p.y.toFixed(n)
+        };
+    }
+
     t.test('#project', (t) => {
         const map = createMap(t);
-        t.deepEqual(map.project([0, 0]), {x: 100, y: 100});
+
+        t.test('In Mercator', (t) => {
+            t.deepEqual(pointToFixed(map.project({lng: 0, lat: 0})), {x: 100, y: 100});
+            t.deepEqual(pointToFixed(map.project({lng: -70.3125, lat: 57.326521225})), {x: 0, y: 0});
+            t.end();
+        });
+        t.test('In Globe', (t) => {
+            map.setProjection('globe');
+            t.deepEqual(pointToFixed(map.project({lng: 0, lat: 0})), {x: 100, y: 100});
+            t.deepEqual(pointToFixed(map.project({lng:  -72.817409474, lat: 43.692434709})), {x: 38.86205343, y: 38.86205343});
+            t.end();
+        });
+        t.test('In Natural Earth', (t) => {
+            map.setProjection('naturalEarth');
+            t.deepEqual(pointToFixed(map.project({lng: 0, lat: 0})), {x: 100, y: 100});
+            t.deepEqual(pointToFixed(map.project({lng: -86.861020716, lat: 61.500721712})), {x: 0, y: 0});
+            t.end();
+        });
+        t.test('In Albers', (t) => {
+            map.setProjection('albers');
+            t.deepEqual(pointToFixed(map.project({lng: 0, lat: 0})), {x: 100, y: 100});
+            t.deepEqual(pointToFixed(map.project({lng: 44.605340721, lat: 79.981951054})), {x: 0, y: 0});
+            t.end();
+        });
         t.end();
     });
 
     t.test('#unproject', (t) => {
         const map = createMap(t);
-        t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
+        t.test('In Mercator', (t) => {
+            t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
+            t.deepEqual(fixedLngLat(map.unproject([0, 0])), {lng: -70.3125, lat: 57.326521225});
+            t.end();
+        });
+        t.test('In Globe', (t) => {
+            map.setProjection('globe');
+            t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
+            t.deepEqual(fixedLngLat(map.unproject([0, 0])), {lng: -67.77848443, lat: 42.791315106});
+            t.end();
+        });
+        t.test('In Natural Earth', (t) => {
+            map.setProjection('naturalEarth');
+            t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
+            t.deepEqual(fixedLngLat(map.unproject([0, 0])), {lng: -86.861020716, lat: 61.500721712});
+            t.end();
+        });
+        t.test('In Albers', (t) => {
+            map.setProjection('albers');
+            t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
+            t.deepEqual(fixedLngLat(map.unproject([0, 0])), {lng: 44.605340721, lat: 79.981951054});
+            t.end();
+        });
         t.end();
     });
 
@@ -2081,11 +2793,12 @@ test('Map', (t) => {
                 t.error(err);
                 t.spy(map.style, 'queryRenderedFeatures');
 
-                const output = map.queryRenderedFeatures({filter: ['all']});
+                const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)), {filter: ['all']});
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.ok(args[0]);
+                t.deepEqual(args[0], {x: 100, y: 100});
                 t.deepEqual(args[1], {availableImages: [], filter: ['all']});
+                t.deepEqual(args[2], map.transform);
                 t.deepEqual(output, []);
 
                 t.end();
@@ -2110,6 +2823,96 @@ test('Map', (t) => {
             t.end();
         });
 
+        t.end();
+    });
+
+    t.test('#language', (t) => {
+        t.test('can instantiate map with language', (t) => {
+            const map = createMap(t, {language: 'uk'});
+            map.on('style.load', () => {
+                t.equal(map.getLanguage(), 'uk');
+                t.end();
+            });
+        });
+
+        t.test('can instantiate map with fallback language', (t) => {
+            const map = createMap(t, {language: ['en-GB', 'en-US']});
+            map.on('style.load', () => {
+                t.deepEqual(map.getLanguage(), ['en-GB', 'en-US']);
+                t.end();
+            });
+        });
+
+        t.test('can instantiate map with the preferred language of the user', (t) => {
+            const map = createMap(t, {language: 'auto'});
+            map.on('style.load', () => {
+                t.equal(map.getLanguage(), window.navigator.language);
+                t.end();
+            });
+        });
+
+        t.test('sets and gets language property', (t) => {
+            const map = createMap(t);
+            map.on('style.load', () => {
+                map.setLanguage('es');
+                t.equal(map.getLanguage(), 'es');
+                t.end();
+            });
+        });
+
+        t.test('can reset language property to default', (t) => {
+            const map = createMap(t);
+            map.on('style.load', () => {
+                map.setLanguage('es');
+                t.equal(map.getLanguage(), 'es');
+
+                map.setLanguage(['auto', 'en-GB', 'en-US']);
+                t.deepEqual(map.getLanguage(), [window.navigator.language, 'en-GB', 'en-US']);
+
+                map.setLanguage([]);
+                t.equal(map.getLanguage(), undefined);
+
+                map.setLanguage('auto');
+                t.equal(map.getLanguage(), window.navigator.language);
+
+                map.setLanguage();
+                t.equal(map.getLanguage(), undefined);
+
+                t.end();
+            });
+        });
+
+        t.end();
+    });
+
+    t.test('#worldview', (t) => {
+        t.test('can instantiate map with worldview', (t) => {
+            const map = createMap(t, {worldview: 'JP'});
+            map.on('style.load', () => {
+                t.equal(map.getWorldview(), 'JP');
+                t.end();
+            });
+        });
+
+        t.test('sets and gets worldview property', (t) => {
+            const map = createMap(t);
+            map.on('style.load', () => {
+                map.setWorldview('JP');
+                t.equal(map.getWorldview(), 'JP');
+                t.end();
+            });
+        });
+
+        t.test('can remove worldview property', (t) => {
+            const map = createMap(t);
+            map.on('style.load', () => {
+                map.setWorldview('JP');
+                t.equal(map.getWorldview(), 'JP');
+                map.setWorldview();
+                t.notOk(map.getWorldview());
+                t.end();
+            });
+        });
         t.end();
     });
 
@@ -3117,6 +3920,202 @@ test('Map', (t) => {
                 t.fail(`styleimagemissing fired for value ${id}`);
             });
         });
+    });
+
+    t.test('#snapToNorth', (t) => {
+
+        t.test('snaps when less than < 7 degrees', (t) => {
+            const map = createMap(t);
+            map.on('load', () =>  {
+                map.setBearing(6);
+                t.equal(map.getBearing(), 6);
+                map.snapToNorth();
+                map.once('idle', () => {
+                    t.equal(map.getBearing(), 0);
+                    t.end();
+                });
+            });
+        });
+
+        t.test('does not snap when > 7 degrees', (t) => {
+            const map = createMap(t);
+            map.on('load', () =>  {
+                map.setBearing(8);
+                t.equal(map.getBearing(), 8);
+                map.snapToNorth();
+                map.once('idle', () => {
+                    t.equal(map.getBearing(), 8);
+                    t.end();
+                });
+            });
+        });
+
+        t.test('snaps when < bearingSnap', (t) => {
+            const map = createMap(t, {"bearingSnap": 12});
+            map.on('load', () =>  {
+                map.setBearing(11);
+                t.equal(map.getBearing(), 11);
+                map.snapToNorth();
+                map.once('idle', () => {
+                    t.equal(map.getBearing(), 0);
+                    t.end();
+                });
+            });
+        });
+
+        t.test('does not snap when > bearingSnap', (t) => {
+            const map = createMap(t, {"bearingSnap": 10});
+            map.on('load', () =>  {
+                map.setBearing(11);
+                t.equal(map.getBearing(), 11);
+                map.snapToNorth();
+                map.once('idle', () => {
+                    t.equal(map.getBearing(), 11);
+                    t.end();
+                });
+            });
+        });
+        t.end();
+    });
+
+    t.test('map.version', (t) => {
+        const map = createMap(t);
+        const version = map.version;
+        t.test('returns version string', (t) => {
+            t.ok(version);
+            t.match(version, /^2\.[0-9]+\.[0-9]+(-dev|-beta\.[1-9])?$/);
+            t.end();
+        });
+        t.test('cannot be set', (t) => {
+            t.throws(() => {
+                map.version = "2.0.0-beta.9";
+            }, TypeError, 'Cannot set property version of #<Map> which has only a getter');
+            t.notSame(map.version, "2.0.0-beta.9");
+            t.same(map.version, version);
+            t.end();
+        });
+        t.end();
+    });
+
+    t.test('#queryTerrainElevation', (t) => {
+        t.test('no elevation set', (t) => {
+            const map = createMap(t);
+            let elevation = map.queryTerrainElevation([25, 60]);
+            t.notOk(elevation);
+
+            elevation = map.queryTerrainElevation([0, 0]);
+            t.notOk(elevation);
+
+            t.end();
+        });
+
+        t.test('constant elevation', (t) => {
+            const map = createMap(t);
+            map.transform.elevation = createElevation(() => 100, 1.0);
+
+            let elevation = map.queryTerrainElevation([25, 60]);
+            t.equal(elevation, 100);
+
+            elevation = map.queryTerrainElevation([0, 0]);
+            t.equal(elevation, 100);
+
+            t.end();
+        });
+
+        t.test('elevation with exaggeration', (t) => {
+            const map = createMap(t);
+            map.transform.elevation = createElevation((point) => point.x + point.y, 0.1);
+
+            let elevation = map.queryTerrainElevation([0, 0]);
+            t.equal(fixedNum(elevation, 7), 0.1);
+
+            elevation = map.queryTerrainElevation([180, 0]);
+            t.equal(fixedNum(elevation, 7), 0.15);
+
+            elevation = map.queryTerrainElevation([-180, 85.051129]);
+            t.equal(fixedNum(elevation, 7), 0.0);
+
+            elevation = map.queryTerrainElevation([180, -85.051129]);
+            t.equal(fixedNum(elevation, 6), 0.2);
+
+            t.end();
+        });
+
+        t.end();
+    });
+
+    t.test('#isPointOnSurface', (t) => {
+
+        t.test('Off the map', (t) => {
+            const map = createMap(t);
+
+            t.equal(map.isPointOnSurface([100, 100]), true, 'center of the map');
+            t.equal(map.isPointOnSurface([0, 0]), true, 'top left of the map');
+            t.equal(map.isPointOnSurface([200, 200]), true, 'bottom right of the map');
+
+            t.equal(map.isPointOnSurface([-100, -100]), false, 'top left outside of the map');
+            t.equal(map.isPointOnSurface([300, 300]), false, 'bottom right outside of the map');
+
+            t.end();
+        });
+
+        t.test('Mercator', (t) => {
+            const map = createMap(t, {
+                zoom: 0,
+                projection: 'mercator'
+            });
+
+            t.equal(map.isPointOnSurface([100, 100]), true, 'center of the map');
+
+            map.setPitch(90);
+            t.equal(map.isPointOnSurface([100, 100]), true, 'center of the map');
+            t.equal(map.isPointOnSurface([100, 85]), false, 'above the horizon');
+
+            t.end();
+        });
+
+        t.test('Globe', (t) => {
+            const map = createMap(t, {
+                zoom: 0,
+                projection: 'globe'
+            });
+
+            map.on('load', () => {
+                // On the Globe
+                t.equal(map.isPointOnSurface([45, 45]), true, 'top left on the globe');
+                t.equal(map.isPointOnSurface([135, 45]), true, 'top right on the globe');
+                t.equal(map.isPointOnSurface([135, 135]), true, 'bottom right on the globe');
+                t.equal(map.isPointOnSurface([45, 135]), true, 'bottom left on the globe');
+
+                // Off the Globe
+                t.equal(map.isPointOnSurface([25, 25]), false, 'top left off the globe');
+                t.equal(map.isPointOnSurface([175, 25]), false, 'top right off the globe');
+                t.equal(map.isPointOnSurface([175, 175]), false, 'bottom right off the globe');
+                t.equal(map.isPointOnSurface([25, 175]), false, 'bottom left off the globe');
+
+                // North pole
+                map.setCenter([0, 90]);
+                t.equal(map.isPointOnSurface([100, 100]), true, 'center of the map');
+
+                // North pole with pitch
+                map.setPitch(90);
+                t.equal(map.isPointOnSurface([100, 100]), true, 'center of the map');
+                t.equal(map.isPointOnSurface([100, 85]), false, 'above the horizon');
+
+                map.setZoom(5);
+                map.setCenter([0, 0]);
+                t.equal(map.isPointOnSurface([100, 100]), true, 'on the globe on zoom 5');
+                t.equal(map.isPointOnSurface([100, 85]), false, 'above the horizon on zoom 5');
+
+                map.setZoom(6);
+                t.equal(map.isPointOnSurface([100, 100]), true, 'on the globe on zoom 6');
+                t.equal(map.isPointOnSurface([100, 85]), false, 'above the horizon on zoom 6');
+
+                t.end();
+            });
+        });
+
+        t.end();
     });
 
     t.end();

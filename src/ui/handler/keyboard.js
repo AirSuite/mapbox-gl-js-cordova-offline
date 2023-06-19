@@ -125,11 +125,11 @@ class KeyboardHandler {
         return {
             cameraAnimation: (map: Map) => {
                 const zoom = map.getZoom();
+
                 map.easeTo({
                     duration: 300,
                     easeId: 'keyboardHandler',
                     easing: easeOut,
-
                     zoom: zoomDir ? Math.round(zoom) + zoomDir * (e.shiftKey ? 2 : 1) : zoom,
                     bearing: map.getBearing() + bearingDir * this._bearingStep,
                     pitch: map.getPitch() + pitchDir * this._pitchStep,
@@ -166,7 +166,7 @@ class KeyboardHandler {
      * interaction is enabled.
      *
      * @returns {boolean} `true` if the "keyboard rotate and zoom"
-     * interaction is enabled.
+     *     interaction is enabled.
      * @example
      * const isKeyboardEnabled = map.keyboard.isEnabled();
      */
@@ -179,7 +179,7 @@ class KeyboardHandler {
      * zoom/rotate gesture.
      *
      * @returns {boolean} `true` if the handler is enabled and has detected the
-     * start of a zoom/rotate gesture.
+     *     start of a zoom/rotate gesture.
      * @example
      * const isKeyboardActive = map.keyboard.isActive();
      */

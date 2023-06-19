@@ -6,6 +6,7 @@ import window from './window.js';
 import assert from 'assert';
 
 // refine the return type based on tagName, e.g. 'button' -> HTMLButtonElement
+// $FlowFixMe[method-unbinding]
 export function create<T: string>(tagName: T, className: ?string, container?: HTMLElement): $Call<typeof document.createElement, T> {
     const el = window.document.createElement(tagName);
     if (className !== undefined) el.className = className;
@@ -40,7 +41,7 @@ export function enableDrag() {
 }
 
 // Suppress the next click, but only if it's immediate.
-function suppressClickListener(e) {
+function suppressClickListener(e: Event) {
     e.preventDefault();
     e.stopPropagation();
     window.removeEventListener('click', suppressClickListener, true);

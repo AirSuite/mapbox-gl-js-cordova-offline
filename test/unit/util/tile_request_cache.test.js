@@ -1,18 +1,17 @@
 import {test} from '../../util/test.js';
 import {cacheGet, cachePut, cacheClose} from '../../../src/util/tile_request_cache.js';
 import window from '../../../src/util/window.js';
+/*eslint-disable import/no-named-as-default-member */
 import sinon from 'sinon';
 
 test('tile_request_cache', (t) => {
-    t.beforeEach(callback => {
+    t.beforeEach(() => {
         cacheClose();
         window.caches = sinon.stub();
-        callback();
     });
 
-    t.afterEach(callback => {
+    t.afterEach(() => {
         window.restore();
-        callback();
     });
 
     t.test('cachePut, no window.caches', (t) => {
@@ -71,21 +70,23 @@ test('tile_request_cache', (t) => {
         fakeResponse.headers.get.withArgs('Cache-Control').returns(null);
         fakeResponse.clone.returns(fakeResponse);
 
+        const fakeURL = 'someurl?language="es"&worldview="US"';
         const fakeCache = sinon.stub();
-        fakeCache.match = sinon.stub().withArgs('someurl').resolves(fakeResponse);
+        fakeCache.match = sinon.stub().withArgs(fakeURL).resolves(fakeResponse);
         fakeCache.delete = sinon.stub();
         fakeCache.put = sinon.stub();
 
         window.caches.open = sinon.stub().resolves(fakeCache);
 
-        cacheGet({url:'someurl'}, (error, response, fresh) => {
+        // ensure that the language and worldview query parameters are retained but other query parameters aren't
+        cacheGet({url: `${fakeURL}&accessToken="foo"`}, (error, response, fresh) => {
             t.ifError(error, 'should not result in error');
-            t.ok(fakeCache.match.calledWith('someurl'), 'should call cache.match with correct url');
-            t.ok(fakeCache.delete.calledWith('someurl'), 'should call cache.delete with correct url');
+            t.ok(fakeCache.match.calledWith(fakeURL), 'should call cache.match with correct url');
+            t.ok(fakeCache.delete.calledWith(fakeURL), 'should call cache.delete with correct url');
             t.ok(response, 'should give a response');
             t.equals(response.body, 'yay', 'should give the right response object');
             t.ok(fresh, 'should consider a response with a future expiry date as "fresh"');
-            t.ok(fakeCache.put.calledWith('someurl', fakeResponse), 'should call cache.put for fresh response');
+            t.ok(fakeCache.put.calledWith(fakeURL, fakeResponse), 'should call cache.put for fresh response');
             t.end();
         });
     });

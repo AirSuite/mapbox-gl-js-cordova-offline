@@ -5,6 +5,7 @@ import Map from '../../../../src/ui/map.js';
 import * as DOM from '../../../../src/util/dom.js';
 import simulate from '../../../util/simulate_interaction.js';
 import {equalWithPrecision} from '../../../util/index.js';
+/*eslint-disable import/no-named-as-default-member */
 import sinon from 'sinon';
 import {createConstElevationDEM, setMockElevationTerrain} from '../../../util/dem_mock.js';
 import {fixedNum} from '../../../util/fixed.js';
@@ -227,6 +228,53 @@ test('ScrollZoomHandler', (t) => {
         t.end();
     });
 
+    t.test('Globe', (t) => {
+        t.test('Zoom towards a point on the globe', (t) => {
+            const map = createMap(t);
+
+            // Scroll zoom should result in identical movement in both mercator and globe projections
+            map.transform.zoom = 0;
+
+            for (let i = 0; i < 5; i++) {
+                simulate.wheel(map.getCanvas(), {type: 'wheel', deltaY: -100});
+                map._renderTaskQueue.run();
+            }
+
+            t.equal(fixedNum(map.transform.zoom, 5), 2.46106);
+
+            now += 500;
+            map.transform.zoom = 0;
+            map.setProjection({name:'globe'});
+
+            for (let i = 0; i < 5; i++) {
+                simulate.wheel(map.getCanvas(), {type: 'wheel', deltaY: -100});
+                map._renderTaskQueue.run();
+            }
+
+            t.equal(fixedNum(map.transform.zoom, 5), 2.46106);
+
+            map.remove();
+            t.end();
+        });
+
+        t.end();
+    });
+
+    t.test('Wheel events can cross antimeridian in projections that allow wrapping', (t) => {
+        const map = createMap(t);
+        map.setCenter([-178.90, 38.8888]);
+
+        for (let i = 0; i < 2; i++) {
+            simulate.wheel(map.getCanvas(), {type: 'wheel', deltaY: -simulate.magicWheelZoomDelta});
+            map._renderTaskQueue.run();
+        }
+
+        t.equal(map.getCenter().lng, 175.63974309977988);
+
+        map.remove();
+        t.end();
+    });
+
     t.test('Gracefully ignores wheel events with deltaY: 0', (t) => {
         const map = createMap(t);
         map._renderTaskQueue.run();
@@ -417,6 +465,20 @@ test('When cooperativeGestures option is set to true, scroll zoom is activated w
 
     simulate.wheel(map.getCanvas(), {type: 'wheel', deltaY: -simulate.magicWheelZoomDelta, metaKey: true});
 
+    map._renderTaskQueue.run();
+
+    t.equal(zoomSpy.callCount, 1);
+    t.end();
+});
+
+test('When cooperativeGestures is true and map is in fullscreen, scroll zoom is not prevented', (t) => {
+    window.document.fullscreenElement = true;
+    const map = createMapWithCooperativeGestures(t);
+
+    const zoomSpy = t.spy();
+    map.on('zoom', zoomSpy);
+
+    simulate.wheel(map.getCanvas(), {type: 'wheel', deltaY: -simulate.magicWheelZoomDelta});
     map._renderTaskQueue.run();
 
     t.equal(zoomSpy.callCount, 1);

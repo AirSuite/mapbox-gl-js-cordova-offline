@@ -65,14 +65,21 @@ import skyboxCaptureFrag from './skybox_capture.fragment.glsl';
 import skyboxCaptureVert from './skybox_capture.vertex.glsl';
 import globeFrag from './globe_raster.fragment.glsl';
 import globeVert from './globe_raster.vertex.glsl';
-import atmosphereFrag from './globe_atmosphere.fragment.glsl';
-import atmosphereVert from './globe_atmosphere.vertex.glsl';
+import atmosphereFrag from './atmosphere.fragment.glsl';
+import atmosphereVert from './atmosphere.vertex.glsl';
 
 export let preludeTerrain = {};
 export let preludeFog = {};
 
-preludeTerrain = compile('', preludeTerrainVert, true);
-preludeFog = compile(preludeFogFrag, preludeFogVert, true);
+const commonDefines = [];
+parseUsedPreprocessorDefines(preludeCommon, commonDefines);
+parseUsedPreprocessorDefines(preludeTerrainVert, commonDefines);
+parseUsedPreprocessorDefines(preludeFogVert, commonDefines);
+parseUsedPreprocessorDefines(preludeFogFrag, commonDefines);
+
+preludeTerrain = compile('', preludeTerrainVert);
+preludeFog = compile(preludeFogFrag, preludeFogVert);
+// Shadow prelude is not compiled until GL-JS implements shadows
 
 export const prelude = compile(preludeFrag, preludeVert);
 export const preludeCommonSource = preludeCommon;
@@ -114,6 +121,8 @@ precision mediump float;
 
 #endif`;
 
+export const standardDerivativesExt = '#extension GL_OES_standard_derivatives : enable\n';
+
 export default {
     background: compile(backgroundFrag, backgroundVert),
     backgroundPattern: compile(backgroundPatternFrag, backgroundPatternVert),
@@ -147,33 +156,39 @@ export default {
     globeAtmosphere: compile(atmosphereFrag, atmosphereVert)
 };
 
+export function parseUsedPreprocessorDefines(source, defines) {
+    const lines = source.replace(/\s*\/\/[^\n]*\n/g, '\n').split('\n');
+    for (let line of lines) {
+        line = line.trim();
+        if (line[0] === '#') {
+            if (line.includes('if') && !line.includes('endif')) {
+                line = line.replace('#', '')
+                    .replace(/ifdef|ifndef|elif|if/g, '')
+                    .replace(/!|defined|\(|\)|\|\||&&/g, '')
+                    .replace(/\s+/g, ' ').trim();
+
+                const newDefines = line.split(' ');
+                for (const define of newDefines) {
+                    if (!defines.includes(define)) {
+                        defines.push(define);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Expand #pragmas to #ifdefs.
-function compile(fragmentSource, vertexSource, isGlobalPrelude) {
+export function compile(fragmentSource, vertexSource) {
     const pragmaRegex = /#pragma mapbox: ([\w]+) ([\w]+) ([\w]+) ([\w]+)/g;
-    const uniformRegex = /uniform (highp |mediump |lowp )?([\w]+) ([\w]+)([\s]*)([\w]*)/g;
     const attributeRegex = /attribute (highp |mediump |lowp )?([\w]+) ([\w]+)/g;
 
     const staticAttributes = vertexSource.match(attributeRegex);
-    const fragmentUniforms = fragmentSource.match(uniformRegex);
-    const vertexUniforms = vertexSource.match(uniformRegex);
-    const commonUniforms = preludeCommon.match(uniformRegex);
-
-    let staticUniforms = vertexUniforms ? vertexUniforms.concat(fragmentUniforms) : fragmentUniforms;
-
-    if (!isGlobalPrelude) {
-        if (preludeTerrain.staticUniforms) {
-            staticUniforms = preludeTerrain.staticUniforms.concat(staticUniforms);
-        }
-        if (preludeFog.staticUniforms) {
-            staticUniforms = preludeFog.staticUniforms.concat(staticUniforms);
-        }
-    }
-
-    if (staticUniforms) {
-        staticUniforms = staticUniforms.concat(commonUniforms);
-    }
-
     const fragmentPragmas = {};
+
+    const usedDefines = [...commonDefines];
+    parseUsedPreprocessorDefines(fragmentSource, usedDefines);
+    parseUsedPreprocessorDefines(vertexSource, usedDefines);
 
     fragmentSource = fragmentSource.replace(pragmaRegex, (match, operation, precision, type, name) => {
         fragmentPragmas[name] = true;
@@ -262,5 +277,5 @@ uniform ${precision} ${type} u_${name};
         }
     });
 
-    return {fragmentSource, vertexSource, staticAttributes, staticUniforms};
+    return {fragmentSource, vertexSource, staticAttributes, usedDefines};
 }

@@ -36,6 +36,7 @@ class Actor {
         this.callbacks = {};
         this.cancelCallbacks = {};
         bindAll(['receive'], this);
+        // $FlowFixMe[method-unbinding]
         this.target.addEventListener('message', this.receive, false);
         this.globalScope = isWorker() ? target : window;
         this.scheduler = new Scheduler();
@@ -140,7 +141,7 @@ class Actor {
             }
         } else {
             const buffers: ?Array<Transferable> = isSafari(this.globalScope) ? undefined : [];
-            const done = task.hasCallback ? (err, data) => {
+            const done = task.hasCallback ? (err: ?Error, data: mixed) => {
                 delete this.cancelCallbacks[id];
                 this.target.postMessage({
                     id,
@@ -170,6 +171,7 @@ class Actor {
 
     remove() {
         this.scheduler.remove();
+        // $FlowFixMe[method-unbinding]
         this.target.removeEventListener('message', this.receive, false);
     }
 }

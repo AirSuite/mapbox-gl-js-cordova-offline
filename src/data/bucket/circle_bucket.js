@@ -29,22 +29,22 @@ import type Point from '@mapbox/point-geometry';
 import type {FeatureStates} from '../../source/source_state.js';
 import type {SpritePositions} from '../../util/image.js';
 import type {TileTransform} from '../../geo/projection/tile_transform.js';
+import type {ProjectionSpecification} from '../../style-spec/types.js';
 import type Projection from '../../geo/projection/projection.js';
 import type {Vec3} from 'gl-matrix';
-import {latFromMercatorY, mercatorZfromAltitude} from '../../geo/mercator_coordinate.js';
+import type {IVectorTileLayer} from '@mapbox/vector-tile';
 
-function addCircleVertex(layoutVertexArray, x, y, extrudeX, extrudeY) {
+function addCircleVertex(layoutVertexArray: CircleLayoutArray, x: number, y: number, extrudeX: number, extrudeY: number) {
     layoutVertexArray.emplaceBack(
         (x * 2) + ((extrudeX + 1) / 2),
         (y * 2) + ((extrudeY + 1) / 2));
 }
 
-function addGlobeExtVertex(vertexArray: CircleGlobeExtArray, pos: {x: number, y: number, z: number}, normal: Vec3, scale: number) {
+function addGlobeExtVertex(vertexArray: CircleGlobeExtArray, pos: {x: number, y: number, z: number}, normal: Vec3) {
     const encode = 1 << 14;
     vertexArray.emplaceBack(
         pos.x, pos.y, pos.z,
-        normal[0] * encode, normal[1] * encode, normal[2] * encode,
-        scale);
+        normal[0] * encode, normal[1] * encode, normal[2] * encode);
 }
 
 /**
@@ -75,7 +75,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
     programConfigurations: ProgramConfigurationSet<Layer>;
     segments: SegmentVector;
     uploaded: boolean;
-    projection: string;
+    projection: ProjectionSpecification;
 
     constructor(options: BucketParameters<Layer>) {
         this.zoom = options.zoom;
@@ -107,6 +107,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
 
+            // $FlowFixMe[method-unbinding]
             if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical)) continue;
 
             const sortKey = circleSortKey ?
@@ -152,7 +153,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
     }
@@ -210,17 +211,12 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
                 if (projection) {
                     const projectedPoint = projection.projectTilePoint(x, y, canonical);
                     const normal = projection.upVector(canonical, x, y);
-
-                    // Apply extra scaling to cover different pixelPerMeter ratios at different latitudes
-                    // scale = projection.ppm(lat) / mercator.ppm(lat)
-                    const lat = latFromMercatorY((y / EXTENT + canonical.y) / (1 << canonical.z));
-                    const scale = projection.pixelsPerMeter(lat, 1) / mercatorZfromAltitude(1, lat);
                     const array: any = this.globeExtVertexArray;
 
-                    addGlobeExtVertex(array, projectedPoint, normal, scale);
-                    addGlobeExtVertex(array, projectedPoint, normal, scale);
-                    addGlobeExtVertex(array, projectedPoint, normal, scale);
-                    addGlobeExtVertex(array, projectedPoint, normal, scale);
+                    addGlobeExtVertex(array, projectedPoint, normal);
+                    addGlobeExtVertex(array, projectedPoint, normal);
+                    addGlobeExtVertex(array, projectedPoint, normal);
+                    addGlobeExtVertex(array, projectedPoint, normal);
                 }
                 const segment = this.segments.prepareSegment(4, this.layoutVertexArray, this.indexArray, feature.sortKey);
                 const index = segment.vertexLength;
@@ -231,7 +227,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
                 addCircleVertex(this.layoutVertexArray, x, y, -1, 1);
 
                 this.indexArray.emplaceBack(index, index + 1, index + 2);
-                this.indexArray.emplaceBack(index, index + 3, index + 2);
+                this.indexArray.emplaceBack(index, index + 2, index + 3);
 
                 segment.vertexLength += 4;
                 segment.primitiveLength += 2;
@@ -242,6 +238,6 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
     }
 }
 
-register(CircleBucket, {omit: ['layers']});
+register(CircleBucket, 'CircleBucket', {omit: ['layers']});
 
 export default CircleBucket;

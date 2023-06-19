@@ -3,7 +3,7 @@
 import {vec3, vec4} from 'gl-matrix';
 import assert from 'assert';
 
-import type {Vec3} from 'gl-matrix';
+import type {Vec3, Mat4} from 'gl-matrix';
 
 class Ray {
     pos: Vec3;
@@ -85,6 +85,36 @@ class Ray {
     }
 }
 
+class FrustumCorners {
+    TL: [number, number, number];
+    TR: [number, number, number];
+    BR: [number, number, number];
+    BL: [number, number, number];
+    horizon: number;
+
+    constructor(TL_: [number, number, number], TR_: [number, number, number], BR_: [number, number, number], BL_: [number, number, number], horizon_: number) {
+        this.TL = TL_;
+        this.TR = TR_;
+        this.BR = BR_;
+        this.BL = BL_;
+        this.horizon = horizon_;
+    }
+
+    static fromInvProjectionMatrix(invProj: Array<number>, horizonFromTop: number, viewportHeight: number): FrustumCorners {
+        const TLClip = [-1, 1, 1];
+        const TRClip = [1, 1, 1];
+        const BRClip = [1, -1, 1];
+        const BLClip = [-1, -1, 1];
+
+        const TL = vec3.transformMat4(TLClip, TLClip, invProj);
+        const TR = vec3.transformMat4(TRClip, TRClip, invProj);
+        const BR = vec3.transformMat4(BRClip, BRClip, invProj);
+        const BL = vec3.transformMat4(BLClip, BLClip, invProj);
+
+        return new FrustumCorners(TL, TR, BR, BL, horizonFromTop / viewportHeight);
+    }
+}
+
 class Frustum {
     points: Array<Array<number>>;
     planes: Array<Array<number>>;
@@ -143,6 +173,27 @@ class Aabb {
     max: Vec3;
     center: Vec3;
 
+    static fromPoints(points: Array<Vec3>): Aabb {
+        const min = [Infinity, Infinity, Infinity];
+        const max = [-Infinity, -Infinity, -Infinity];
+
+        for (const p of points) {
+            vec3.min(min, min, p);
+            vec3.max(max, max, p);
+        }
+
+        return new Aabb(min, max);
+    }
+
+    static applyTransform(aabb: Aabb, transform: Mat4): Aabb {
+        const corners = aabb.getCorners();
+
+        for (let i = 0; i < corners.length; ++i) {
+            vec3.transformMat4(corners[i], corners[i], transform);
+        }
+        return Aabb.fromPoints(corners);
+    }
+
     constructor(min_: Vec3, max_: Vec3) {
         this.min = min_;
         this.max = max_;
@@ -177,7 +228,7 @@ class Aabb {
         return pointOnAabb - point[2];
     }
 
-    getCorners(): Array<Array<number>> {
+    getCorners(): Array<Vec3> {
         const mn = this.min;
         const mx = this.max;
         return [
@@ -240,5 +291,6 @@ class Aabb {
 export {
     Aabb,
     Frustum,
+    FrustumCorners,
     Ray
 };

@@ -11,13 +11,13 @@ test('round trip', (t) => {
         buffer: ArrayBuffer;
         _cached: ?number;
 
-        constructor(n) {
+        constructor(n: number) {
             this.n = n;
             this.buffer = new ArrayBuffer(100);
             this.squared();
         }
 
-        squared() {
+        squared(): number {
             if (this._cached) {
                 return this._cached;
             }
@@ -26,7 +26,7 @@ test('round trip', (t) => {
         }
     }
 
-    register(Foo, {omit: ['_cached']});
+    register(Foo, 'Foo', {omit: ['_cached']});
 
     const foo = new Foo(10);
     const transferables = [];
@@ -48,7 +48,7 @@ test('custom serialization', (t) => {
     class Bar {
         id: string;
         _deserialized: boolean;
-        constructor(id) {
+        constructor(id: string) {
             this.id = id;
             this._deserialized = false;
         }
@@ -64,7 +64,7 @@ test('custom serialization', (t) => {
         }
     }
 
-    register(Bar);
+    register(Bar, 'Bar');
 
     const bar = new Bar('a');
     t.assert(!bar._deserialized);

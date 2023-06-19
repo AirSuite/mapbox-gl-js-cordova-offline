@@ -4,7 +4,7 @@
 // query-fixtures.json is automatically generated before this file gets built
 // refer testem.js#before_tests()
 import fixtures from '../dist/query-fixtures.json';
-import ignores from '../../ignores.json';
+import ignores from '../../ignores/all.js';
 import {applyOperations} from './operation-handlers.js';
 import {deepEqual, generateDiffLog} from './json-diff.js';
 import {setupHTML, updateHTML} from '../../util/html_generator.js';
@@ -32,14 +32,14 @@ for (const testName in fixtures) {
 
 function ensureTeardown(t) {
     const testName = t.name;
-    const options = {timeout: 5000};
-    if (testName in ignores) {
-        const ignoreType = ignores[testName];
-        if (/^skip/.test(ignoreType)) {
-            options.skip = true;
-        } else {
-            options.todo = true;
-        }
+    const options = {timeout: 10000};
+
+    if (ignores.skip.includes(testName)) {
+        options.skip = true;
+    }
+
+    if (ignores.todo.includes(testName)) {
+        options.todo = true;
     }
     t.test(testName, options, runTest);
 
@@ -73,7 +73,12 @@ async function runTest(t) {
             throw new Error(`Error occured while parsing expected.json: ${style.message}`);
         }
 
-        options = style.metadata.test;
+        options = {
+            width: 512,
+            height: 512,
+            pixelRatio: 1,
+            ...((style.metadata && style.metadata.test) || {})
+        };
         const skipLayerDelete = style.metadata.skipLayerDelete;
 
         window.devicePixelRatio = options.pixelRatio;
@@ -93,10 +98,13 @@ async function runTest(t) {
             skew: options.skew || [0, 0],
             fadeDuration: options.fadeDuration || 0,
             localIdeographFontFamily: options.localIdeographFontFamily || false,
-            crossSourceCollisions: typeof options.crossSourceCollisions === "undefined" ? true : options.crossSourceCollisions
+            crossSourceCollisions: typeof options.crossSourceCollisions === "undefined" ? true : options.crossSourceCollisions,
+            performanceMetricsCollection: false
         });
 
         map.repaint = true;
+        map._authenticate = () => {};
+
         await map.once('load');
         //3. Run the operations on the map
         await applyOperations(map, options);

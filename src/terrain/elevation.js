@@ -33,11 +33,11 @@ export class Elevation {
     /**
      * Helper that checks whether DEM data is available at a given mercator coordinate.
      * @param {MercatorCoordinate} point Mercator coordinate of the point to check against.
-     * @returns {number} `true` indicating whether the data is available at `point`, and `false` otherwise.
+     * @returns {boolean} `true` indicating whether the data is available at `point`, and `false` otherwise.
      */
-    isDataAvailableAtPoint(point: MercatorCoordinate) {
+    isDataAvailableAtPoint(point: MercatorCoordinate): boolean {
         const sourceCache = this._source();
-        if (!sourceCache || point.y < 0.0 || point.y > 1.0) {
+        if (this.isUsingMockSource() || !sourceCache || point.y < 0.0 || point.y > 1.0) {
             return false;
         }
 
@@ -50,7 +50,7 @@ export class Elevation {
         const y = Math.floor(point.y * tiles);
         const demTile = this.findDEMTileFor(new OverscaledTileID(z, wrap, z, x, y));
 
-        return demTile && demTile.dem;
+        return !!(demTile && demTile.dem);
     }
 
     /**
@@ -73,7 +73,11 @@ export class Elevation {
      * point elevation, returns `defaultIfNotLoaded`.
      * Doesn't invoke network request to fetch the data.
      */
-    getAtPoint(point: MercatorCoordinate, defaultIfNotLoaded: ?number, exaggerated: boolean = true): number | null {
+    getAtPoint(point: MercatorCoordinate, defaultIfNotLoaded: ?number, exaggerated: boolean = true): ?number {
+        if (this.isUsingMockSource()) {
+            return null;
+        }
+
         // Force a cast to null for both null and undefined
         if (defaultIfNotLoaded == null) defaultIfNotLoaded = null;
 
@@ -133,6 +137,10 @@ export class Elevation {
      * Nearest filter sampling on dem data is done (no interpolation).
      */
     getForTilePoints(tileID: OverscaledTileID, points: Array<Vec3>, interpolated: ?boolean, useDemTile: ?Tile): boolean {
+        if (this.isUsingMockSource()) {
+            return false;
+        }
+
         const helper = DEMSampler.create(this, tileID, useDemTile);
         if (!helper) { return false; }
 
@@ -148,8 +156,16 @@ export class Elevation {
      * @returns {?{min: number, max: number}} The min and max elevation.
      */
     getMinMaxForTile(tileID: OverscaledTileID): ?{min: number, max: number} {
+        if (this.isUsingMockSource()) {
+            return null;
+        }
+
         const demTile = this.findDEMTileFor(tileID);
-        if (!(demTile && demTile.dem)) { return null; }
+
+        if (!(demTile && demTile.dem)) {
+            return null;
+        }
+
         const dem: DEMData = demTile.dem;
         const tree = dem.tree;
         const demTileID = demTile.tileID;
@@ -208,6 +224,17 @@ export class Elevation {
      * order to access already loaded cached tiles.
      */
     _source(): ?SourceCache {
+        throw new Error('Pure virtual method called.');
+    }
+
+    /*
+     * Whether the SourceCache instance is a mock source cache.
+     * This mock source cache is used solely for the Globe projection and with terrain disabled,
+     * where we only want to leverage the draping rendering pipeline without incurring DEM-tile
+     * download overhead. This function is useful to skip DEM processing as the mock data source
+     * placeholder contains only 0 height.
+     */
+    isUsingMockSource(): boolean {
         throw new Error('Pure virtual method called.');
     }
 

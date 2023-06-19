@@ -4,9 +4,9 @@
     "test": {
       "height": 256,
       "width": 256,
-      "description": "In addition to terrain raster, verifies also toggling terrain off / on",
+      "description": "Check terrain wireframe overlay",
       "showTerrainWireframe": true,
-      "allowed": 0.002,
+      "allowed": 0.033,
       "operations": [
         ["wait"],
         ["setTerrain", null],

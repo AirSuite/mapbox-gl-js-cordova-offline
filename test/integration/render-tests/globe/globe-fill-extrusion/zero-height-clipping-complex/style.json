@@ -4,11 +4,15 @@
     "test": {
       "width": 512,
       "height": 512,
+      "allowed": 0.002,
       "operations": [
         ["setProjection", "globe"],
         [ "wait" ]
       ]
     }
+  },
+  "fog": {
+    "star-intensity": 0
   },
   "sources": {
     "geojson": {

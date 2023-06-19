@@ -147,18 +147,21 @@ export default class Worker {
 
     loadTile(mapId: string, params: WorkerTileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
+        // $FlowFixMe[method-unbinding]
         const p = this.enableTerrain ? extend({enableTerrain: this.terrain}, params) : params;
         p.projection = this.projections[mapId] || this.defaultProjection;
         this.getWorkerSource(mapId, params.type, params.source).loadTile(p, callback);
     }
 
     loadDEMTile(mapId: string, params: WorkerDEMTileParameters, callback: WorkerDEMTileCallback) {
+        // $FlowFixMe[method-unbinding]
         const p = this.enableTerrain ? extend({buildQuadTree: this.terrain}, params) : params;
         this.getDEMWorkerSource(mapId, params.source).loadTile(p, callback);
     }
 
     reloadTile(mapId: string, params: WorkerTileParameters & {type: string}, callback: WorkerTileCallback) {
         assert(params.type);
+        // $FlowFixMe[method-unbinding]
         const p = this.enableTerrain ? extend({enableTerrain: this.terrain}, params) : params;
         p.projection = this.projections[mapId] || this.defaultProjection;
         this.getWorkerSource(mapId, params.type, params.source).reloadTile(p, callback);
@@ -256,7 +259,7 @@ export default class Worker {
             // use a wrapped actor so that we can attach a target mapId param
             // to any messages invoked by the WorkerSource
             const actor = {
-                send: (type, data, callback, _, mustQueue, metadata) => {
+                send: (type: string, data: mixed, callback: any, _: any, mustQueue: boolean, metadata: any) => {
                     this.actor.send(type, data, callback, mapId, mustQueue, metadata);
                 },
                 scheduler: this.actor.scheduler
@@ -291,5 +294,6 @@ export default class Worker {
 if (typeof WorkerGlobalScope !== 'undefined' &&
     typeof self !== 'undefined' &&
     self instanceof WorkerGlobalScope) {
+    // $FlowFixMe[prop-missing]
     self.worker = new Worker(self);
 }

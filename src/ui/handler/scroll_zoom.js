@@ -3,14 +3,14 @@
 import assert from 'assert';
 import * as DOM from '../../util/dom.js';
 
-import {ease as _ease, bindAll, bezier} from '../../util/util.js';
+import {ease as _ease, bindAll, bezier, isFullscreen} from '../../util/util.js';
 import browser from '../../util/browser.js';
 import window from '../../util/window.js';
 import {number as interpolate} from '../../style-spec/util/interpolate.js';
 import Point from '@mapbox/point-geometry';
 
 import type Map from '../map.js';
-import type HandlerManager from '../handler_manager.js';
+import type HandlerManager, {HandlerResult} from '../handler_manager.js';
 import MercatorCoordinate from '../../geo/mercator_coordinate.js';
 
 // deltaY value for mouse scroll wheel identification
@@ -76,7 +76,7 @@ class ScrollZoomHandler {
         this._defaultZoomRate = defaultZoomRate;
         this._wheelZoomRate = wheelZoomRate;
 
-        bindAll(['_onTimeout', '_addScrollZoomBlocker', '_showBlockerAlert', '_isFullscreen'], this);
+        bindAll(['_onTimeout', '_addScrollZoomBlocker', '_showBlockerAlert'], this);
 
     }
 
@@ -121,7 +121,7 @@ class ScrollZoomHandler {
     * progress.
     */
     isActive(): boolean {
-        return !!this._active || this._finishTimeout !== undefined;
+        return this._active || this._finishTimeout !== undefined;
     }
 
     isZooming(): boolean {
@@ -165,7 +165,7 @@ class ScrollZoomHandler {
         if (!this.isEnabled()) return;
 
         if (this._map._cooperativeGestures) {
-            if (!e.ctrlKey && !e.metaKey && !this.isZooming() && !this._isFullscreen()) {
+            if (!e.ctrlKey && !e.metaKey && !this.isZooming() && !isFullscreen()) {
                 this._showBlockerAlert();
                 return;
             } else if (this._alertContainer.style.visibility !== 'hidden') {
@@ -196,6 +196,7 @@ class ScrollZoomHandler {
             this._lastValue = value;
 
             // Start a timeout in case this was a singular event, and delay it by up to 40ms.
+            // $FlowFixMe[method-unbinding]
             this._timeout = setTimeout(this._onTimeout, 40, e);
 
         } else if (!this._type) {
@@ -263,13 +264,21 @@ class ScrollZoomHandler {
         }
     }
 
-    renderFrame() {
+    renderFrame(): ?HandlerResult {
         if (!this._frameId) return;
         this._frameId = null;
 
         if (!this.isActive()) return;
 
         const tr = this._map.transform;
+
+        // If projection wraps and center crosses the antimeridian, reset previous mouse scroll easing settings to resolve https://github.com/mapbox/mapbox-gl-js/issues/11910
+        if (this._type === 'wheel' && tr.projection.wrap && (tr._center.lng >= 180 || tr._center.lng <= -180)) {
+            this._prevEase = null;
+            this._easing = null;
+            this._lastWheelEvent = null;
+            this._lastWheelEventTime = 0;
+        }
 
         const startingZoom = () => {
             return (tr._terrainEnabled() && this._aroundCoord) ? tr.computeZoomRelativeTo(this._aroundCoord) : tr.zoom;
@@ -297,7 +306,7 @@ class ScrollZoomHandler {
             // function we're using to smooth out the zooming between wheel
             // events
             if (this._type === 'wheel') {
-                this._startZoom = startingZoom();
+                this._startZoom = startZoom;
                 this._easing = this._smoothOutEasing(200);
             }
 
@@ -350,7 +359,7 @@ class ScrollZoomHandler {
         };
     }
 
-    _smoothOutEasing(duration: number) {
+    _smoothOutEasing(duration: number): (number) => number {
         let easing = _ease;
 
         if (this._prevEase) {
@@ -397,18 +406,16 @@ class ScrollZoomHandler {
         }
     }
 
-    _isFullscreen(): boolean {
-        return !!window.document.fullscreenElement;
-    }
-
     _showBlockerAlert() {
-        if (this._alertContainer.style.visibility === 'hidden') this._alertContainer.style.visibility = 'visible';
+        this._alertContainer.style.visibility = 'visible';
         this._alertContainer.classList.add('mapboxgl-scroll-zoom-blocker-show');
+        this._alertContainer.setAttribute("role", "alert");
 
         clearTimeout(this._alertTimer);
 
         this._alertTimer = setTimeout(() => {
             this._alertContainer.classList.remove('mapboxgl-scroll-zoom-blocker-show');
+            this._alertContainer.setAttribute("role", "null");
         }, 200);
     }
 

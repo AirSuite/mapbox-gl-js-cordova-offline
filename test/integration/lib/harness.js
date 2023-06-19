@@ -2,7 +2,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import glob from 'glob';
+import {globSync} from 'glob';
 import shuffleSeed from 'shuffle-seed';
 import {queue} from 'd3-queue';
 import colors from 'chalk';
@@ -22,7 +22,8 @@ export default function (directory, implementation, options, run) {
     const tests = options.tests || [];
     const ignores = options.ignores || {};
 
-    let sequence = glob.sync(`**/${options.fixtureFilename || 'style.json'}`, {cwd: directory})
+    let sequence = globSync(`**/${options.fixtureFilename || 'style.json'}`, {cwd: directory})
+        .sort((a, b) => a.localeCompare(b, 'en'))
         .map(fixture => {
             const id = path.dirname(fixture);
             const style = require(path.join(directory, fixture));
@@ -36,7 +37,6 @@ export default function (directory, implementation, options, run) {
                 width: 512,
                 height: 512,
                 pixelRatio: 1,
-                recycleMap: options.recycleMap || false,
                 allowed: 0.00015
             }, style.metadata.test);
 
@@ -188,7 +188,7 @@ export default function (directory, implementation, options, run) {
         const resultsShell = resultsTemplate({unsuccessful, tests, stats, shuffle: options.shuffle, seed: options.seed})
             .split('<!-- results go here -->');
 
-        const p = path.join(directory, options.recycleMap ? 'index-recycle-map.html' : 'index.html');
+        const p = path.join(directory, 'index.html');
         const out = fs.createWriteStream(p);
 
         const q = queue(1);

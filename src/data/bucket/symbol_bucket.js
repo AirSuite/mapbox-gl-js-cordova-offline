@@ -1,6 +1,7 @@
 // @flow
 
 import {symbolLayoutAttributes,
+    symbolGlobeExtAttributes,
     collisionVertexAttributes,
     collisionVertexAttributesExt,
     collisionBoxLayout,
@@ -8,6 +9,7 @@ import {symbolLayoutAttributes,
 } from './symbol_attributes.js';
 
 import {SymbolLayoutArray,
+    SymbolGlobeExtArray,
     SymbolDynamicLayoutArray,
     SymbolOpacityArray,
     CollisionBoxLayoutArray,
@@ -31,8 +33,8 @@ import {allowsVerticalWritingMode, stringContainsRTLText} from '../../util/scrip
 import {WritingMode} from '../../symbol/shaping.js';
 import loadGeometry from '../load_geometry.js';
 import toEvaluationFeature from '../evaluation_feature.js';
-import mvt from '@mapbox/vector-tile';
-const vectorTileFeatureTypes = mvt.VectorTileFeature.types;
+import {VectorTileFeature} from '@mapbox/vector-tile';
+const vectorTileFeatureTypes = VectorTileFeature.types;
 import {verticalizedCharacterMap} from '../../util/verticalize_punctuation.js';
 import Anchor from '../../symbol/anchor.js';
 import {getSizeData} from '../../symbol/symbol_size.js';
@@ -42,7 +44,12 @@ import EvaluationParameters from '../../style/evaluation_parameters.js';
 import Formatted from '../../style-spec/expression/types/formatted.js';
 import ResolvedImage from '../../style-spec/expression/types/resolved_image.js';
 import {plugin as globalRTLTextPlugin, getRTLTextPluginStatus} from '../../source/rtl_text_plugin.js';
-import {mat4} from 'gl-matrix';
+import {resamplePred} from '../../geo/projection/resample.js';
+import {tileCoordToECEF} from '../../geo/projection/globe_util.js';
+import type {ProjectionSpecification} from '../../style-spec/types.js';
+import {getProjection} from '../../geo/projection/index.js';
+import type Projection from '../../geo/projection/projection.js';
+import {mat4, vec3} from 'gl-matrix';
 
 import type {CanonicalTileID, OverscaledTileID} from '../../source/tile_id.js';
 import type {
@@ -75,8 +82,9 @@ export type SingleCollisionBox = {
     elevation?: number;
     tileID?: OverscaledTileID;
 };
-import type {Mat4} from 'gl-matrix';
+import type {Mat4, Vec3} from 'gl-matrix';
 import type {SpritePositions} from '../../util/image.js';
+import type {IVectorTileLayer} from '@mapbox/vector-tile';
 
 export type CollisionArrays = {
     textBox?: SingleCollisionBox;
@@ -124,14 +132,14 @@ const shaderOpacityAttributes = [
     {name: 'a_fade_opacity', components: 1, type: 'Uint8', offset: 0}
 ];
 
-function addVertex(array, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY, ox, oy, tx, ty, sizeVertex, isSDF: boolean, pixelOffsetX, pixelOffsetY, minFontScaleX, minFontScaleY) {
+function addVertex(array: SymbolLayoutArray, tileAnchorX: number, tileAnchorY: number, ox: number, oy: number, tx: number, ty: number, sizeVertex: any, isSDF: boolean, pixelOffsetX: number, pixelOffsetY: number, minFontScaleX: number, minFontScaleY: number) {
     const aSizeX = sizeVertex ? Math.min(MAX_PACKED_SIZE, Math.round(sizeVertex[0])) : 0;
     const aSizeY = sizeVertex ? Math.min(MAX_PACKED_SIZE, Math.round(sizeVertex[1])) : 0;
 
     array.emplaceBack(
         // a_pos_offset
-        projectedAnchorX,
-        projectedAnchorY,
+        tileAnchorX,
+        tileAnchorY,
         Math.round(ox * 32),
         Math.round(oy * 32),
 
@@ -143,21 +151,37 @@ function addVertex(array, projectedAnchorX, projectedAnchorY, projectedAnchorZ, 
         pixelOffsetX * 16,
         pixelOffsetY * 16,
         minFontScaleX * 256,
-        minFontScaleY * 256,
-
-        // a_posz
-        projectedAnchorZ,
-        tileAnchorX,
-        tileAnchorY,
-        0
+        minFontScaleY * 256
     );
 }
 
-function addDynamicAttributes(dynamicLayoutVertexArray: StructArray, p: Point, angle: number) {
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
-    dynamicLayoutVertexArray.emplaceBack(p.x, p.y, angle);
+function addGlobeVertex(array: SymbolGlobeExtArray, projAnchorX: number, projAnchorY: number, projAnchorZ: number, normX: number, normY: number, normZ: number) {
+    array.emplaceBack(
+        // a_globe_anchor
+        projAnchorX,
+        projAnchorY,
+        projAnchorZ,
+
+        // a_globe_normal
+        normX,
+        normY,
+        normZ
+    );
+}
+
+function updateGlobeVertexNormal(array: SymbolGlobeExtArray, vertexIdx: number, normX: number, normY: number, normZ: number) {
+    // Modify float32 array directly. 20 bytes per entry, 3xInt16 for position, 3xfloat32 for normal
+    const offset = vertexIdx * 5 + 2;
+    array.float32[offset + 0] = normX;
+    array.float32[offset + 1] = normY;
+    array.float32[offset + 2] = normZ;
+}
+
+function addDynamicAttributes(dynamicLayoutVertexArray: StructArray, x: number, y: number, z: number, angle: number) {
+    dynamicLayoutVertexArray.emplaceBack(x, y, z, angle);
+    dynamicLayoutVertexArray.emplaceBack(x, y, z, angle);
+    dynamicLayoutVertexArray.emplaceBack(x, y, z, angle);
+    dynamicLayoutVertexArray.emplaceBack(x, y, z, angle);
 }
 
 function containsRTLText(formattedText: Formatted): boolean {
@@ -185,6 +209,9 @@ export class SymbolBuffers {
     opacityVertexArray: SymbolOpacityArray;
     opacityVertexBuffer: VertexBuffer;
 
+    globeExtVertexArray: SymbolGlobeExtArray;
+    globeExtVertexBuffer: VertexBuffer;
+
     placedSymbolArray: PlacedSymbolArray;
 
     constructor(programConfigurations: ProgramConfigurationSet<SymbolStyleLayer>) {
@@ -195,6 +222,7 @@ export class SymbolBuffers {
         this.dynamicLayoutVertexArray = new SymbolDynamicLayoutArray();
         this.opacityVertexArray = new SymbolOpacityArray();
         this.placedSymbolArray = new PlacedSymbolArray();
+        this.globeExtVertexArray = new SymbolGlobeExtArray();
     }
 
     isEmpty(): boolean {
@@ -214,6 +242,9 @@ export class SymbolBuffers {
             this.indexBuffer = context.createIndexBuffer(this.indexArray, dynamicIndexBuffer);
             this.dynamicLayoutVertexBuffer = context.createVertexBuffer(this.dynamicLayoutVertexArray, dynamicLayoutAttributes.members, true);
             this.opacityVertexBuffer = context.createVertexBuffer(this.opacityVertexArray, shaderOpacityAttributes, true);
+            if (this.globeExtVertexArray.length > 0) {
+                this.globeExtVertexBuffer = context.createVertexBuffer(this.globeExtVertexArray, symbolGlobeExtAttributes.members, true);
+            }
             // This is a performance hack so that we can write to opacityVertexArray with uint32s
             // even though the shaders read uint8s
             this.opacityVertexBuffer.itemSize = 1;
@@ -231,10 +262,13 @@ export class SymbolBuffers {
         this.segments.destroy();
         this.dynamicLayoutVertexBuffer.destroy();
         this.opacityVertexBuffer.destroy();
+        if (this.globeExtVertexBuffer) {
+            this.globeExtVertexBuffer.destroy();
+        }
     }
 }
 
-register(SymbolBuffers);
+register(SymbolBuffers, 'SymbolBuffers');
 
 class CollisionBuffers {
     layoutVertexArray: StructArray;
@@ -280,7 +314,7 @@ class CollisionBuffers {
     }
 }
 
-register(CollisionBuffers);
+register(CollisionBuffers, 'CollisionBuffers');
 
 /**
  * Unlike other buckets, which simply implement #addFeature with type-specific
@@ -307,7 +341,7 @@ register(CollisionBuffers);
  *      `this.textCollisionBox`: Debug SymbolBuffers for text collision boxes
  *    The results are sent to the foreground for rendering
  *
- * 4. performSymbolPlacement(bucket, collisionIndex) is run on the foreground,
+ * 4. Placement.updateBucketOpacities() is run on the foreground,
  *    and uses the CollisionIndex along with current camera settings to determine
  *    which symbols can actually show on the map. Collided symbols are hidden
  *    using a dynamic "OpacityVertexArray".
@@ -369,7 +403,8 @@ class SymbolBucket implements Bucket {
     writingModes: Array<number>;
     allowVerticalPlacement: boolean;
     hasRTLText: boolean;
-    projection: string;
+    projection: ProjectionSpecification;
+    projectionInstance: ?Projection;
 
     constructor(options: BucketParameters<SymbolStyleLayer>) {
         this.collisionBoxArray = options.collisionBoxArray;
@@ -426,8 +461,10 @@ class SymbolBucket implements Bucket {
 
     calculateGlyphDependencies(text: string, stack: {[_: number]: boolean}, textAlongLine: boolean, allowVerticalPlacement: boolean, doesAllowVerticalWritingMode: boolean) {
         for (let i = 0; i < text.length; i++) {
-            stack[text.charCodeAt(i)] = true;
-            if (allowVerticalPlacement && doesAllowVerticalWritingMode) {
+            const codePoint = text.codePointAt(i);
+            if (codePoint === undefined) break;
+            stack[codePoint] = true;
+            if (allowVerticalPlacement && doesAllowVerticalWritingMode && codePoint <= 65535) {
                 const verticalChar = verticalizedCharacterMap[text.charAt(i)];
                 if (verticalChar) {
                     stack[verticalChar.charCodeAt(0)] = true;
@@ -439,6 +476,7 @@ class SymbolBucket implements Bucket {
     populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform) {
         const layer = this.layers[0];
         const layout = layer.layout;
+        const isGlobe = this.projection.name === 'globe';
 
         const textFont = layout.get('text-font');
         const textField = layout.get('text-field');
@@ -470,11 +508,31 @@ class SymbolBucket implements Bucket {
 
             const needGeometry = layer._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
+            // $FlowFixMe[method-unbinding]
             if (!layer._featureFilter.filter(globalProperties, evaluationFeature, canonical)) {
                 continue;
             }
 
             if (!needGeometry) evaluationFeature.geometry = loadGeometry(feature, canonical, tileTransform);
+
+            if (isGlobe && feature.type !== 1 && canonical.z <= 5) {
+                // Resample long lines and polygons in globe view so that their length wont exceed ~0.19 radians (360/32 degrees).
+                // Otherwise lines could clip through the globe as the resolution is not enough to represent curved paths.
+                // The threshold value follows subdivision size used with fill extrusions
+                const geom = evaluationFeature.geometry;
+
+                // cos(11.25 degrees) = 0.98078528056
+                const cosAngleThreshold = 0.98078528056;
+                const predicate = (a: Point, b: Point) => {
+                    const v0 = tileCoordToECEF(a.x, a.y, canonical, 1);
+                    const v1 = tileCoordToECEF(b.x, b.y, canonical, 1);
+                    return vec3.dot(v0, v1) < cosAngleThreshold;
+                };
+
+                for (let i = 0; i < geom.length; i++) {
+                    geom[i] = resamplePred(geom[i], predicate);
+                }
+            }
 
             let text: Formatted | void;
             if (hasText) {
@@ -564,7 +622,7 @@ class SymbolBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
         if (!this.stateDependentLayers.length) return;
         this.text.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, availableImages, imagePositions);
         this.icon.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, availableImages, imagePositions);
@@ -595,6 +653,13 @@ class SymbolBucket implements Bucket {
         this.iconCollisionBox.destroy();
     }
 
+    getProjection(): Projection {
+        if (!this.projectionInstance) {
+            this.projectionInstance = getProjection(this.projection);
+        }
+        return this.projectionInstance;
+    }
+
     destroy() {
         this.text.destroy();
         this.icon.destroy();
@@ -604,28 +669,11 @@ class SymbolBucket implements Bucket {
         }
     }
 
-    addToLineVertexArray(anchor: Anchor, line: any): LineVertexRange {
+    addToLineVertexArray(anchor: Anchor, line: Array<Point>): LineVertexRange {
         const lineStartIndex = this.lineVertexArray.length;
-        const segment = anchor.segment;
-        if (segment !== undefined) {
-            let sumForwardLength = anchor.dist(line[segment + 1]);
-            let sumBackwardLength = anchor.dist(line[segment]);
-            const vertices = {};
-            for (let i = segment + 1; i < line.length; i++) {
-                vertices[i] = {x: line[i].x, y: line[i].y, tileUnitDistanceFromAnchor: sumForwardLength};
-                if (i < line.length - 1) {
-                    sumForwardLength += line[i + 1].dist(line[i]);
-                }
-            }
-            for (let i = segment || 0; i >= 0; i--) {
-                vertices[i] = {x: line[i].x, y: line[i].y, tileUnitDistanceFromAnchor: sumBackwardLength};
-                if (i > 0) {
-                    sumBackwardLength += line[i - 1].dist(line[i]);
-                }
-            }
-            for (let i = 0; i < line.length; i++) {
-                const vertex = vertices[i];
-                this.lineVertexArray.emplaceBack(vertex.x, vertex.y, vertex.tileUnitDistanceFromAnchor);
+        if (anchor.segment !== undefined) {
+            for (const {x, y} of line) {
+                this.lineVertexArray.emplaceBack(x, y);
             }
         }
         return {
@@ -641,7 +689,7 @@ class SymbolBucket implements Bucket {
                alongLine: boolean,
                feature: SymbolFeature,
                writingMode: any,
-               labelAnchor: Anchor,
+               globe: ?{ anchor: Anchor, up: Vec3 },
                tileAnchor: Anchor,
                lineStartIndex: number,
                lineLength: number,
@@ -650,6 +698,7 @@ class SymbolBucket implements Bucket {
                canonical: CanonicalTileID) {
         const indexArray = arrays.indexArray;
         const layoutVertexArray = arrays.layoutVertexArray;
+        const globeExtVertexArray = arrays.globeExtVertexArray;
 
         const segment = arrays.segments.prepareSegment(4 * quads.length, layoutVertexArray, indexArray, this.canOverlap ? feature.sortKey : undefined);
         const glyphOffsetArrayStart = this.glyphOffsetArray.length;
@@ -664,12 +713,23 @@ class SymbolBucket implements Bucket {
             const index = segment.vertexLength;
 
             const y = glyphOffset[1];
-            addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, labelAnchor.z, tileAnchor.x, tileAnchor.y, tl.x, y + tl.y, tex.x, tex.y, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, labelAnchor.z, tileAnchor.x, tileAnchor.y, tr.x, y + tr.y, tex.x + tex.w, tex.y, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, labelAnchor.z, tileAnchor.x, tileAnchor.y, bl.x, y + bl.y, tex.x, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, labelAnchor.x, labelAnchor.y, labelAnchor.z, tileAnchor.x, tileAnchor.y, br.x, y + br.y, tex.x + tex.w, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tl.x, y + tl.y, tex.x, tex.y, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tr.x, y + tr.y, tex.x + tex.w, tex.y, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, bl.x, y + bl.y, tex.x, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, br.x, y + br.y, tex.x + tex.w, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
 
-            addDynamicAttributes(arrays.dynamicLayoutVertexArray, labelAnchor, angle);
+            if (globe) {
+                const {x, y, z} = globe.anchor;
+                const [ux, uy, uz] = globe.up;
+                addGlobeVertex(globeExtVertexArray, x, y, z, ux, uy, uz);
+                addGlobeVertex(globeExtVertexArray, x, y, z, ux, uy, uz);
+                addGlobeVertex(globeExtVertexArray, x, y, z, ux, uy, uz);
+                addGlobeVertex(globeExtVertexArray, x, y, z, ux, uy, uz);
+
+                addDynamicAttributes(arrays.dynamicLayoutVertexArray, x, y, z, angle);
+            } else {
+                addDynamicAttributes(arrays.dynamicLayoutVertexArray, tileAnchor.x, tileAnchor.y, tileAnchor.z, angle);
+            }
 
             indexArray.emplaceBack(index, index + 1, index + 2);
             indexArray.emplaceBack(index + 1, index + 2, index + 3);
@@ -684,7 +744,9 @@ class SymbolBucket implements Bucket {
             }
         }
 
-        arrays.placedSymbolArray.emplaceBack(labelAnchor.x, labelAnchor.y, labelAnchor.z, tileAnchor.x, tileAnchor.y,
+        const projectedAnchor = globe ? globe.anchor : tileAnchor;
+
+        arrays.placedSymbolArray.emplaceBack(projectedAnchor.x, projectedAnchor.y, projectedAnchor.z, tileAnchor.x, tileAnchor.y,
             glyphOffsetArrayStart, this.glyphOffsetArray.length - glyphOffsetArrayStart, vertexStartIndex,
             lineStartIndex, lineLength, (tileAnchor.segment: any),
             sizeVertex ? sizeVertex[0] : 0, sizeVertex ? sizeVertex[1] : 0,
@@ -758,7 +820,7 @@ class SymbolBucket implements Bucket {
     _addIconDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number, instance: SymbolInstance) {
         for (let b = startIndex; b < endIndex; b++) {
             const box: CollisionBox = (collisionBoxArray.get(b): any);
-            const scale = this.getSymbolInstanceIconSize(size, zoom, b);
+            const scale = this.getSymbolInstanceIconSize(size, zoom, instance.placedIconSymbolIndex);
 
             this._addCollisionDebugVertices(box, scale, this.iconCollisionBox, box.projectedAnchorX, box.projectedAnchorY, box.projectedAnchorZ, instance);
         }
@@ -791,14 +853,14 @@ class SymbolBucket implements Bucket {
                     instance.leftJustifiedTextSymbolIndex : instance.verticalPlacedTextSymbolIndex >= 0 ?
                         instance.verticalPlacedTextSymbolIndex : boxIndex;
 
-        const symbol: any = this.text.placedSymbolArray.get(symbolIndex);
+        const symbol = this.text.placedSymbolArray.get(symbolIndex);
         const featureSize = symbolSize.evaluateSizeForFeature(this.textSizeData, textSize, symbol) / ONE_EM;
 
         return this.tilePixelRatio * featureSize;
     }
 
-    getSymbolInstanceIconSize(iconSize: any, zoom: number, index: number): number {
-        const symbol: any = this.icon.placedSymbolArray.get(index);
+    getSymbolInstanceIconSize(iconSize: any, zoom: number, iconIndex: number): number {
+        const symbol = this.icon.placedSymbolArray.get(iconIndex);
         const featureSize = symbolSize.evaluateSizeForFeature(this.iconSizeData, iconSize, symbol);
 
         return this.tilePixelRatio * featureSize;
@@ -820,10 +882,10 @@ class SymbolBucket implements Bucket {
         }
     }
 
-    _updateIconDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number) {
+    _updateIconDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number, symbolIndex: number) {
         for (let b = startIndex; b < endIndex; b++) {
-            const box: CollisionBox = (collisionBoxArray.get(b): any);
-            const scale = this.getSymbolInstanceIconSize(size, zoom, b);
+            const box = (collisionBoxArray.get(b));
+            const scale = this.getSymbolInstanceIconSize(size, zoom, symbolIndex);
             const array = this.iconCollisionBox.collisionVertexArrayExt;
             this._commitDebugCollisionVertexUpdate(array, scale, box.padding);
         }
@@ -844,8 +906,8 @@ class SymbolBucket implements Bucket {
             const symbolInstance = this.symbolInstances.get(i);
             this._updateTextDebugCollisionBoxes(textSize, zoom, collisionBoxArray, symbolInstance.textBoxStartIndex, symbolInstance.textBoxEndIndex, symbolInstance);
             this._updateTextDebugCollisionBoxes(textSize, zoom, collisionBoxArray, symbolInstance.verticalTextBoxStartIndex, symbolInstance.verticalTextBoxEndIndex, symbolInstance);
-            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.iconBoxStartIndex, symbolInstance.iconBoxEndIndex);
-            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.verticalIconBoxStartIndex, symbolInstance.verticalIconBoxEndIndex);
+            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.iconBoxStartIndex, symbolInstance.iconBoxEndIndex, symbolInstance.placedIconSymbolIndex);
+            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.verticalIconBoxStartIndex, symbolInstance.verticalIconBoxEndIndex, symbolInstance.placedIconSymbolIndex);
         }
 
         if (this.hasTextCollisionBoxData() && this.textCollisionBox.collisionVertexBufferExt) {
@@ -864,32 +926,27 @@ class SymbolBucket implements Bucket {
         iconStartIndex: number, iconEndIndex: number,
         verticalIconStartIndex: number, verticalIconEndIndex: number): CollisionArrays {
 
+        // Only one box allowed per instance
         const collisionArrays = {};
-        for (let k = textStartIndex; k < textEndIndex; k++) {
-            const box: CollisionBox = (collisionBoxArray.get(k): any);
-            collisionArrays.textBox = {x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, padding: box.padding, projectedAnchorX: box.projectedAnchorX, projectedAnchorY: box.projectedAnchorY, projectedAnchorZ: box.projectedAnchorZ, tileAnchorX: box.tileAnchorX, tileAnchorY: box.tileAnchorY};
-            collisionArrays.textFeatureIndex = box.featureIndex;
-            break; // Only one box allowed per instance
+        if (textStartIndex < textEndIndex) {
+            const {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY, featureIndex} = collisionBoxArray.get(textStartIndex);
+            collisionArrays.textBox = {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY};
+            collisionArrays.textFeatureIndex = featureIndex;
         }
-        for (let k = verticalTextStartIndex; k < verticalTextEndIndex; k++) {
-            const box: CollisionBox = (collisionBoxArray.get(k): any);
-            collisionArrays.verticalTextBox = {x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, padding: box.padding, projectedAnchorX: box.projectedAnchorX, projectedAnchorY: box.projectedAnchorY, projectedAnchorZ: box.projectedAnchorZ, tileAnchorX: box.tileAnchorX, tileAnchorY: box.tileAnchorY};
-            collisionArrays.verticalTextFeatureIndex = box.featureIndex;
-            break; // Only one box allowed per instance
+        if (verticalTextStartIndex < verticalTextEndIndex) {
+            const {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY, featureIndex} = collisionBoxArray.get(verticalTextStartIndex);
+            collisionArrays.verticalTextBox = {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY};
+            collisionArrays.verticalTextFeatureIndex = featureIndex;
         }
-        for (let k = iconStartIndex; k < iconEndIndex; k++) {
-            // An icon can only have one box now, so this indexing is a bit vestigial...
-            const box: CollisionBox = (collisionBoxArray.get(k): any);
-            collisionArrays.iconBox = {x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, padding: box.padding, projectedAnchorX: box.projectedAnchorX, projectedAnchorY: box.projectedAnchorY, projectedAnchorZ: box.projectedAnchorZ, tileAnchorX: box.tileAnchorX, tileAnchorY: box.tileAnchorY};
-            collisionArrays.iconFeatureIndex = box.featureIndex;
-            break; // Only one box allowed per instance
+        if (iconStartIndex < iconEndIndex) {
+            const {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY, featureIndex} = collisionBoxArray.get(iconStartIndex);
+            collisionArrays.iconBox = {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY};
+            collisionArrays.iconFeatureIndex = featureIndex;
         }
-        for (let k = verticalIconStartIndex; k < verticalIconEndIndex; k++) {
-            // An icon can only have one box now, so this indexing is a bit vestigial...
-            const box: CollisionBox = (collisionBoxArray.get(k): any);
-            collisionArrays.verticalIconBox = {x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2, padding: box.padding, projectedAnchorX: box.projectedAnchorX, projectedAnchorY: box.projectedAnchorY, projectedAnchorZ: box.projectedAnchorZ, tileAnchorX: box.tileAnchorX, tileAnchorY: box.tileAnchorY};
-            collisionArrays.verticalIconFeatureIndex = box.featureIndex;
-            break; // Only one box allowed per instance
+        if (verticalIconStartIndex < verticalIconEndIndex) {
+            const {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY, featureIndex} = collisionBoxArray.get(verticalIconStartIndex);
+            collisionArrays.verticalIconBox = {x1, y1, x2, y2, padding, projectedAnchorX, projectedAnchorY, projectedAnchorZ, tileAnchorX, tileAnchorY};
+            collisionArrays.verticalIconFeatureIndex = featureIndex;
         }
         return collisionArrays;
     }
@@ -959,10 +1016,7 @@ class SymbolBucket implements Bucket {
             featureIndexes.push(symbolInstance.featureIndex);
         }
 
-        result.sort((aIndex, bIndex) => {
-            return (rotatedYs[aIndex] - rotatedYs[bIndex]) ||
-                   (featureIndexes[bIndex] - featureIndexes[aIndex]);
-        });
+        result.sort((aIndex, bIndex) => (rotatedYs[aIndex] - rotatedYs[bIndex]) || (featureIndexes[bIndex] - featureIndexes[aIndex]));
 
         return result;
     }
@@ -1002,33 +1056,23 @@ class SymbolBucket implements Bucket {
         this.featureSortOrder = [];
 
         for (const i of this.symbolInstanceIndexes) {
-            const symbolInstance = this.symbolInstances.get(i);
-            this.featureSortOrder.push(symbolInstance.featureIndex);
+            const symbol = this.symbolInstances.get(i);
+            this.featureSortOrder.push(symbol.featureIndex);
+            const {
+                rightJustifiedTextSymbolIndex: right, centerJustifiedTextSymbolIndex: center,
+                leftJustifiedTextSymbolIndex: left, verticalPlacedTextSymbolIndex: vertical,
+                placedIconSymbolIndex: icon, verticalPlacedIconSymbolIndex: iconVertical
+            } = symbol;
 
-            [
-                symbolInstance.rightJustifiedTextSymbolIndex,
-                symbolInstance.centerJustifiedTextSymbolIndex,
-                symbolInstance.leftJustifiedTextSymbolIndex
-            ].forEach((index, i, array) => {
-                // Only add a given index the first time it shows up,
-                // to avoid duplicate opacity entries when multiple justifications
-                // share the same glyphs.
-                if (index >= 0 && array.indexOf(index) === i) {
-                    this.addIndicesForPlacedSymbol(this.text, index);
-                }
-            });
+            // Only add a given index the first time it shows up, to avoid duplicate
+            // opacity entries when multiple justifications share the same glyphs.
+            if (right >= 0) this.addIndicesForPlacedSymbol(this.text, right);
+            if (center >= 0 && center !== right) this.addIndicesForPlacedSymbol(this.text, center);
+            if (left >= 0 && left !== center && left !== right) this.addIndicesForPlacedSymbol(this.text, left);
 
-            if (symbolInstance.verticalPlacedTextSymbolIndex >= 0) {
-                this.addIndicesForPlacedSymbol(this.text, symbolInstance.verticalPlacedTextSymbolIndex);
-            }
-
-            if (symbolInstance.placedIconSymbolIndex >= 0) {
-                this.addIndicesForPlacedSymbol(this.icon, symbolInstance.placedIconSymbolIndex);
-            }
-
-            if (symbolInstance.verticalPlacedIconSymbolIndex >= 0) {
-                this.addIndicesForPlacedSymbol(this.icon, symbolInstance.verticalPlacedIconSymbolIndex);
-            }
+            if (vertical >= 0) this.addIndicesForPlacedSymbol(this.text, vertical);
+            if (icon >= 0) this.addIndicesForPlacedSymbol(this.icon, icon);
+            if (iconVertical >= 0) this.addIndicesForPlacedSymbol(this.icon, iconVertical);
         }
 
         if (this.text.indexBuffer) this.text.indexBuffer.updateData(this.text.indexArray);
@@ -1036,7 +1080,7 @@ class SymbolBucket implements Bucket {
     }
 }
 
-register(SymbolBucket, {
+register(SymbolBucket, 'SymbolBucket', {
     omit: ['layers', 'collisionBoxArray', 'features', 'compareText']
 });
 
@@ -1051,4 +1095,4 @@ SymbolBucket.MAX_GLYPHS = 65535;
 SymbolBucket.addDynamicAttributes = addDynamicAttributes;
 
 export default SymbolBucket;
-export {addDynamicAttributes};
+export {addDynamicAttributes, updateGlobeVertexNormal};

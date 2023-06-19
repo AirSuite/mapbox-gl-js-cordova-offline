@@ -4,12 +4,12 @@ import {NumberType, ValueType, FormattedType, array, StringType, ColorType, Reso
 import Formatted, {FormattedSection} from '../types/formatted.js';
 import {toString, typeOf} from '../values.js';
 
-import type {Expression} from '../expression.js';
+import type {Expression, SerializedExpression} from '../expression.js';
 import type EvaluationContext from '../evaluation_context.js';
 import type ParsingContext from '../parsing_context.js';
 import type {Type} from '../types.js';
 
-type FormattedSectionExpression = {
+export type FormattedSectionExpression = {
     // Content of a section may be Image expression or other
     // type of expression that is coercable to 'string'.
     content: Expression,
@@ -83,8 +83,8 @@ export default class FormatExpression implements Expression {
         return new FormatExpression(sections);
     }
 
-    evaluate(ctx: EvaluationContext) {
-        const evaluateSection = section => {
+    evaluate(ctx: EvaluationContext): Formatted {
+        const evaluateSection = (section: FormattedSectionExpression) => {
             const evaluatedContent = section.content.evaluate(ctx);
             if (typeOf(evaluatedContent) === ResolvedImageType) {
                 return new FormattedSection('', evaluatedContent, null, null, null);
@@ -117,13 +117,13 @@ export default class FormatExpression implements Expression {
         }
     }
 
-    outputDefined() {
+    outputDefined(): boolean {
         // Technically the combinatoric set of all children
         // Usually, this.text will be undefined anyway
         return false;
     }
 
-    serialize() {
+    serialize(): SerializedExpression {
         const serialized = ["format"];
         for (const section of this.sections) {
             serialized.push(section.content.serialize());

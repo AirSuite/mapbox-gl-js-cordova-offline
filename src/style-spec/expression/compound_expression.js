@@ -31,7 +31,7 @@ class CompoundExpression implements Expression {
         this.args = args;
     }
 
-    evaluate(ctx: EvaluationContext) {
+    evaluate(ctx: EvaluationContext): Value {
         return this._evaluate(ctx, this.args);
     }
 
@@ -39,7 +39,7 @@ class CompoundExpression implements Expression {
         this.args.forEach(fn);
     }
 
-    outputDefined() {
+    outputDefined(): boolean {
         return false;
     }
 
@@ -146,6 +146,7 @@ class CompoundExpression implements Expression {
         assert(!CompoundExpression.definitions);
         CompoundExpression.definitions = definitions;
         for (const name in definitions) {
+            // $FlowFixMe[method-unbinding]
             registry[name] = CompoundExpression;
         }
     }

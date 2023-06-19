@@ -43,6 +43,7 @@ if (typeof Object.freeze == 'function') {
  * @property {string} type Response body type to be returned `'string' | 'json' | 'arrayBuffer'`.
  * @property {string} credentials `'same-origin'|'include'` Use 'include' to send cookies with cross-origin requests.
  * @property {boolean} collectResourceTiming If true, Resource Timing API information will be collected for these transformed requests and returned in a resourceTiming property of relevant data events.
+ * @property {string} referrerPolicy A string representing the request's referrerPolicy. For more information and possible values, see the [Referrer-Policy HTTP header page](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy).
  * @example
  * // use transformRequest to modify requests that begin with `http://myHost`
  * const map = new Map({
@@ -67,8 +68,9 @@ export type RequestParameters = {
     body?: string,
     type?: 'string' | 'json' | 'arrayBuffer',
     credentials?: 'same-origin' | 'include',
-    collectResourceTiming?: boolean
-};
+    collectResourceTiming?: boolean,
+    referrerPolicy?: ReferrerPolicyType
+}
 
 export type ResponseCallback<T> = (error: ?Error, data: ?T, cacheControl: ?string, expires: ?string) => void;
 
@@ -77,14 +79,14 @@ export class AJAXError extends Error {
     url: string;
     constructor(message: string, status: number, url: string) {
         if (status === 401 && isMapboxHTTPURL(url)) {
-            message += ': you may have provided an invalid Mapbox access token. See https://www.mapbox.com/api-documentation/#access-tokens-and-token-scopes';
+            message += ': you may have provided an invalid Mapbox access token. See https://docs.mapbox.com/api/overview/#access-tokens-and-token-scopes';
         }
         super(message);
         this.status = status;
         this.url = url;
     }
 
-    toString() {
+    toString(): string {
         return `${this.name}: ${this.message} (${this.status}): ${this.url}`;
     }
 }
@@ -101,7 +103,7 @@ export const getReferrer: (() => string) = isWorker() ?
 // Determines whether a URL is a file:// URL. This is obviously the case if it begins
 // with file://. Relative URLs are also file:// URLs iff the original document was loaded
 // via a file:// URL.
-const isFileURL = url => /^file:/.test(url) || (/^file:/.test(getReferrer()) && !/^\w+:/.test(url));
+const isFileURL = (url: string) => /^file:/.test(url) || (/^file:/.test(getReferrer()) && !/^\w+:/.test(url));
 
 function makeFetchRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     const controller = new window.AbortController();
@@ -111,6 +113,7 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
         credentials: requestParameters.credentials,
         headers: requestParameters.headers,
         referrer: getReferrer(),
+        referrerPolicy: requestParameters.referrerPolicy,
         signal: controller.signal
     });
     let complete = false;
@@ -122,14 +125,14 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
         request.headers.set('Accept', 'application/json');
     }
 
-    const validateOrFetch = (err, cachedResponse, responseIsFresh) => {
+    const validateOrFetch = (err: ?Error, cachedResponse: ?Response, responseIsFresh: ?boolean) => {
         if (aborted) return;
 
         if (err) {
             // Do fetch in case of cache error.
             // HTTP pages in Edge trigger a security error that can be ignored.
             if (err.message !== 'SecurityError') {
-                warnOnce(err);
+                warnOnce(err.toString());
             }
         }
 
@@ -148,20 +151,19 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
             if (response.ok) {
                 const cacheableResponse = cacheIgnoringSearch ? response.clone() : null;
                 return finishRequest(response, cacheableResponse, requestTime);
-
             } else {
                 return callback(new AJAXError(response.statusText, response.status, requestParameters.url));
             }
         }).catch(error => {
-            if (error.code === 20) {
+            if (error.name === 'AbortError') {
                 // silence expected AbortError
                 return;
             }
-            callback(new Error(error.message));
+            callback(new Error(`${error.message} ${requestParameters.url}`));
         });
     };
 
-    const finishRequest = (response, cacheableResponse, requestTime) => {
+    const finishRequest = (response: Response, cacheableResponse: ?Response, requestTime: ?number) => {
         (
             requestParameters.type === 'arrayBuffer' ? response.arrayBuffer() :
             requestParameters.type === 'json' ? response.json() :
@@ -269,7 +271,7 @@ export const getData = function(requestParameters: RequestParameters, callback: 
     return makeRequest(extend(requestParameters, {method: 'GET'}), callback);
 };
 
-function sameOrigin(url) {
+function sameOrigin(url: string) {
     const a: HTMLAnchorElement = window.document.createElement('a');
     a.href = url;
     return a.protocol === window.document.location.protocol && a.host === window.document.location.host;
@@ -324,6 +326,7 @@ export const getImage = function(requestParameters: RequestParameters, callback:
             requestParameters,
             callback,
             cancelled: false,
+            // $FlowFixMe[object-this-reference]
             cancel() { this.cancelled = true; }
         };
         imageQueue.push(queued);
@@ -341,6 +344,7 @@ export const getImage = function(requestParameters: RequestParameters, callback:
             const request = imageQueue.shift();
             const {requestParameters, callback, cancelled} = request;
             if (!cancelled) {
+                // $FlowFixMe[cannot-write] - Flow can't infer that cancel is a writable property
                 request.cancel = getImage(requestParameters, callback).cancel;
             }
         }

@@ -22,8 +22,19 @@ export type ResponseOptions = {
 // object. See https://bugs.webkit.org/show_bug.cgi?id=203991 for more information.
 let sharedCache: ?Promise<Cache>;
 
+function getCaches() {
+    try {
+        return window.caches;
+    } catch (e) {
+        // <iframe sandbox> triggers exceptions when trying to access window.caches
+        // Chrome: DOMException, Safari: SecurityError, Firefox: NS_ERROR_FAILURE
+        // Seems more robust to catch all exceptions instead of trying to match only these.
+    }
+}
+
 function cacheOpen() {
-    if (window.caches && !sharedCache) {
+    const caches = getCaches();
+    if (caches && !sharedCache) {
         sharedCache = window.caches.open(CACHE_NAME);
     }
 }
@@ -35,7 +46,7 @@ export function cacheClose() {
 }
 
 let responseConstructorSupportsReadableStream;
-function prepareBody(response: Response, callback) {
+function prepareBody(response: Response, callback: ((body: ?(Blob | ReadableStream)) => void)) {
     if (responseConstructorSupportsReadableStream === undefined) {
         try {
             new Response(new ReadableStream()); // eslint-disable-line no-undef
@@ -88,9 +99,27 @@ export function cachePut(request: Request, response: Response, requestTime: numb
     });
 }
 
+function getQueryParameters(url: string) {
+    const paramStart = url.indexOf('?');
+    return paramStart > 0 ? url.slice(paramStart + 1).split('&') : [];
+}
+
 function stripQueryParameters(url: string) {
     const start = url.indexOf('?');
-    return start < 0 ? url : url.slice(0, start);
+    if (start < 0) return url;
+
+    // preserve `language` and `worldview` params if any
+    const params = getQueryParameters(url);
+    const filteredParams = params.filter(param => {
+        const entry = param.split('=');
+        return entry[0] === 'language' || entry[0] === 'worldview';
+    });
+
+    if (filteredParams.length) {
+        return `${url.slice(0, start)}?${filteredParams.join('&')}`;
+    }
+
+    return url.slice(0, start);
 }
 
 export function cacheGet(request: Request, callback: (error: ?any, response: ?Response, fresh: ?boolean) => void): void {
@@ -99,7 +128,7 @@ export function cacheGet(request: Request, callback: (error: ?any, response: ?Re
 
     const strippedURL = stripQueryParameters(request.url);
 
-    sharedCache
+    ((sharedCache: any): Promise<Cache>)
         .then(cache => {
             // manually strip URL instead of `ignoreSearch: true` because of a known
             // performance issue in Chrome https://github.com/mapbox/mapbox-gl-js/issues/8431
@@ -122,7 +151,7 @@ export function cacheGet(request: Request, callback: (error: ?any, response: ?Re
 
 }
 
-function isFresh(response) {
+function isFresh(response: Response) {
     if (!response) return false;
     const expires = new Date(response.headers.get('Expires') || 0);
     const cacheControl = parseCacheControl(response.headers.get('Cache-Control') || '');
@@ -162,6 +191,9 @@ export function enforceCacheSizeLimit(limit: number) {
 }
 
 export function clearTileCache(callback?: (err: ?Error) => void) {
+    const caches = getCaches();
+    if (!caches) return;
+
     const promise = window.caches.delete(CACHE_NAME);
     if (callback) {
         promise.catch(callback).then(() => callback());

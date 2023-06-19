@@ -1,23 +1,58 @@
-# 13.23.1
+## 13.27.0
+
+### Bug fixes 🐞
+
+* Fix overwriting all feature ids while setting promoteIds on other layers with an object. ([#12322](https://github.com/mapbox/mapbox-gl-js/pull/12322)) (h/t [yongjun21](https://github.com/yongjun21))
+
+## 13.26.0
+
+### Features ✨
+
+* Add unit option to number-format expression. ([#11839](https://github.com/mapbox/mapbox-gl-js/pull/11839)) (h/t [varna](https://github.com/varna))
+
+### Bug fixes 🐞
+
+* Fix a bug where `id` expression didn't correctly handle a value of 0. ([#12000](https://github.com/mapbox/mapbox-gl-js/pull/12000))
+
+## 13.25.0
+
+### Features ✨
+
+* Extend atmospheric `fog` with three new style specification properties: `high-color`, `space-color` and `star-intensity` to allow the design of atmosphere around the globe and night skies. ([#11590](https://github.com/mapbox/mapbox-gl-js/pull/11590))
+* Add a new line layer paint property in the style specification: `line-trim-offset` that can be used to create a custom fade out with improved update performance over `line-gradient`. ([#11570](https://github.com/mapbox/mapbox-gl-js/pull/11570))
+
+### 🐞 Bug fixes
+
+* Add `source` field requirement to terrain exaggeration in the style specification.  ([#11664](https://github.com/mapbox/mapbox-gl-js/pull/11664))
+
+## 13.24.0
+
+### 🐞 Bug fixes
+
+* Fix error on `gl-style-validate` script. ([#11538](https://github.com/mapbox/mapbox-gl-js/pull/11538))
+* Allow the second argument to the `in` expression operator to be an empty string. ([#11547](https://github.com/mapbox/mapbox-gl-js/pull/11547))
+* Fix error on some valid `filter` expressions. ([#11475](https://github.com/mapbox/mapbox-gl-js/pull/11475))
+
+## 13.23.1
 
 ### ✨ Features and improvements
 
 * Improve `coalesce` expressions to return a `ResolvedImage` when images are missing. ([#11371](https://github.com/mapbox/mapbox-gl-js/pull/11371))
 
-# 13.23.0
+## 13.23.0
 
 ### ✨ Features and improvements
 
 * Add a `projection` root property that allows a non-mercator projection to be set as a style's default projection. ([#11124](https://github.com/mapbox/mapbox-gl-js/pull/11124))
 * Add support for using `["pitch"]` and `["distance-from-camera"]` expressions within the `filter` of a symbol layer. ([#10795](https://github.com/mapbox/mapbox-gl-js/pull/10795))
 
-# 13.22.0
+## 13.22.0
 
 ### ✨ Features and improvements
 
 * Added `protected` field to mapbox-api-supported validation. ([#10968](https://github.com/mapbox/mapbox-gl-js/pull/10968))
 
-# 13.21.0
+## 13.21.0
 
 ### ✨ Features and improvements
 * Add support for `text-writing-mode` property when using `symbol-placement: line` text labels. ([#10647](https://github.com/mapbox/mapbox-gl-js/pull/10647))

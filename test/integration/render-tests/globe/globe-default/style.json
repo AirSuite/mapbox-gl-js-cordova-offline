@@ -4,13 +4,13 @@
     "test": {
       "width": 512,
       "height": 512,
+      "allowed": 0.0006,
       "operations": [
         ["setProjection", "globe"],
         ["wait"]
       ]
     }
   },
-  "zoom": 2.0,
   "sources": {
     "satellite": {
       "type": "raster",
@@ -20,6 +20,7 @@
       "tileSize": 256
     }
   },
+  "fog": {},
   "layers": [
     {
       "id": "satellite",

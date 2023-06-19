@@ -260,6 +260,32 @@ test('Marker anchors as specified by the anchor option', (t) => {
     t.end();
 });
 
+test('Transform reflects default offset', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map);
+    map._domRenderTaskQueue.run();
+
+    t.match(marker.getElement().style.transform, /translate\(0px,-14px\)/);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker is transformed to center of screen', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map);
+    map._domRenderTaskQueue.run();
+
+    t.match(marker.getElement().style.transform, "translate(256px,256px");
+
+    map.remove();
+    t.end();
+});
+
 test('Marker accepts backward-compatible constructor parameters', (t) => {
     const element = window.document.createElement('div');
 
@@ -394,6 +420,20 @@ test('Marker#setDraggable turns off drag functionality', (t) => {
     marker.setDraggable(false);
 
     t.equal(marker.isDraggable(), false);
+
+    map.remove();
+    t.end();
+});
+
+test('Marker#setOccludedOpacity functionality', (t) => {
+    const map = createMap(t);
+    const marker = new Marker({draggable: true, occludedOpacity: 0.8})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getOccludedOpacity(), 0.8);
+    marker.setOccludedOpacity(0.5);
+    t.equal(marker.getOccludedOpacity(), 0.5);
 
     map.remove();
     t.end();
@@ -757,13 +797,13 @@ test('Marker transforms rotation with the map', (t) => {
     map._domRenderTaskQueue.run();
 
     const rotationRegex = /rotateZ\(-?([0-9]+)deg\)/;
-    const initialRotation = marker.getElement().style.transform.match(rotationRegex)[1];
+    t.notOk(marker.getElement().style.transform.match(rotationRegex));
 
     map.setBearing(map.getBearing() + 180);
     map._domRenderTaskQueue.run();
 
     const finalRotation = marker.getElement().style.transform.match(rotationRegex)[1];
-    t.notEqual(initialRotation, finalRotation);
+    t.same(finalRotation, 180);
 
     map.remove();
     t.end();
@@ -779,13 +819,34 @@ test('Marker transforms pitch with the map', (t) => {
     map._domRenderTaskQueue.run();
 
     const rotationRegex = /rotateX\(-?([0-9]+)deg\)/;
-    const initialPitch = marker.getElement().style.transform.match(rotationRegex)[1];
+    t.notOk(marker.getElement().style.transform.match(rotationRegex));
 
     map.setPitch(45);
     map._domRenderTaskQueue.run();
 
     const finalPitch = marker.getElement().style.transform.match(rotationRegex)[1];
-    t.notEqual(initialPitch, finalPitch);
+    t.same(finalPitch, 45);
+
+    map.remove();
+    t.end();
+});
+
+test('Unset pitchAlignment default to rotationAlignment', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    t.equal(marker.getRotationAlignment(), 'viewport');
+    t.equal(marker.getPitchAlignment(), 'viewport');
+
+    marker.setRotationAlignment('map');
+    t.equal(marker.getRotationAlignment(), 'map');
+    t.equal(marker.getPitchAlignment(), 'map');
+
+    marker.setRotationAlignment('auto');
+    t.equal(marker.getRotationAlignment(), 'viewport');
+    t.equal(marker.getPitchAlignment(), 'viewport');
 
     map.remove();
     t.end();
@@ -862,6 +923,46 @@ test('Drag below / behind camera', (t) => {
     t.end();
 });
 
+test('When toggling projections, markers update with correct position', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([12, 55])
+        .addTo(map);
+
+    map.setCenter([-179, 0]);
+    t.equal(marker.getLngLat().lng, -348);
+
+    map.setProjection('albers');
+
+    map._domRenderTaskQueue.run();
+
+    map.once('render', () => {
+        t.equal(marker.getLngLat().lng, 12);
+        map.remove();
+        t.end();
+    });
+});
+
+test('When disabling render world copies, markers update with correct position', (t) => {
+    const map = createMap(t);
+    const marker = new Marker()
+        .setLngLat([12, 55])
+        .addTo(map);
+
+    map.setCenter([-179, 0]);
+    t.equal(marker.getLngLat().lng, -348);
+
+    map.setRenderWorldCopies(false);
+
+    map._domRenderTaskQueue.run();
+
+    map.once('render', () => {
+        t.equal(marker.getLngLat().lng, 12);
+        map.remove();
+        t.end();
+    });
+});
+
 test('Marker and fog', (t) => {
     const map = createMap(t);
     const marker = new Marker({draggable: true})
@@ -936,6 +1037,395 @@ test('Marker and fog', (t) => {
             t.end();
         });
     });
+});
+
+test('Globe', (t) => {
+    test('Marker is transformed to center of screen', (t) => {
+        const map = createMap(t);
+        const marker = new Marker()
+            .setLngLat([0, 0])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(marker.getElement().style.transform, "translate(256px,256px");
+        map.setProjection('globe');
+        map.once('render', () => {
+            t.match(marker.getElement().style.transform, "translate(256px,256px");
+            map.remove();
+            t.end();
+        });
+    });
+
+    test('Marker is positioned on globe edge', (t) => {
+        const map = createMap(t);
+        const marker = new Marker()
+            .setLngLat([82, 0])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(marker.getElement().style.transform, " translate(373px,256px)");
+        map.setProjection('globe');
+        map.once('render', () => {
+            t.match(marker.getElement().style.transform, "translate(357px,256px)");
+            t.same(marker.getElement().style.opacity, 1.0);
+            t.same(marker.getElement().style.pointerEvents, 'auto');
+            map.remove();
+            t.end();
+        });
+    });
+
+    test('Marker is occluded on the far side of the globe', (t) => {
+        const map = createMap(t);
+        const marker = new Marker()
+            .setLngLat([180, 0])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(marker.getElement().style.transform, " translate(512px,256px)");
+        map.setProjection('globe');
+        map.once('render', () => {
+            t.match(marker.getElement().style.transform, "translate(256px,256px)");
+            t.same(marker.getElement().style.opacity, 0);
+            t.same(marker.getElement().style.pointerEvents, 'none');
+            map.remove();
+            t.end();
+        });
+    });
+
+    function transform(marker) { return marker.getElement().style.transform; }
+
+    function rotation(marker, dimension) {
+        const transform = marker.getElement().style.transform;
+        const reg = new RegExp(`rotate${dimension}\\(([-.e0-9]+)deg\\)`);
+        return +Number.parseFloat(transform.match(reg)[1]).toFixed();
+    }
+
+    test('Globe with pitchAlignment and rotationAlignment: map, changing longitude', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        const marker = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([0, 0])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(transform(marker), "translate(256px,256px)");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateZ");
+
+        marker.setLngLat([82, 0]);
+        map.once('render', () => {
+            t.match(transform(marker), "translate(357px,256px)");
+            t.same(rotation(marker, "X"), 0);
+            t.same(rotation(marker, "Y"), 89);
+            t.same(marker.getElement().style.opacity, 1.0);
+            map.remove();
+            t.end();
+        });
+    });
+
+    test('Globe with pitchAlignment and rotationAlignment: map, changing lattitude', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        const marker = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([0, 82])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(transform(marker), "translate(256px,155px)");
+        t.same(rotation(marker, "X"), 89);
+        t.same(rotation(marker, "Y"), 0);
+
+        marker.setLngLat([-45, 45]);
+        map.on('render', () => {
+            t.match(transform(marker), "translate(202px,180px)");
+            t.same(rotation(marker, "X"), 39);
+            t.same(rotation(marker, "Y"), -28);
+            t.same(rotation(marker, "Z"), 39);
+            map.remove();
+            t.end();
+        });
+    });
+
+    test('Globe with pitchAlignment and rotationAlingment: map, changing pitch', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        const m1 = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([0, 0])
+            .addTo(map);
+        const m2 = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([0, 45])
+            .addTo(map);
+        const m3 = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([0, -30])
+            .addTo(map);
+        const m4 = new Marker({rotationAlignment: 'map', pitchAlignment: 'map'})
+            .setLngLat([45, -45])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.match(transform(m1), "translate(256px,256px)");
+        t.notMatch(transform(m1), "rotateX");
+        t.notMatch(transform(m1), "rotateY");
+        t.notMatch(transform(m1), "rotateZ");
+
+        t.match(transform(m2), "translate(256px,178px)");
+        t.same(rotation(m2, "X"), 51);
+        t.same(rotation(m2, "Y"), 0);
+        t.notMatch(transform(m1), "rotateZ");
+
+        t.match(transform(m3), "translate(256px,312px)");
+        t.same(rotation(m3, "X"), -34);
+        t.same(rotation(m3, "Y"), 0);
+        t.notMatch(transform(m1), "rotateZ");
+
+        t.match(transform(m4), "translate(310px,332px)");
+        t.same(rotation(m4, "X"), -39);
+        t.same(rotation(m4, "Y"), 28);
+        t.same(rotation(m4, "Z"), 39);
+
+        map.setPitch(45);
+        map.once('render', () => {
+            t.match(transform(m1), "translate(256px,256px)");
+            t.same(rotation(m1, "X"), 45);
+            t.same(rotation(m1, "Y"), 0);
+            t.notMatch(transform(m1), "rotateZ");
+
+            t.match(transform(m2), "translate(256px,225px)");
+            t.same(rotation(m2, "X"), 92);
+            t.same(rotation(m2, "Y"), 0);
+            t.notMatch(transform(m1), "rotateZ");
+
+            t.match(transform(m3), "translate(256px,310px)");
+            t.same(rotation(m3, "X"), 11);
+            t.same(rotation(m3, "Y"), 0);
+            t.notMatch(transform(m1), "rotateZ");
+
+            t.match(transform(m4), "translate(315px,357px)");
+            t.same(rotation(m4, "X"), -12);
+            t.same(rotation(m4, "Y"), 26);
+            t.same(rotation(m4, "Z"), 29);
+
+            map.setPitch(30);
+            map.once('render', () => {
+                t.match(transform(m1), "translate(256px,256px)");
+                t.same(rotation(m1, "X"), 30);
+                t.same(rotation(m1, "Y"), 0);
+                t.notMatch(transform(m1), "rotateZ");
+
+                t.match(transform(m2), "translate(256px,207px)");
+                t.same(rotation(m2, "X"), 79);
+                t.same(rotation(m2, "Y"), 0);
+                t.notMatch(transform(m1), "rotateZ");
+
+                t.match(transform(m3), "translate(256px,315px)");
+                t.same(rotation(m3, "X"), -4);
+                t.same(rotation(m3, "Y"), 0);
+                t.notMatch(transform(m1), "rotateZ");
+
+                t.match(transform(m4), "translate(313px,354px)");
+                t.same(rotation(m4, "X"), -21);
+                t.same(rotation(m4, "Y"), 25);
+                t.same(rotation(m4, "Z"), 31);
+
+                map.remove();
+                t.end();
+            });
+        });
+    });
+
+    test('rotationAlignment: horizon rotates at low zoom', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        const marker = new Marker({rotationAlignment: 'horizon'})
+            .setLngLat([0, 1])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.notMatch(transform(marker), "rotateZ");
+
+        marker.setLngLat([0, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 180);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, 1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 45);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 135);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([-1, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -135);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([-1, 1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -45);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.setBearing(90);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -135);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.remove();
+        t.end();
+    });
+
+    test('rotationAlignment: horizon does not rotate at high zoom', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        map.setZoom(10);
+        const marker = new Marker({rotationAlignment: 'horizon'})
+            .setLngLat([0, 1])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.notMatch(transform(marker), "rotateZ");
+
+        marker.setLngLat([0, -1]);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, 1]);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.setBearing(90);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.remove();
+        t.end();
+    });
+
+    test('rotationAlignment: horizon rotates partially during transition', (t) => {
+        const map = createMap(t);
+        map.setProjection('globe');
+        map.setZoom(5); // halfway through transition
+        const marker = new Marker({rotationAlignment: 'horizon'})
+            .setLngLat([0, 1])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.same(rotation(marker, "Z"), 0);
+
+        marker.setLngLat([0, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 0);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, 1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 4);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), 6);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([-1, -1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -6);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([-1, 1]);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -4);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.setBearing(90);
+        map._domRenderTaskQueue.run();
+        t.same(rotation(marker, "Z"), -6);
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.remove();
+        t.end();
+    });
+
+    test('rotationAlignment: horizon behaves as viewport in non-globe projections', (t) => {
+        const map = createMap(t);
+        map.setProjection('albers');
+        const marker = new Marker({rotationAlignment: 'horizon'})
+            .setLngLat([0, 1])
+            .addTo(map);
+        map._domRenderTaskQueue.run();
+
+        t.notMatch(transform(marker), "rotateZ");
+
+        marker.setLngLat([0, -1]);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        marker.setLngLat([1, 1]);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.setBearing(90);
+        map._domRenderTaskQueue.run();
+        t.notMatch(transform(marker), "rotateZ");
+        t.notMatch(transform(marker), "rotateX");
+        t.notMatch(transform(marker), "rotateY");
+
+        map.remove();
+        t.end();
+    });
+
+    t.end();
+});
+
+test('Markers on globe account for rotation', (t) => {
+    const map = createMap(t);
+    map.setProjection('globe');
+    map._domRenderTaskQueue.run();
+    const markerMap = new Marker({rotationAlignment: 'map', rotation: 45})
+        .setLngLat([0, 0])
+        .addTo(map);
+    const markerView = new Marker({rotation: 45})
+        .setLngLat([0, 0])
+        .addTo(map);
+
+    const rotationRegex = /rotateZ\(-?([0-9]+)deg\)/;
+
+    t.same(markerView.getElement().style.transform.match(rotationRegex)[1], 45);
+    t.same(markerMap.getElement().style.transform.match(rotationRegex)[1], 45);
+
+    map.setBearing(map.getBearing() + 180);
+    map._domRenderTaskQueue.run();
+
+    t.same(markerView.getElement().style.transform.match(rotationRegex)[1], 45);
+    t.same(markerMap.getElement().style.transform.match(rotationRegex)[1], 135);
+
+    map.remove();
+    t.end();
 });
 
 test('Snap To Pixel', (t) => {

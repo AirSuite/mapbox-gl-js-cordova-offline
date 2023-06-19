@@ -2,9 +2,13 @@
 
 import Point from '@mapbox/point-geometry';
 
-import mvt from '@mapbox/vector-tile';
-const toGeoJSON = mvt.VectorTileFeature.prototype.toGeoJSON;
+import {VectorTileFeature} from '@mapbox/vector-tile';
+// $FlowFixMe[method-unbinding]
+const toGeoJSON = VectorTileFeature.prototype.toGeoJSON;
 import EXTENT from '../data/extent.js';
+
+import type {GeoJSONFeature} from '@mapbox/geojson-types';
+import type {IVectorTile, IVectorTileLayer, IVectorTileFeature} from '@mapbox/vector-tile';
 
 // The feature type used by geojson-vt and supercluster. Should be extracted to
 // global type and used in module definitions for those two modules.
@@ -20,7 +24,7 @@ type Feature = {
     geometry: Array<Array<[number, number]>>,
 }
 
-class FeatureWrapper implements VectorTileFeature {
+class FeatureWrapper implements IVectorTileFeature {
     _feature: Feature;
 
     extent: number;
@@ -46,7 +50,7 @@ class FeatureWrapper implements VectorTileFeature {
         }
     }
 
-    loadGeometry() {
+    loadGeometry(): Array<Array<Point>> {
         if (this._feature.type === 1) {
             const geometry = [];
             for (const point of this._feature.geometry) {
@@ -66,13 +70,13 @@ class FeatureWrapper implements VectorTileFeature {
         }
     }
 
-    toGeoJSON(x: number, y: number, z: number) {
+    toGeoJSON(x: number, y: number, z: number): GeoJSONFeature {
         return toGeoJSON.call(this, x, y, z);
     }
 }
 
-class GeoJSONWrapper implements VectorTile, VectorTileLayer {
-    layers: {[_: string]: VectorTileLayer};
+class GeoJSONWrapper implements IVectorTile, IVectorTileLayer {
+    layers: {[_: string]: IVectorTileLayer};
     name: string;
     extent: number;
     length: number;
@@ -86,7 +90,7 @@ class GeoJSONWrapper implements VectorTile, VectorTileLayer {
         this._features = features;
     }
 
-    feature(i: number): VectorTileFeature {
+    feature(i: number): IVectorTileFeature {
         return new FeatureWrapper(this._features[i]);
     }
 }

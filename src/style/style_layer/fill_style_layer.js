@@ -17,6 +17,7 @@ import type EvaluationParameters from '../evaluation_parameters.js';
 import type Transform from '../../geo/transform.js';
 import type {LayerSpecification} from '../../style-spec/types.js';
 import type {TilespaceQueryGeometry} from '../query_geometry.js';
+import type {IVectorTileFeature} from '@mapbox/vector-tile';
 
 class FillStyleLayer extends StyleLayer {
     _unevaluatedLayout: Layout<LayoutProps>;
@@ -56,16 +57,18 @@ class FillStyleLayer extends StyleLayer {
         }
     }
 
-    createBucket(parameters: BucketParameters<*>): FillBucket {
+    createBucket(parameters: BucketParameters<FillStyleLayer>): FillBucket {
         return new FillBucket(parameters);
     }
 
+    // $FlowFixMe[method-unbinding]
     queryRadius(): number {
         return translateDistance(this.paint.get('fill-translate'));
     }
 
+    // $FlowFixMe[method-unbinding]
     queryIntersectsFeature(queryGeometry: TilespaceQueryGeometry,
-                           feature: VectorTileFeature,
+                           feature: IVectorTileFeature,
                            featureState: FeatureState,
                            geometry: Array<Array<Point>>,
                            zoom: number,

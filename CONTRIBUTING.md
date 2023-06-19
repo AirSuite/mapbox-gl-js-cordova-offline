@@ -9,9 +9,9 @@ Install the Xcode Command Line Tools Package
 xcode-select --install
 ```
 
-Install [node.js](https://nodejs.org/) version 14
+Install [node.js](https://nodejs.org/) version 18
 ```bash
-brew install node@14
+brew install node@18
 ```
 Install [yarn](https://yarnpkg.com/en/)
 ```bash
@@ -30,10 +30,10 @@ yarn install
 
 ### Linux
 
-Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 14, [GNU Make](http://www.gnu.org/software/make/), and libglew-dev
+Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 18, [GNU Make](http://www.gnu.org/software/make/), and libglew-dev
 ```bash
 sudo apt-get update
-curl -sL https://deb.nodesource.com/setup_14.x | sudo bash -
+curl -sL https://deb.nodesource.com/setup_18.x | sudo bash -
 sudo apt-get install build-essential git nodejs libglew-dev libxi-dev
 ```
 
@@ -55,7 +55,7 @@ yarn install
 
 ### Windows
 
-Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 14, [yarn](https://yarnpkg.com/en/docs/install#windows-tab), [npm and node-gyp](https://github.com/Microsoft/nodejs-guidelines/blob/master/windows-environment.md#compiling-native-addon-modules).
+Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 18, [yarn](https://yarnpkg.com/en/docs/install#windows-tab), [npm and node-gyp](https://github.com/Microsoft/nodejs-guidelines/blob/master/windows-environment.md#compiling-native-addon-modules).
 
 Clone the repository
 ```bash
@@ -164,7 +164,19 @@ How to add your changelog? Changelog entries are written inside the `<changelog>
 
 ## Documentation Conventions
 
-See [`README.md`](https://github.com/mapbox/mapbox-gl-js-docs/blob/publisher-production/README.md) from [`mapbox-gl-js-docs`](https://github.com/mapbox/mapbox-gl-js-docs/).
+API documentation is written as [JSDoc comments](http://usejsdoc.org/) and processed with [documentationjs](http://documentation.js.org/) in the source code of [mapbox-gl-js](https://github.com/mapbox/mapbox-gl-js).
+
+* Classes, methods, events, and anything else in the public interface must be documented with JSDoc comments. Everything outside of the public interface may be documented and must be tagged as `@private`.
+* Text within JSDoc comments may use markdown formatting. Code identifiers must be surrounded by \`backticks\`.
+* Documentation must be written in grammatically correct sentences ending with periods.
+* Documentation must specify measurement units when applicable.
+* Documentation descriptions must contain more information than what is obvious from the identifier and JSDoc metadata.
+* Class descriptions should describe what the class *is*, or what its instances *are*. They do not document the constructor, but the class. They should begin with either a complete sentence or a phrase that would complete a sentence beginning with "A `T` is..." or "The `T` class is..." Examples: "Lists are ordered indexed dense collections." "A class used for asynchronous computations."
+* Function descriptions should begin with a third person singular present tense verb, as if completing a sentence beginning with "This function..." If the primary purpose of the function is to return a value, the description should begin with "Returns..." Examples: "Returns the layer with the specified id." "Sets the map's center point."
+* `@param`, `@property`, and `@returns` descriptions should be capitalized and end with a period. They should begin as if completing a sentence beginning with "This is..." or "This..."
+* Functions that do not return a value (return `undefined`), should not have a `@returns` annotation.
+* Member descriptions should document what a member represents or gets and sets. They should also indicate whether the member is read-only.
+* Event descriptions should begin with "Fired when..." and so should describe when the event fires. Event entries should clearly document any data passed to the handler, with a link to MDN documentation of native Event objects when applicable.
 
 ### Github Issue Labels
 

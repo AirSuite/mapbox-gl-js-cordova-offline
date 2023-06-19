@@ -5,10 +5,10 @@ import LngLat from '../../../src/geo/lng_lat.js';
 import {OverscaledTileID, CanonicalTileID} from '../../../src/source/tile_id.js';
 import {fixedNum, fixedLngLat, fixedCoord, fixedPoint, fixedVec3, fixedVec4} from '../../util/fixed.js';
 import {FreeCameraOptions} from '../../../src/ui/free_camera.js';
-import MercatorCoordinate, {mercatorZfromAltitude, MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
+import MercatorCoordinate, {mercatorZfromAltitude, altitudeFromMercatorZ, MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
 import {vec3, quat} from 'gl-matrix';
 import LngLatBounds from '../../../src/geo/lng_lat_bounds.js';
-import {degToRad} from '../../../src/util/util.js';
+import {degToRad, radToDeg} from '../../../src/util/util.js';
 
 test('transform', (t) => {
 
@@ -88,9 +88,9 @@ test('transform', (t) => {
     t.test('set fov', (t) => {
         const transform = new Transform();
         transform.fov = 10;
-        t.equal(transform.fov, 10);
+        t.equal(radToDeg(transform._fov), 10);
         transform.fov = 10;
-        t.equal(transform.fov, 10);
+        t.equal(radToDeg(transform._fov), 10);
         t.end();
     });
 
@@ -629,18 +629,22 @@ test('transform', (t) => {
             getAtPointOrZero(p) {
                 if (p.x === 0.5 && p.y === 0.5)
                     return 0;
-                return elevation;
+                return elevation * this.exaggeration();
             },
             getAtPoint(p) {
                 return this.getAtPointOrZero(p);
             },
             getForTilePoints(tileID, points) {
                 for (const p of points) {
-                    p[2] = elevation;
+                    p[2] = elevation * this.exaggeration();
                 }
                 return true;
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            _exaggeration: 1,
+            exaggeration() {
+                return this._exaggeration;
+            }
         };
     };
 
@@ -658,7 +662,8 @@ test('transform', (t) => {
             getForTilePoints() {
                 return true;
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            exaggeration: () => 1
         };
     };
 
@@ -668,18 +673,22 @@ test('transform', (t) => {
                 return true;
             },
             getAtPointOrZero(_) {
-                return elevation;
+                return elevation * this.exaggeration();
             },
             getAtPoint(_) {
                 return this.getAtPointOrZero();
             },
             getForTilePoints(tileID, points) {
                 for (const p of points) {
-                    p[2] = elevation;
+                    p[2] = elevation * this.exaggeration();
                 }
                 return true;
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            _exaggeration: 1,
+            exaggeration() {
+                return this._exaggeration;
+            }
         };
     };
 
@@ -700,16 +709,64 @@ test('transform', (t) => {
                 }
                 return true;
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            exaggeration: () => 1
         };
     };
 
-    test('Constrained camera height over terrain', (t) => {
+    test('Pitch does not change when camera collides with terrain', (t) => {
         const transform = new Transform();
         transform.resize(200, 200);
         transform.maxPitch = 85;
 
-        transform.elevation = createCollisionElevation(10);
+        transform._elevation = createCollisionElevation(10);
+        transform.bearing = -45;
+        transform.pitch = 85;
+
+        const altitudeZ = mercatorZfromAltitude(5, transform.center.lat) / Math.cos(degToRad(85));
+        const zoom = transform._zoomFromMercatorZ(altitudeZ * 2);
+        transform.zoom = zoom;
+
+        const cameraAltitude = transform.getFreeCameraOptions().position.z / mercatorZfromAltitude(1, transform.center.lat);
+        t.ok(cameraAltitude > 10);
+        t.equal(fixedNum(transform.bearing), -45);
+        t.equal(fixedNum(transform.pitch), 85);
+
+        t.end();
+    });
+
+    test('Camera height is above terrain with constant elevation', (t) => {
+        const transform = new Transform();
+        transform.resize(200, 200);
+        transform.maxPitch = 85;
+
+        transform.elevation = createConstantElevation(10);
+        transform.bearing = -45;
+        transform.pitch = 85;
+
+        // Set camera altitude to 5 meters
+        const altitudeZ = mercatorZfromAltitude(5, transform.center.lat) / Math.cos(degToRad(85));
+        const zoom = transform._zoomFromMercatorZ(altitudeZ);
+        transform.zoom = zoom;
+
+        const cameraAltitude = altitudeFromMercatorZ(transform.getFreeCameraOptions().position.z, transform.getFreeCameraOptions().position.y);
+
+        t.ok(cameraAltitude > 10);
+        t.equal(fixedNum(transform.zoom), fixedNum(zoom));
+        t.equal(fixedNum(transform.bearing), -45);
+        t.equal(fixedNum(transform.pitch), 85);
+
+        t.end();
+    });
+
+    test('Constrained camera height over terrain with exaggeration change', (t) => {
+        const transform = new Transform();
+        transform.resize(200, 200);
+        transform.maxPitch = 85;
+
+        const elevation = createConstantElevation(10);
+        elevation._exaggeration = 0;
+        transform.elevation = elevation;
         transform.constantCameraHeight = false;
         transform.bearing = -45;
         transform.pitch = 85;
@@ -719,13 +776,54 @@ test('transform', (t) => {
         const zoom = transform._zoomFromMercatorZ(altitudeZ);
         transform.zoom = zoom;
 
-        // Pitch should have been adjusted so that the camera isn't under the terrain
-        const pixelsPerMeter = mercatorZfromAltitude(1, transform.center.lat) * transform.worldSize;
-        const updatedAltitude = transform.cameraToCenterDistance / pixelsPerMeter * Math.cos(degToRad(transform.pitch));
+        const cameraAltitude = () => {
+            return transform.getFreeCameraOptions().position.z / mercatorZfromAltitude(1, transform.center.lat);
+        };
 
-        t.true(updatedAltitude > 10);
-        t.equal(fixedNum(transform.zoom), fixedNum(zoom));
-        t.equal(fixedNum(transform.bearing), -45);
+        t.equal(fixedNum(cameraAltitude()), 5);
+        t.equal(transform._centerAltitude, 0);
+
+        // increase exaggeration to lift the center (and camera that follows it) up.
+        transform.elevation._exaggeration = 1;
+        transform.updateElevation(false);
+        t.equal(transform._centerAltitude, 10);
+
+        const cameraAltitudeAfterLift = cameraAltitude();
+        t.equal(fixedNum(cameraAltitudeAfterLift), 15);
+
+        transform.elevation._exaggeration = 15;
+        transform.updateElevation(false);
+        t.equal(transform._centerAltitude, 150);
+        t.equal(fixedNum(cameraAltitude()), 155);
+
+        transform.elevation._exaggeration = 0;
+        transform.updateElevation(false);
+        t.equal(fixedNum(cameraAltitude()), 5);
+
+        // zoom out to 10 meters and back to 5
+        transform.zoom = transform._zoomFromMercatorZ(altitudeZ * 2);
+        t.equal(fixedNum(cameraAltitude()), 10);
+        transform.zoom = zoom;
+        t.equal(fixedNum(cameraAltitude()), 5);
+        t.equal(fixedNum(transform.pitch), 85);
+
+        transform.elevation = null;
+        t.ok(cameraAltitude() < 10);
+
+        // collision elevation keeps center at 0 but pushes camera up.
+        const elevation1 = createCollisionElevation(10);
+        elevation1._exaggeration = 0;
+
+        transform.elevation = elevation1;
+        transform.updateElevation(false);
+        t.equal(transform._centerAltitude, 0);
+        t.ok(cameraAltitude() < 10);
+
+        elevation1._exaggeration = 1;
+        transform.updateElevation(false);
+        t.equal(transform._centerAltitude, 0);
+        t.ok(cameraAltitude() > 10);
+        t.equal(fixedNum(transform.pitch), 85);
 
         t.end();
     });
@@ -736,7 +834,7 @@ test('transform', (t) => {
 
         transform.elevation = createCollisionElevationNoData();
 
-        t.false(transform._centerAltitudeValid);
+        t.equal(transform._centerAltitudeValidForExaggeration, undefined);
 
         const transformBefore = transform.clone();
 
@@ -747,7 +845,7 @@ test('transform', (t) => {
         // Apply zoom
         transform.zoom = zoom;
 
-        t.false(transform._centerAltitudeValid);
+        t.equal(transform._centerAltitudeValidForExaggeration, undefined);
         t.equal(transform._seaLevelZoom, transformBefore._seaLevelZoom);
 
         t.end();
@@ -987,6 +1085,8 @@ test('transform', (t) => {
             tilesDefaultElevation = null;
             centerElevation = 1600;
             tileElevation[new OverscaledTileID(14, 0, 14, 3413, 6218).key] = 1600;
+            transform.pitch = 0;
+            transform.bearing = 0;
             transform.resize(768, 768);
             transform.zoom = options.maxzoom = 22;
             transform.center = {lng: -104.99813327, lat: 39.72784465999999};
@@ -1622,6 +1722,25 @@ test('transform', (t) => {
         result = transform.rayIntersectionCoordinate(transform.pointRayIntersection(transform.centerPoint, 1000));
         const diff = mercatorZfromAltitude(1000, 0);
         t.deepEqual(fixedCoord(result), fixedCoord(new MercatorCoordinate(0.5, 0.5 + diff, diff)));
+
+        t.end();
+    });
+
+    t.test("zoomFromMercatorZAdjusted", (t) => {
+        const transform = new Transform();
+        transform.resize(500, 500);
+        t.ok(transform.setProjection({name: 'globe'}));
+
+        for (let zoom = 0; zoom < 6; ++zoom) {
+            transform.zoom = zoom;
+
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(1e3, 0)), 3), 6);
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(1e6, 0)), 3), 5.874);
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(4e6, 0)), 3), 3.87);
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(1e7, 0)), 3), 2.054);
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(2e7, 0)), 3), 1.052);
+            t.equal(fixedNum(transform.zoomFromMercatorZAdjusted(mercatorZfromAltitude(5e7, 0)), 3), 0);
+        }
 
         t.end();
     });

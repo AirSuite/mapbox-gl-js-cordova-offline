@@ -11,17 +11,18 @@ import browser from '../util/browser';
 import {cacheEntryPossiblyAdded} from '../util/tile_request_cache';
 import {DedupedRequest, loadVectorTile} from './vector_tile_worker_source';
 
-import type {Source} from './source';
-import type {OverscaledTileID} from './tile_id';
-import type Map from '../ui/map';
-import type Dispatcher from '../util/dispatcher';
-import type Tile from './tile';
-import type {Callback} from '../types/callback';
-import type {Cancelable} from '../types/cancelable';
-import type {VectorSourceSpecification, PromoteIdSpecification} from '../style-spec/types';
+import type {Source} from './source.js';
+import type {OverscaledTileID} from './tile_id.js';
+import type Map from '../ui/map.js';
+import type Dispatcher from '../util/dispatcher.js';
+import type Tile from './tile.js';
+import type {Callback} from '../types/callback.js';
+import type {Cancelable} from '../types/cancelable.js';
+import type {VectorSourceSpecification, PromoteIdSpecification} from '../style-spec/types.js';
 import Pako from 'pako';
-import type Actor from '../util/actor';
-import type {LoadVectorTileResult} from './vector_tile_worker_source';
+import type Actor from '../util/actor.js';
+import type {LoadVectorTileResult} from './vector_tile_worker_source.js';
+import type {WorkerTileResult} from './worker_source.js';
 
 /**
  * A source containing vector tiles in [Mapbox Vector Tile format](https://docs.mapbox.com/vector-tiles/reference/).
@@ -66,8 +67,8 @@ class VectorTileSource extends Evented implements Source {
     bounds: ?[number, number, number, number];
     tiles: Array<string>;
     tileBounds: TileBounds;
-    reparseOverscaled: boolean;
-    isTileClipped: boolean;
+    reparseOverscaled: boolean | void;
+    isTileClipped: boolean | void;
     _tileJSONRequest: ?Cancelable;
     _loaded: boolean;
     _tileWorkers: {[string]: Actor};
@@ -102,13 +103,18 @@ class VectorTileSource extends Evented implements Source {
         this._deduped = new DedupedRequest();
     }
 
-    load() {
+    load(callback?: Callback<void>) {
         this._loaded = false;
         this.fire(new Event('dataloading', {dataType: 'source'}));
-        this._tileJSONRequest = loadTileJSON(this._options, this.map._requestManager, (err, tileJSON) => {
+        const language = Array.isArray(this.map._language) ? this.map._language.join() : this.map._language;
+        const worldview = this.map._worldview;
+        this._tileJSONRequest = loadTileJSON(this._options, this.map._requestManager, language, worldview, (err, tileJSON) => {
             this._tileJSONRequest = null;
             this._loaded = true;
             if (err) {
+                if (language) console.warn(`Ensure that your requested language string is a valid BCP-47 code or list of codes. Found: ${language}`);
+                if (worldview && worldview.length !== 2) console.warn(`Requested worldview strings must be a valid ISO alpha-2 code. Found: ${worldview}`);
+
                 this.fire(new ErrorEvent(err));
             } else if (tileJSON) {
                 extend(this, tileJSON);
@@ -121,6 +127,8 @@ class VectorTileSource extends Evented implements Source {
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'metadata'}));
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'content'}));
             }
+
+            if (callback) callback(err);
         });
     }
 
@@ -128,27 +136,27 @@ class VectorTileSource extends Evented implements Source {
         return this._loaded;
     }
 
+    // $FlowFixMe[method-unbinding]
     hasTile(tileID: OverscaledTileID): boolean {
         return !this.tileBounds || this.tileBounds.contains(tileID.canonical);
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.load();
     }
 
-    setSourceProperty(callback: Function) {
-        if (this._tileJSONRequest) {
-            this._tileJSONRequest.cancel();
-        }
-
-        callback();
-
-        const sourceCaches = this.map.style._getSourceCaches(this.id);
-        for (const sourceCache of sourceCaches) {
-            sourceCache.clearTiles();
-        }
-        this.load();
+    /**
+     * Reloads the source data and re-renders the map.
+     *
+     * @example
+     * map.getSource('source-id').reload();
+     */
+    // $FlowFixMe[method-unbinding]
+    reload() {
+        this.cancelTileJSONRequest();
+        this.load(() => this.map.style._clearSource(this.id));
     }
 
     /**
@@ -157,22 +165,19 @@ class VectorTileSource extends Evented implements Source {
      * @param {string[]} tiles An array of one or more tile source URLs, as in the TileJSON spec.
      * @returns {VectorTileSource} Returns itself to allow for method chaining.
      * @example
-     * map.addSource('vector_source_id', {
+     * map.addSource('source-id', {
      *     type: 'vector',
      *     tiles: ['https://some_end_point.net/{z}/{x}/{y}.mvt'],
      *     minzoom: 6,
      *     maxzoom: 14
      * });
      *
-     * const vectorTileSource = map.getSource('vector_source_id');
-     *
      * // Set the endpoint associated with a vector tile source.
-     * vectorTileSource.setTiles(['https://another_end_point.net/{z}/{x}/{y}.mvt']);
+     * map.getSource('source-id').setTiles(['https://another_end_point.net/{z}/{x}/{y}.mvt']);
      */
     setTiles(tiles: Array<string>): this {
-        this.setSourceProperty(() => {
-            this._options.tiles = tiles;
-        });
+        this._options.tiles = tiles;
+        this.reload();
 
         return this;
     }
@@ -183,30 +188,25 @@ class VectorTileSource extends Evented implements Source {
      * @param {string} url A URL to a TileJSON resource. Supported protocols are `http:`, `https:`, and `mapbox://<Tileset ID>`.
      * @returns {VectorTileSource} Returns itself to allow for method chaining.
      * @example
-     * map.addSource('vector_source_id', {
+     * map.addSource('source-id', {
      *     type: 'vector',
      *     url: 'mapbox://mapbox.mapbox-streets-v7'
      * });
      *
-     * const vectorTileSource = map.getSource('vector_source_id');
-     *
      * // Update vector tile source to a new URL endpoint
-     * vectorTileSource.setUrl("mapbox://mapbox.mapbox-streets-v8");
+     * map.getSource('source-id').setUrl("mapbox://mapbox.mapbox-streets-v8");
      */
     setUrl(url: string): this {
-        this.setSourceProperty(() => {
-            this.url = url;
-            this._options.url = url;
-        });
+        this.url = url;
+        this._options.url = url;
+        this.reload();
 
         return this;
     }
 
+    // $FlowFixMe[method-unbinding]
     onRemove() {
-        if (this._tileJSONRequest) {
-            this._tileJSONRequest.cancel();
-            this._tileJSONRequest = null;
-        }
+        this.cancelTileJSONRequest();
     }
 
     serialize(): VectorSourceSpecification {
@@ -323,12 +323,14 @@ class VectorTileSource extends Evented implements Source {
           tile.request = tile.actor.send('reloadTile', params, done.bind(this));
       }
 
-        function done(err, data) {
+        // $FlowFixMe[missing-this-annot]
+        function done(err: ?Error, data: ?WorkerTileResult) {
             delete tile.request;
 
             if (tile.aborted)
                 return callback(null);
 
+            // $FlowFixMe[prop-missing] - generic Error type doesn't have status
             if (err && err.status !== 404) {
                 return callback(err);
             }
@@ -350,6 +352,7 @@ class VectorTileSource extends Evented implements Source {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     abortTile(tile: Tile) {
         if (tile.request) {
             tile.request.cancel();
@@ -360,6 +363,7 @@ class VectorTileSource extends Evented implements Source {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile) {
         tile.unloadVectorData();
         if (tile.actor) {
@@ -371,8 +375,15 @@ class VectorTileSource extends Evented implements Source {
         return false;
     }
 
+    // $FlowFixMe[method-unbinding]
     afterUpdate() {
         this._tileWorkers = {};
+    }
+
+    cancelTileJSONRequest() {
+        if (!this._tileJSONRequest) return;
+        this._tileJSONRequest.cancel();
+        this._tileJSONRequest = null;
     }
 }
 
