@@ -6,9 +6,11 @@ import type {TypedStyleLayer} from '../style/style_layer/typed_style_layer.js';
 import type FeatureIndex from './feature_index.js';
 import type Context from '../gl/context.js';
 import type {FeatureStates} from '../source/source_state.js';
-import type {ImagePosition} from '../render/image_atlas.js';
+import type {SpritePositions} from '../util/image.js';
 import type LineAtlas from '../render/line_atlas.js';
 import type {CanonicalTileID} from '../source/tile_id.js';
+import type {TileTransform} from '../geo/projection/tile_transform.js';
+import type Point from '@mapbox/point-geometry';
 
 export type BucketParameters<Layer: TypedStyleLayer> = {
     index: number,
@@ -19,7 +21,8 @@ export type BucketParameters<Layer: TypedStyleLayer> = {
     collisionBoxArray: CollisionBoxArray,
     sourceLayerIndex: number,
     sourceID: string,
-    enableTerrain: boolean
+    enableTerrain: boolean,
+    projection: string
 }
 
 export type PopulateParameters = {
@@ -78,8 +81,8 @@ export interface Bucket {
     +layers: Array<any>;
     +stateDependentLayers: Array<any>;
     +stateDependentLayerIds: Array<string>;
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID): void;
-    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: {[_: string]: ImagePosition}): void;
+    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform): void;
+    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions): void;
     isEmpty(): boolean;
 
     upload(context: Context): void;

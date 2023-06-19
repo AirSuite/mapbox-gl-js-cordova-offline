@@ -40,7 +40,7 @@ class SegmentVector {
         return segment;
     }
 
-    get() {
+    get(): Array<Segment> {
         return this.segments;
     }
 
@@ -72,5 +72,5 @@ class SegmentVector {
  */
 SegmentVector.MAX_VERTEX_ARRAY_LENGTH = Math.pow(2, 16) - 1;
 
-register('SegmentVector', SegmentVector);
+register(SegmentVector);
 export default SegmentVector;

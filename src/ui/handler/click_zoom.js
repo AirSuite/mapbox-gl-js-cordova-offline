@@ -2,6 +2,7 @@
 
 import type Point from '@mapbox/point-geometry';
 import type Map from '../map.js';
+import type {HandlerResult} from '../handler_manager.js';
 
 export default class ClickZoomHandler {
 
@@ -16,7 +17,11 @@ export default class ClickZoomHandler {
         this._active = false;
     }
 
-    dblclick(e: MouseEvent, point: Point) {
+    blur() {
+        this.reset();
+    }
+
+    dblclick(e: MouseEvent, point: Point): HandlerResult {
         e.preventDefault();
         return {
             cameraAnimation: (map: Map) => {
@@ -38,11 +43,11 @@ export default class ClickZoomHandler {
         this.reset();
     }
 
-    isEnabled() {
+    isEnabled(): boolean {
         return this._enabled;
     }
 
-    isActive() {
+    isActive(): boolean {
         return this._active;
     }
 }

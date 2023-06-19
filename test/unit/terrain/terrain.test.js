@@ -3,7 +3,7 @@ import {extend} from '../../../src/util/util.js';
 import {createMap} from '../../util/index.js';
 import DEMData from '../../../src/data/dem_data.js';
 import {RGBAImage} from '../../../src/util/image.js';
-import MercatorCoordinate from '../../../src/geo/mercator_coordinate.js';
+import MercatorCoordinate, {MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
 import window from '../../../src/util/window.js';
 import {OverscaledTileID} from '../../../src/source/tile_id.js';
 import styleSpec from '../../../src/style-spec/reference/latest.js';
@@ -265,6 +265,46 @@ test('Elevation', (t) => {
         });
     });
 
+    t.test('elevation.isDataAvailableAtPoint', t => {
+        const map = createMap(t);
+        map.on('style.load', () => {
+            map.addSource('mapbox-dem', {
+                "type": "raster-dem",
+                "tiles": ['http://example.com/{z}/{x}/{y}.png'],
+                TILE_SIZE,
+                "maxzoom": 14
+            });
+            map.setTerrain({"source": "mapbox-dem"});
+            map.once('render', () => {
+                t.test('Sample before loading DEMs', t => {
+                    t.false(map.painter.terrain.isDataAvailableAtPoint({x: 0.5, y: 0.5}));
+                    t.end();
+                });
+                const cache = map.style._getSourceCache('mapbox-dem');
+                cache.used = cache._sourceLoaded = true;
+                cache._loadTile = (tile, callback) => {
+                    tile.dem = zeroDem;
+                    tile.needsHillshadePrepare = true;
+                    tile.needsDEMTextureUpload = true;
+                    tile.state = 'loaded';
+                    callback(null);
+                };
+                map.once('render', () => {
+                    t.test('Sample within after loading', t => {
+                        t.true(map.painter.terrain.isDataAvailableAtPoint({x: 0.5, y: 0.5}));
+                        t.end();
+                    });
+                    t.test('Sample outside after loading', t => {
+                        t.false(map.painter.terrain.getAtPoint({x: 0.5, y: 1.1}));
+                        t.false(map.painter.terrain.getAtPoint({x: 1.15, y: -0.001}));
+                        t.end();
+                    });
+                    t.end();
+                });
+            });
+        });
+    });
+
     t.test('map._updateAverageElevation', t => {
         const map = createMap(t, {
             style: extend(createStyle(), {
@@ -336,19 +376,19 @@ test('Elevation', (t) => {
                 changed = map._updateAverageElevation(timestamp);
                 t.true(changed);
                 t.true(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 152.33102130398143);
+                t.equal(map.transform.averageElevation, 154.15083854452925);
 
                 timestamp += AVERAGE_ELEVATION_EASE_TIME * 0.5;
                 changed = map._updateAverageElevation(timestamp);
                 t.true(changed);
                 t.true(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 304.66204260796286);
+                t.equal(map.transform.averageElevation, 308.3016770890585);
 
                 timestamp += AVERAGE_ELEVATION_SAMPLING_INTERVAL;
                 changed = map._updateAverageElevation(timestamp);
                 t.false(changed);
                 t.false(map._averageElevation.isEasing(timestamp));
-                t.equal(map.transform.averageElevation, 304.66204260796286);
+                t.equal(map.transform.averageElevation, 308.3016770890585);
 
                 t.end();
             });
@@ -369,6 +409,9 @@ test('Elevation', (t) => {
         };
         const map = createMap(t, {
             style: extend(createStyle(), {
+                projection: {
+                    name: 'mercator'
+                },
                 sources: {
                     trace: {
                         type: 'geojson',
@@ -412,7 +455,7 @@ test('Elevation', (t) => {
                     const gl = map.painter.context.gl;
                     const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
                     gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-                    const centerOffset = map.getContainer().clientWidth / 2 * (map.getContainer().clientHeight + 1) * 4;
+                    const centerOffset = map._containerWidth / 2 * (map._containerHeight + 1) * 4;
                     const isCenterRendered = pixels[centerOffset] === 255;
                     if (!beganRenderingContent) {
                         beganRenderingContent = isCenterRendered;
@@ -664,8 +707,6 @@ test('Raycast projection 2D/3D', t => {
         }
     });
 
-    map.transform._horizonShift = 0;
-
     map.once('style.load', () => {
         setMockElevationTerrain(map, zeroDem, TILE_SIZE);
         map.once('render', () => {
@@ -683,29 +724,42 @@ test('Raycast projection 2D/3D', t => {
             t.ok(nearlyEquals(fixedPoint(transform.locationPoint3D(new LngLat(0, 0))), {x: cx, y: cy}));
 
             // above horizon:
+            const skyPoint = new Point(cx, 0);
             // raycast implementation returns null as there is no point at the top.
-            t.equal(transform.elevation.pointCoordinate(new Point(cx, 0)), null);
+            t.equal(transform.elevation.pointCoordinate(skyPoint), null);
 
             t.ok(transform.elevation.pointCoordinate(new Point(transform.width, transform.height)));
             t.deepEqual(transform.elevation.pointCoordinate(new Point(transform.width, transform.height))[2].toFixed(10), 0);
 
-            const latLng3D = transform.pointLocation3D(new Point(cx, 0));
-            const latLng2D = transform.pointLocation(new Point(cx, 0));
-            // Project and get horizon line.
+            const coord2D = transform.pointCoordinate(skyPoint);
+            const coord3D = transform.pointCoordinate3D(skyPoint);
+            t.ok(nearlyEquals(coord2D, coord3D, 0.001));
+
+            // Screen points above horizon line should return locations on the horizon line.
+            const latLng3D = transform.pointLocation3D(skyPoint);
+            const latLng2D = transform.pointLocation(skyPoint);
+
+            t.same(latLng2D.lng, latLng3D.lng);
+            // Small differences in screen position, close to the horizon, becomes a large distance in latitude.
+            t.same(latLng2D.lat.toFixed(0), latLng3D.lat.toFixed(0));
 
             const horizonPoint3D = transform.locationPoint3D(latLng3D);
             const horizonPoint2D = transform.locationPoint(latLng2D);
-            t.ok(Math.abs(horizonPoint3D.x - cx) < 0.0000001);
-            t.ok(Math.abs(transform.horizonLineFromTop() - 48.68884861327036) < 0.000000001);
-            t.ok(Math.abs(horizonPoint3D.y - 48.68884861327036) < 0.000000001);
-            t.deepEqual(horizonPoint2D, horizonPoint3D); // Using the same code path for horizon.
+
+            t.same(horizonPoint3D.x.toFixed(7), cx);
+            t.same(horizonPoint2D.x.toFixed(7), cx);
+            t.same(horizonPoint2D.x.toFixed(7), horizonPoint3D.x.toFixed(7));
+
+            t.same(transform.horizonLineFromTop(), 52.39171520871443);
+            t.same(horizonPoint2D.y.toFixed(7), transform.horizonLineFromTop().toFixed(7));
+            t.same((horizonPoint2D.y / 10).toFixed(0), (horizonPoint3D.y / 10).toFixed(0));
 
             // disable terrain.
             map.setTerrain(null);
             map.once('render', () => {
                 t.notOk(map.painter.terrain);
-                const latLng = transform.pointLocation3D(new Point(cx, 0));
-                t.deepEqual(latLng, latLng2D);
+                const latLng = transform.pointLocation3D(skyPoint);
+                t.same(latLng, latLng2D);
 
                 t.deepEqual(fixedLngLat(transform.pointLocation(new Point(cx, cy))), {lng: 0, lat: 0});
                 t.deepEqual(fixedCoord(transform.pointCoordinate(new Point(cx, cy))), {x: 0.5, y: 0.5, z: 0});
@@ -1369,10 +1423,28 @@ test('Marker interaction and raycast', (t) => {
                 const bottomLngLat = tr.pointLocation3D(new Point(terrainTop.x, tr.height));
                 // Raycast returns distance to closer point evaluates to occluded marker.
                 t.stub(tr, 'pointLocation3D').returns(bottomLngLat);
-                setTimeout(() => {
+                map.once('render', () => {
                     t.deepEqual(marker.getElement().style.opacity, 0.2);
                     t.end();
-                }, 100);
+                });
+            });
+
+            t.test(`Marker updates position on removing terrain (#10982)`, (t) => {
+                const update = t.spy(marker, "_update");
+                map.setTerrain(null);
+                map.once('render', () => {
+                    t.same(update.callCount, 1);
+                    t.end();
+                });
+            });
+
+            t.test(`Marker updates position on adding terrain (#10982)`, (t) => {
+                const update = t.spy(marker, "_update");
+                map.setTerrain({"source": "mapbox-dem"});
+                map.once('render', () => {
+                    t.same(update.callCount, 1);
+                    t.end();
+                });
             });
 
             t.end();
@@ -1415,16 +1487,16 @@ test('terrain getBounds', (t) => {
             callback(null);
         };
 
-        t.deepEqual(map.getBounds().getCenter().lng.toFixed(10), 0, 'horizon, no terrain getBounds');
-        t.ok(Math.abs(map.getBounds().getCenter().lat.toFixed(10) - 0.4076172064) < 0.0000001, 'horizon, no terrain getBounds');
+        t.deepEqual(map.getBounds().getCenter().lng.toFixed(7), 0, 'horizon, no terrain getBounds');
+        t.deepEqual(map.getBounds().getCenter().lat.toFixed(10), -42.5358013246, 'horizon, no terrain getBounds');
 
         map.setTerrain({"source": "mapbox-dem"});
         map.once('render', () => {
             map._updateTerrain();
 
             // As tiles above center are elevated, center of bounds is closer to camera.
-            t.deepEqual(map.getBounds().getCenter().lng.toFixed(10), 0, 'horizon terrain getBounds');
-            t.deepEqual(map.getBounds().getCenter().lat.toFixed(10), -1.2344797596, 'horizon terrain getBounds');
+            t.deepEqual(map.getBounds().getCenter().lng.toFixed(4), 0, 'horizon terrain getBounds');
+            t.deepEqual(map.getBounds().getCenter().lat.toFixed(10), -42.5482497247, 'horizon terrain getBounds');
 
             map.setPitch(0);
             map.once('render', () => {
@@ -1432,6 +1504,170 @@ test('terrain getBounds', (t) => {
                 t.deepEqual(map.getBounds().getCenter().lat.toFixed(10), 0, 'terrain 0 getBounds');
                 t.end();
             });
+        });
+    });
+
+    test('recognizes padding', (t) => {
+        const style = createStyle();
+        const map = createMap(t, {style, zoom: 1, bearing: 45});
+
+        map.setPadding({
+            left: 100,
+            right: 10,
+            top: 10,
+            bottom: 10
+        });
+        map.setCenter([0, 0]);
+
+        map.on('style.load', () => {
+            setMockElevationTerrain(map, zeroDem, TILE_SIZE);
+            map.once('render', () => {
+                t.ok(map.transform.elevation);
+                const padded = toFixed(map.getBounds().toArray());
+                map.setPadding({
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0
+                });
+                const unpadded = toFixed(map.getBounds().toArray());
+                t.notSame(padded, unpadded);
+                t.same(
+                    toFixed([[-33.5599507477, -31.7907658998], [33.5599507477, 31.7907658998]]),
+                    padded
+                );
+
+                t.same(
+                    toFixed([[-49.7184455522, -44.4454158060], [49.7184455522, 44.4454158060]]),
+                    unpadded
+                );
+                t.end();
+            });
+        });
+    });
+
+    test('Does not overflow at poles', (t) => {
+        const map = createMap(t,
+            {zoom: 2, center: [0, 90], pitch: 80});
+        map.on('style.load', () => {
+            setMockElevationTerrain(map, zeroDem, TILE_SIZE);
+            map.once('render', () => {
+                t.ok(map.transform.elevation);
+                const bounds = map.getBounds();
+                t.same(bounds.getNorth().toFixed(6), MAX_MERCATOR_LATITUDE);
+                t.same(
+                    toFixed(bounds.toArray()),
+                    toFixed([[ -23.3484820899, 77.6464759596 ], [ 23.3484820899, 85.0511287798 ]])
+                );
+
+                map.setBearing(180);
+                map.setCenter({lng: 0, lat: -90});
+
+                const sBounds = map.getBounds();
+                t.same(sBounds.getSouth().toFixed(6), -MAX_MERCATOR_LATITUDE);
+                t.same(
+                    toFixed(sBounds.toArray()),
+                    toFixed([[ -23.3484820899, -85.0511287798 ], [ 23.3484820899, -77.6464759596]])
+                );
+                t.end();
+            });
+        });
+    });
+
+    test("Does not break with no visible DEM tiles (#10610)", (t) => {
+        const style = createStyle();
+        const map = createMap(t, {style, zoom: 1, bearing: 45});
+        map.setCenter([0, 0]);
+
+        map.on("load", () => {
+            setMockElevationTerrain(map, zeroDem, TILE_SIZE);
+            map.setTerrain({source: "mapbox-dem"});
+            map.once("render", () => {
+                t.ok(map.transform.elevation);
+                const bounds = toFixed(map.getBounds().toArray());
+
+                // Mocking the behavior when the map zooms quickly
+                map.transform.elevation._visibleDemTiles = [];
+
+                t.same(
+                    toFixed([
+                        [-49.7184455522, -44.445415806],
+                        [49.7184455522, 44.445415806],
+                    ]),
+                    bounds
+                );
+                t.end();
+            });
+        });
+    });
+
+    function toFixed(bounds) {
+        const n = 9;
+        return [
+            [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
+            [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
+        ];
+    }
+
+});
+
+test('terrain recursively loads parent tiles on 404', (t) => {
+    t.plan(2);
+
+    const style = createStyle();
+    const map = createMap(t, {style, center: [0, 0], zoom: 16});
+
+    map.once('style.load', () => {
+        map.addSource('mapbox-dem', {
+            'type': 'raster-dem',
+            'tiles': ['http://example.com/{z}/{x}/{y}.png'],
+            'tileSize': TILE_SIZE,
+            'maxzoom': 14
+        });
+
+        const cache = map.style._getSourceCache('mapbox-dem');
+        cache.used = cache._sourceLoaded = true;
+        cache._loadTile = (tile, callback) => {
+            if (tile.tileID.canonical.z > 10) {
+                setTimeout(() => callback({status: 404}), 0);
+            } else {
+                tile.state = 'loaded';
+                callback(null);
+            }
+        };
+
+        map.setTerrain({'source': 'mapbox-dem'});
+
+        map.once('idle', () => {
+            t.deepEqual(cache.getRenderableIds(), [
+                new OverscaledTileID(10, 0, 10, 512, 512).key,
+                new OverscaledTileID(10, 0, 10, 511, 512).key,
+                new OverscaledTileID(10, 0, 10, 512, 511).key,
+                new OverscaledTileID(10, 0, 10, 511, 511).key,
+            ], 'contains first renderable tiles');
+
+            t.deepEqual(cache.getIds(), [
+                new OverscaledTileID(10, 0, 10, 512, 512).key,
+                new OverscaledTileID(10, 0, 10, 511, 512).key,
+                new OverscaledTileID(10, 0, 10, 512, 511).key,
+                new OverscaledTileID(10, 0, 10, 511, 511).key,
+                new OverscaledTileID(11, 0, 11, 1024, 1024).key,
+                new OverscaledTileID(11, 0, 11, 1023, 1024).key,
+                new OverscaledTileID(11, 0, 11, 1024, 1023).key,
+                new OverscaledTileID(11, 0, 11, 1023, 1023).key,
+                new OverscaledTileID(12, 0, 12, 2048, 2048).key,
+                new OverscaledTileID(12, 0, 12, 2047, 2048).key,
+                new OverscaledTileID(12, 0, 12, 2048, 2047).key,
+                new OverscaledTileID(12, 0, 12, 2047, 2047).key,
+                new OverscaledTileID(13, 0, 13, 4096, 4096).key,
+                new OverscaledTileID(13, 0, 13, 4095, 4096).key,
+                new OverscaledTileID(13, 0, 13, 4096, 4095).key,
+                new OverscaledTileID(13, 0, 13, 4095, 4095).key,
+                new OverscaledTileID(14, 0, 14, 8192, 8192).key,
+                new OverscaledTileID(14, 0, 14, 8191, 8192).key,
+                new OverscaledTileID(14, 0, 14, 8192, 8191).key,
+                new OverscaledTileID(14, 0, 14, 8191, 8191).key,
+            ], 'recursively loads parent tiles if current tiles not found');
         });
     });
 });

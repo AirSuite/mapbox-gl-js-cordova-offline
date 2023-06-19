@@ -9,7 +9,7 @@ import CompoundExpression from '../style-spec/expression/compound_expression.js'
 import expressions from '../style-spec/expression/definitions/index.js';
 import ResolvedImage from '../style-spec/expression/types/resolved_image.js';
 import window from './window.js';
-const {ImageData, ImageBitmap} = window;
+import {AJAXError} from './ajax.js';
 
 import type {Transferable} from '../types/transferable.js';
 
@@ -34,14 +34,12 @@ export type Serialized =
 type Registry = {
     [_: string]: {
         klass: Class<any>,
-        omit: $ReadOnlyArray<string>,
-        shallow: $ReadOnlyArray<string>
+        omit: $ReadOnlyArray<string>
     }
 };
 
 type RegisterOptions<T> = {
-    omit?: $ReadOnlyArray<$Keys<T>>,
-    shallow?: $ReadOnlyArray<$Keys<T>>
+    omit?: $ReadOnlyArray<$Keys<T>>
 }
 
 const registry: Registry = {};
@@ -51,28 +49,24 @@ const registry: Registry = {};
  *
  * @param options
  * @param options.omit List of properties to omit from serialization (e.g., cached/computed properties)
- * @param options.shallow List of properties that should be serialized by a simple shallow copy, rather than by a recursive call to serialize().
  *
  * @private
  */
-export function register<T: any>(name: string, klass: Class<T>, options: RegisterOptions<T> = {}) {
+export function register<T: any>(klass: Class<T>, options: RegisterOptions<T> = {}) {
+    const name = klass.name;
+    assert(name, 'Can\'t register a class without a name.');
     assert(!registry[name], `${name} is already registered.`);
-    (Object.defineProperty: any)(klass, '_classRegistryKey', {
-        value: name,
-        writeable: false
-    });
     registry[name] = {
         klass,
-        omit: options.omit || [],
-        shallow: options.shallow || []
+        omit: options.omit || []
     };
 }
 
-register('Object', Object);
+register(Object);
 
 type SerializedGrid = { buffer: ArrayBuffer };
 
-Grid.serialize = function serialize(grid: Grid, transferables?: Array<Transferable>): SerializedGrid {
+(Grid: any).serialize = function serialize(grid: Grid, transferables?: Array<Transferable>): SerializedGrid {
     const buffer = grid.toArrayBuffer();
     if (transferables) {
         transferables.push(buffer);
@@ -80,24 +74,24 @@ Grid.serialize = function serialize(grid: Grid, transferables?: Array<Transferab
     return {buffer};
 };
 
-Grid.deserialize = function deserialize(serialized: SerializedGrid): Grid {
+(Grid: any).deserialize = function deserialize(serialized: SerializedGrid): Grid {
     return new Grid(serialized.buffer);
 };
-register('Grid', Grid);
+register(Grid);
 
-register('Color', Color);
-register('Error', Error);
-register('ResolvedImage', ResolvedImage);
+register(Color);
+register(Error);
+register(AJAXError);
+register(ResolvedImage);
 
-register('StylePropertyFunction', StylePropertyFunction);
-register('StyleExpression', StyleExpression, {omit: ['_evaluator']});
+register(StylePropertyFunction);
+register(StyleExpression, {omit: ['_evaluator']});
 
-register('ZoomDependentExpression', ZoomDependentExpression);
-register('ZoomConstantExpression', ZoomConstantExpression);
-register('CompoundExpression', CompoundExpression, {omit: ['_evaluate']});
+register(ZoomDependentExpression);
+register(ZoomConstantExpression);
+register(CompoundExpression, {omit: ['_evaluate']});
 for (const name in expressions) {
-    if ((expressions[name]: any)._classRegistryKey) continue;
-    register(`Expression_${name}`, expressions[name]);
+    if (!registry[expressions[name].name]) register(expressions[name]);
 }
 
 function isArrayBuffer(val: any): boolean {
@@ -106,8 +100,8 @@ function isArrayBuffer(val: any): boolean {
 }
 
 function isImageBitmap(val: any): boolean {
-    return ImageBitmap &&
-        val instanceof ImageBitmap;
+    return window.ImageBitmap &&
+        val instanceof window.ImageBitmap;
 }
 
 /**
@@ -142,7 +136,7 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
         if (transferables) {
             transferables.push(((input: any): ArrayBuffer));
         }
-        return input;
+        return (input: any);
     }
 
     if (ArrayBuffer.isView(input)) {
@@ -153,7 +147,7 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
         return view;
     }
 
-    if (input instanceof ImageData) {
+    if (input instanceof window.ImageData) {
         if (transferables) {
             transferables.push(input.data.buffer);
         }
@@ -170,11 +164,10 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
 
     if (typeof input === 'object') {
         const klass = (input.constructor: any);
-        const name = klass._classRegistryKey;
-        if (!name) {
-            throw new Error(`can't serialize object of unregistered class`);
+        const name = klass.name;
+        if (!registry[name]) {
+            throw new Error(`can't serialize object of unregistered class ${name}`);
         }
-        assert(registry[name]);
 
         const properties: SerializedObject = klass.serialize ?
             // (Temporary workaround) allow a class to provide static
@@ -192,9 +185,7 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
                 if (!(input: any).hasOwnProperty(key)) continue;
                 if (registry[name].omit.indexOf(key) >= 0) continue;
                 const property = (input: any)[key];
-                properties[key] = registry[name].shallow.indexOf(key) >= 0 ?
-                    property :
-                    serialize(property, transferables);
+                properties[key] = serialize(property, transferables);
             }
             if (input instanceof Error) {
                 properties.message = input.message;
@@ -231,7 +222,7 @@ export function deserialize(input: Serialized): mixed {
         isArrayBuffer(input) ||
         isImageBitmap(input) ||
         ArrayBuffer.isView(input) ||
-        input instanceof ImageData) {
+        input instanceof window.ImageData) {
         return input;
     }
 
@@ -256,7 +247,7 @@ export function deserialize(input: Serialized): mixed {
         for (const key of Object.keys(input)) {
             if (key === '$name') continue;
             const value = (input: SerializedObject)[key];
-            result[key] = registry[name].shallow.indexOf(key) >= 0 ? value : deserialize(value);
+            result[key] = deserialize(value);
         }
 
         return result;

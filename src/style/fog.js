@@ -34,11 +34,16 @@ class Fog extends Evented {
     _transitioning: Transitioning<Props>;
     properties: PossiblyEvaluated<Props>;
 
-    constructor(fogOptions?: FogSpecification) {
+    // Alternate projections do not yet support fog.
+    // Hold on to transform so that we know whether a projection is set.
+    _transform: Transform;
+
+    constructor(fogOptions?: FogSpecification, transform: Transform) {
         super();
         this._transitionable = new Transitionable(fogProperties);
         this.set(fogOptions);
         this._transitioning = this._transitionable.untransitioned();
+        this._transform = transform;
     }
 
     get state(): FogState {
@@ -49,8 +54,8 @@ class Fog extends Evented {
         };
     }
 
-    get() {
-        return this._transitionable.serialize();
+    get(): FogSpecification {
+        return (this._transitionable.serialize(): any);
     }
 
     set(fog?: FogSpecification, options: StyleSetterOptions = {}) {
@@ -69,16 +74,23 @@ class Fog extends Evented {
     }
 
     getOpacity(pitch: number): number {
+        if (!this._transform.projection.supportsFog) return 0;
+
         const fogColor = (this.properties && this.properties.get('color')) || 1.0;
         const pitchFactor = smoothstep(FOG_PITCH_START, FOG_PITCH_END, pitch);
         return pitchFactor * fogColor.a;
     }
 
     getOpacityAtLatLng(lngLat: LngLat, transform: Transform): number {
+        if (!this._transform.projection.supportsFog) return 0;
+
         return getFogOpacityAtLngLat(this.state, lngLat, transform);
     }
 
     getFovAdjustedRange(fov: number): [number, number] {
+        // We can return any arbitrary range because we expect opacity=0 to clean it up
+        if (!this._transform.projection.supportsFog) return [0, 1];
+
         return getFovAdjustedFogRange(this.state, fov);
     }
 
@@ -86,7 +98,7 @@ class Fog extends Evented {
         this._transitioning = this._transitionable.transitioned(parameters, this._transitioning);
     }
 
-    hasTransition() {
+    hasTransition(): boolean {
         return this._transitioning.hasTransition();
     }
 
@@ -94,7 +106,7 @@ class Fog extends Evented {
         this.properties = this._transitioning.possiblyEvaluate(parameters);
     }
 
-    _validate(validate: Function, value: mixed, options?: {validate?: boolean}) {
+    _validate(validate: Function, value: mixed, options?: {validate?: boolean}): boolean {
         if (options && options.validate === false) {
             return false;
         }

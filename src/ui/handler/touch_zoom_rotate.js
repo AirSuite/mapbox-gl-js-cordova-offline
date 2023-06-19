@@ -1,15 +1,17 @@
 // @flow
 
 import Point from '@mapbox/point-geometry';
-import DOM from '../../util/dom.js';
+import * as DOM from '../../util/dom.js';
+import type Map from '../map.js';
+import type {HandlerResult} from '../handler_manager.js';
 
 class TwoTouchHandler {
 
     _enabled: boolean;
     _active: boolean;
-    _firstTwoTouches: [number, number];
-    _vector: Point;
-    _startVector: Point;
+    _firstTwoTouches: ?[number, number];
+    _vector: ?Point;
+    _startVector: ?Point;
     _aroundCenter: boolean;
 
     constructor() {
@@ -18,7 +20,7 @@ class TwoTouchHandler {
 
     reset() {
         this._active = false;
-        delete this._firstTwoTouches;
+        this._firstTwoTouches = undefined;
     }
 
     _start(points: [Point, Point]) {} //eslint-disable-line
@@ -39,11 +41,12 @@ class TwoTouchHandler {
     }
 
     touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) {
-        if (!this._firstTwoTouches) return;
+        const firstTouches = this._firstTwoTouches;
+        if (!firstTouches) return;
 
         e.preventDefault();
 
-        const [idA, idB] = this._firstTwoTouches;
+        const [idA, idB] = firstTouches;
         const a = getTouchById(mapTouches, points, idA);
         const b = getTouchById(mapTouches, points, idB);
         if (!a || !b) return;
@@ -81,11 +84,11 @@ class TwoTouchHandler {
         this.reset();
     }
 
-    isEnabled() {
+    isEnabled(): boolean {
         return this._enabled;
     }
 
-    isActive() {
+    isActive(): boolean {
         return this._active;
     }
 }
@@ -111,8 +114,8 @@ export class TouchZoomHandler extends TwoTouchHandler {
 
     reset() {
         super.reset();
-        delete this._distance;
-        delete this._startDistance;
+        this._distance = 0;
+        this._startDistance = 0;
     }
 
     _start(points: [Point, Point]) {
@@ -144,9 +147,9 @@ export class TouchRotateHandler extends TwoTouchHandler {
 
     reset() {
         super.reset();
-        delete this._minDiameter;
-        delete this._startVector;
-        delete this._vector;
+        this._minDiameter = 0;
+        this._startVector = undefined;
+        this._vector = undefined;
     }
 
     _start(points: [Point, Point]) {
@@ -167,7 +170,7 @@ export class TouchRotateHandler extends TwoTouchHandler {
         };
     }
 
-    _isBelowThreshold(vector: Point) {
+    _isBelowThreshold(vector: Point): boolean {
         /*
          * The threshold before a rotation actually happens is configured in
          * pixels alongth circumference of the circle formed by the two fingers.
@@ -203,14 +206,20 @@ const ALLOWED_SINGLE_TOUCH_TIME = 100;
 export class TouchPitchHandler extends TwoTouchHandler {
 
     _valid: boolean | void;
-    _firstMove: number;
-    _lastPoints: [Point, Point];
+    _firstMove: ?number;
+    _lastPoints: ?[Point, Point];
+    _map: Map;
+
+    constructor(map: Map) {
+        super();
+        this._map = map;
+    }
 
     reset() {
         super.reset();
         this._valid = undefined;
-        delete this._firstMove;
-        delete this._lastPoints;
+        this._firstMove = undefined;
+        this._lastPoints = undefined;
     }
 
     _start(points: [Point, Point]) {
@@ -218,15 +227,20 @@ export class TouchPitchHandler extends TwoTouchHandler {
         if (isVertical(points[0].sub(points[1]))) {
             // fingers are more horizontal than vertical
             this._valid = false;
-
         }
+
     }
 
-    _move(points: [Point, Point], center: Point, e: TouchEvent) {
-        const vectorA = points[0].sub(this._lastPoints[0]);
-        const vectorB = points[1].sub(this._lastPoints[1]);
+    _move(points: [Point, Point], center: Point, e: TouchEvent): ?HandlerResult {
+        const lastPoints = this._lastPoints;
+        if (!lastPoints) return;
+        const vectorA = points[0].sub(lastPoints[0]);
+        const vectorB = points[1].sub(lastPoints[1]);
+
+        if (this._map._cooperativeGestures && e.touches.length < 3) return;
 
         this._valid = this.gestureBeginsVertically(vectorA, vectorB, e.timeStamp);
+
         if (!this._valid) return;
 
         this._lastPoints = points;
@@ -238,7 +252,7 @@ export class TouchPitchHandler extends TwoTouchHandler {
         };
     }
 
-    gestureBeginsVertically(vectorA: Point, vectorB: Point, timeStamp: number) {
+    gestureBeginsVertically(vectorA: Point, vectorB: Point, timeStamp: number): void | boolean {
         if (this._valid !== undefined) return this._valid;
 
         const threshold = 2;
@@ -251,7 +265,7 @@ export class TouchPitchHandler extends TwoTouchHandler {
         // One finger has moved and the other has not.
         // If enough time has passed, decide it is not a pitch.
         if (!movedA || !movedB) {
-            if (this._firstMove === undefined) {
+            if (this._firstMove == null) {
                 this._firstMove = timeStamp;
             }
 

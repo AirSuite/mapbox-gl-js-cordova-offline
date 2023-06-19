@@ -1,7 +1,7 @@
 // @flow
 
 import {Event, Evented} from '../../util/evented.js';
-import DOM from '../../util/dom.js';
+import * as DOM from '../../util/dom.js';
 import window from '../../util/window.js';
 import {extend, bindAll, warnOnce} from '../../util/util.js';
 import assert from 'assert';
@@ -126,7 +126,6 @@ class GeolocateControl extends Evented {
     _setup: boolean; // set to true once the control has been setup
     _heading: ?number;
     _updateMarkerRotationThrottled: Function;
-    _onDeviceOrientationListener: Function;
 
     constructor(options: Options) {
         super();
@@ -140,15 +139,14 @@ class GeolocateControl extends Evented {
             '_setupUI',
             '_updateCamera',
             '_updateMarker',
-            '_updateMarkerRotation'
+            '_updateMarkerRotation',
+            '_onDeviceOrientation'
         ], this);
 
-        // by referencing the function with .bind(), we can correctly remove from window's event listeners
-        this._onDeviceOrientationListener = this._onDeviceOrientation.bind(this);
         this._updateMarkerRotationThrottled = throttle(this._updateMarkerRotation, 20);
     }
 
-    onAdd(map: Map) {
+    onAdd(map: Map): HTMLElement {
         this._map = map;
         this._container = DOM.create('div', `mapboxgl-ctrl mapboxgl-ctrl-group`);
         checkGeolocationSupport(this._setupUI);
@@ -170,7 +168,7 @@ class GeolocateControl extends Evented {
             this._accuracyCircleMarker.remove();
         }
 
-        DOM.remove(this._container);
+        this._container.remove();
         this._map.off('zoom', this._onZoom);
         this._map = (undefined: any);
         numberOfWatches = 0;
@@ -184,11 +182,11 @@ class GeolocateControl extends Evented {
      * @returns {boolean} Returns `true` if position is outside the map's maxbounds, otherwise returns `false`.
      * @private
      */
-    _isOutOfMapMaxBounds(position: Position) {
+    _isOutOfMapMaxBounds(position: Position): boolean {
         const bounds = this._map.getMaxBounds();
         const coordinates = position.coords;
 
-        return bounds && (
+        return !!bounds && (
             coordinates.longitude < bounds.getWest() ||
             coordinates.longitude > bounds.getEast() ||
             coordinates.latitude < bounds.getSouth() ||
@@ -332,7 +330,7 @@ class GeolocateControl extends Evented {
 
     _updateCircleRadius() {
         assert(this._circleElement);
-        const y = this._map._container.clientHeight / 2;
+        const y = this._map._containerHeight / 2;
         const a = this._map.unproject([0, y]);
         const b = this._map.unproject([100, y]);
         const metersPerPixel = a.distanceTo(b) / 100;
@@ -379,8 +377,8 @@ class GeolocateControl extends Evented {
                 this._geolocateButton.classList.remove('mapboxgl-ctrl-geolocate-background-error');
                 this._geolocateButton.disabled = true;
                 const title = this._map._getUIString('GeolocateControl.LocationNotAvailable');
-                this._geolocateButton.title = title;
                 this._geolocateButton.setAttribute('aria-label', title);
+                if (this._geolocateButton.firstElementChild) this._geolocateButton.firstElementChild.setAttribute('title', title);
 
                 if (this._geolocationWatchID !== undefined) {
                     this._clearWatch();
@@ -413,19 +411,20 @@ class GeolocateControl extends Evented {
     _setupUI(supported: boolean) {
         this._container.addEventListener('contextmenu', (e: MouseEvent) => e.preventDefault());
         this._geolocateButton = DOM.create('button', `mapboxgl-ctrl-geolocate`, this._container);
-        DOM.create('span', `mapboxgl-ctrl-icon`, this._geolocateButton).setAttribute('aria-hidden', true);
+        DOM.create('span', `mapboxgl-ctrl-icon`, this._geolocateButton).setAttribute('aria-hidden', 'true');
+
         this._geolocateButton.type = 'button';
 
         if (supported === false) {
             warnOnce('Geolocation support is not available so the GeolocateControl will be disabled.');
             const title = this._map._getUIString('GeolocateControl.LocationNotAvailable');
             this._geolocateButton.disabled = true;
-            this._geolocateButton.title = title;
             this._geolocateButton.setAttribute('aria-label', title);
+            if (this._geolocateButton.firstElementChild) this._geolocateButton.firstElementChild.setAttribute('title', title);
         } else {
             const title = this._map._getUIString('GeolocateControl.FindMyLocation');
-            this._geolocateButton.title = title;
             this._geolocateButton.setAttribute('aria-label', title);
+            if (this._geolocateButton.firstElementChild) this._geolocateButton.firstElementChild.setAttribute('title', title);
         }
 
         if (this.options.trackUserLocation) {
@@ -528,7 +527,7 @@ class GeolocateControl extends Evented {
      * });
      * @returns {boolean} Returns `false` if called before control was added to a map, otherwise returns `true`.
      */
-    trigger() {
+    trigger(): boolean {
         if (!this._setup) {
             warnOnce('Geolocate control triggered before added to a map');
             return false;
@@ -638,15 +637,15 @@ class GeolocateControl extends Evented {
     _addDeviceOrientationListener() {
         const addListener = () => {
             if ('ondeviceorientationabsolute' in window) {
-                window.addEventListener('deviceorientationabsolute', this._onDeviceOrientationListener);
+                window.addEventListener('deviceorientationabsolute', this._onDeviceOrientation);
             } else {
-                window.addEventListener('deviceorientation', this._onDeviceOrientationListener);
+                window.addEventListener('deviceorientation', this._onDeviceOrientation);
             }
         };
 
         if (typeof window.DeviceMotionEvent !== "undefined" &&
             typeof window.DeviceMotionEvent.requestPermission === 'function') {
-            //$FlowFixMe[incompatible-type]
+            // $FlowFixMe
             DeviceOrientationEvent.requestPermission()
                 .then(response => {
                     if (response === 'granted') {
@@ -662,8 +661,8 @@ class GeolocateControl extends Evented {
     _clearWatch() {
         window.navigator.geolocation.clearWatch(this._geolocationWatchID);
 
-        window.removeEventListener('deviceorientation', this._onDeviceOrientationListener);
-        window.removeEventListener('deviceorientationabsolute', this._onDeviceOrientationListener);
+        window.removeEventListener('deviceorientation', this._onDeviceOrientation);
+        window.removeEventListener('deviceorientationabsolute', this._onDeviceOrientation);
 
         this._geolocationWatchID = (undefined: any);
         this._geolocateButton.classList.remove('mapboxgl-ctrl-geolocate-waiting');

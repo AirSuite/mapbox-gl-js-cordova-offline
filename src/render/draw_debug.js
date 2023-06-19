@@ -93,26 +93,29 @@ function drawTileQueryGeometry(painter, sourceCache, coord: OverscaledTileID) {
     // Bind the empty texture for drawing outlines
     painter.emptyTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
 
-    if (tile.queryGeometryDebugViz && tile.queryGeometryDebugViz.vertices.length > 0) {
-        tile.queryGeometryDebugViz.lazyUpload(context);
-        const vertexBuffer = tile.queryGeometryDebugViz.vertexBuffer;
-        const indexBuffer = tile.queryGeometryDebugViz.indexBuffer;
-        const segments = tile.queryGeometryDebugViz.segments;
+    const queryViz = tile.queryGeometryDebugViz;
+    const boundsViz = tile.queryBoundsDebugViz;
+
+    if (queryViz && queryViz.vertices.length > 0) {
+        queryViz.lazyUpload(context);
+        const vertexBuffer = queryViz.vertexBuffer;
+        const indexBuffer = queryViz.indexBuffer;
+        const segments = queryViz.segments;
         if (vertexBuffer != null && indexBuffer != null && segments != null) {
             program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
-                debugUniformValues(posMatrix, tile.queryGeometryDebugViz.color), id,
+                debugUniformValues(posMatrix, queryViz.color), id,
                 vertexBuffer, indexBuffer, segments);
         }
     }
 
-    if (tile.queryBoundsDebugViz && tile.queryBoundsDebugViz.vertices.length > 0) {
-        tile.queryBoundsDebugViz.lazyUpload(context);
-        const vertexBuffer = tile.queryBoundsDebugViz.vertexBuffer;
-        const indexBuffer = tile.queryBoundsDebugViz.indexBuffer;
-        const segments = tile.queryBoundsDebugViz.segments;
+    if (boundsViz && boundsViz.vertices.length > 0) {
+        boundsViz.lazyUpload(context);
+        const vertexBuffer = boundsViz.vertexBuffer;
+        const indexBuffer = boundsViz.indexBuffer;
+        const segments = boundsViz.segments;
         if (vertexBuffer != null && indexBuffer != null && segments != null) {
             program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
-                debugUniformValues(posMatrix, tile.queryBoundsDebugViz.color), id,
+                debugUniformValues(posMatrix, boundsViz.color), id,
                 vertexBuffer, indexBuffer, segments);
         }
     }
@@ -122,8 +125,11 @@ function drawDebugTile(painter, sourceCache, coord: OverscaledTileID) {
     const context = painter.context;
     const gl = context.gl;
 
+    const isGlobeProjection = painter.transform.projection.name === 'globe';
+    const definesValues = isGlobeProjection ? ['PROJECTION_GLOBE_VIEW'] : null;
+
     const posMatrix = coord.projMatrix;
-    const program = painter.useProgram('debug');
+    const program = painter.useProgram('debug', null, definesValues);
     const tile = sourceCache.getTileByID(coord.key);
     if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
 
@@ -136,9 +142,20 @@ function drawDebugTile(painter, sourceCache, coord: OverscaledTileID) {
     // Bind the empty texture for drawing outlines
     painter.emptyTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
 
+    if (isGlobeProjection) {
+        tile._makeGlobeTileDebugBuffers(painter.context, painter.transform.projection);
+    } else {
+        tile._makeDebugTileBoundsBuffers(painter.context, painter.transform.projection);
+    }
+
+    const debugBuffer = tile._tileDebugBuffer || painter.debugBuffer;
+    const debugIndexBuffer = tile._tileDebugIndexBuffer || painter.debugIndexBuffer;
+    const debugSegments = tile._tileDebugSegments || painter.debugSegments;
+
     program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
         debugUniformValues(posMatrix, Color.red), id,
-        painter.debugBuffer, painter.tileBorderIndexBuffer, painter.debugSegments);
+        debugBuffer, debugIndexBuffer, debugSegments,
+        null, null, null, tile._globeTileDebugBorderBuffer);
 
     const tileRawData = tile.latestRawTileData;
     const tileByteLength = (tileRawData && tileRawData.byteLength) || 0;
@@ -152,9 +169,14 @@ function drawDebugTile(painter, sourceCache, coord: OverscaledTileID) {
     const tileLabel = `${tileIdText} ${tileSizeKb}kb`;
     drawTextToOverlay(painter, tileLabel);
 
+    const debugTextBuffer = tile._tileDebugTextBuffer || painter.debugBuffer;
+    const debugTextIndexBuffer = tile._tileDebugTextIndexBuffer || painter.quadTriangleIndexBuffer;
+    const debugTextSegments = tile._tileDebugTextSegments || painter.debugSegments;
+
     program.draw(context, gl.TRIANGLES, depthMode, stencilMode, ColorMode.alphaBlended, CullFaceMode.disabled,
         debugUniformValues(posMatrix, Color.transparent, scaleRatio), id,
-        painter.debugBuffer, painter.quadTriangleIndexBuffer, painter.debugSegments);
+        debugTextBuffer, debugTextIndexBuffer, debugTextSegments,
+        null, null, null, tile._globeTileDebugTextBuffer);
 }
 
 function drawTextToOverlay(painter: Painter, text: string) {

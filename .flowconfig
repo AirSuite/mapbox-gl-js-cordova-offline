@@ -47,10 +47,12 @@
 .*/_site/.*
 
 [version]
-0.100.0
+0.142.0
 
 [options]
 server.max_workers=4
+types_first=false
+merge_timeout=180
 
 [strict]
 nonstrict-import
