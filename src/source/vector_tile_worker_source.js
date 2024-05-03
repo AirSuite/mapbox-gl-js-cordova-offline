@@ -133,24 +133,24 @@ export function loadVectorTile(params: RequestedTileParameters, callback: LoadVe
 
 export function loadVectorMbtile(params: WorkerTileParameters, callback: LoadVectorDataCallback, skipParse?: boolean) {
     const key = JSON.stringify(params.request);
-    
-    const makeRequest = (callback) => {
-      const arrayBuffer = params.tileData;
-    
-      const request = {
-        cancel:function(){console.log("Cancel loadVectorMbtile")}
-      }
-      callback(null, {
-          vectorTile: new vt.VectorTile(new Protobuf(arrayBuffer)),
-          rawData: arrayBuffer,
-          cacheControl: "max-age=43200,s-maxage=604800",
-          expires: "never"
-      });
 
-      return () => {
-          request.cancel();
-          callback();
-      };
+    const makeRequest = (callback: LoadVectorDataCallback) => {
+        const arrayBuffer = params.tileData;
+
+        const request = {
+            cancel() { console.log("Cancel loadVectorMbtile"); }
+        };
+        callback(null, {
+            vectorTile: skipParse ? undefined : new VectorTile(new Protobuf(arrayBuffer)),
+            rawData: arrayBuffer,
+            cacheControl: "max-age=43200,s-maxage=604800",
+            expires: "never"
+        });
+
+        return () => {
+            request.cancel();
+            callback();
+        };
     };
     if (params.data) {
         // if we already got the result earlier (on the main thread), return it directly

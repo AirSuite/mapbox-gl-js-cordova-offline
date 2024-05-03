@@ -2,7 +2,8 @@
 
 import {extend, pick} from '../util/util';
 
-import { getImage, getmbtileImage, getUint8ArrayImage, ResourceType } from '../util/ajax';
+import {getImage, getmbtileImage, getUint8ArrayImage, ResourceType} from '../util/ajax';
+import webpSupported from '../util/webp_supported.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
 import loadTileJSON from './load_tilejson.js';
 import {postTurnstileEvent} from '../util/mapbox.js';
@@ -194,8 +195,8 @@ class RasterTileSource extends Evented implements Source {
         const use2x = browser.devicePixelRatio >= 2;
         const url = this.map._requestManager.normalizeTileURL(tile.tileID.canonical.url(this.tiles, this.scheme), use2x, this.tileSize);
 
-        if (this._options.mbtiles == undefined) this._options.mbtiles = false;
-        if (!this._options.mbtiles){
+        if (this._options.mbtiles === undefined) this._options.mbtiles = false;
+        if (!this._options.mbtiles) {
             tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), (error, data, cacheControl, expires) => {
                 delete tile.request;
 
@@ -218,55 +219,41 @@ class RasterTileSource extends Evented implements Source {
                 cacheEntryPossiblyAdded(this.dispatcher);
                 callback(null);
             });
-        }else{
-          let Rurl = url.split('/'),
-          z = Rurl[0],
-          x = Rurl[1],
-          y = Rurl[2];
-          y = (1 << z) - 1 - y;
-          //console.log(Rurl);
-          var database = this.id;
-          if (window.openDatabases[database] === undefined) {
-            if (window.AppType == "CORDOVA"){
-                  window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                      name: database + '.mbtiles',
-                      location: 2,
-                      createFromLocation: 0,
-                      androidDatabaseImplementation: 1
-                  });
-              }
-              if (window.AppType == "ELECTRON"){
-                  window.openDatabases[database] = new sqlite3.Database(app.getPath("userData") + '/' + database + '.mbtiles', sqlite3.OPEN_READONLY);
-              }
-          }
-          if (window.AppType == "CORDOVA"){
-              window.openDatabases[database].transaction(function(tx) {
-                  tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-
-                      var tileData = res.rows.item(0).tile_data64;
-                      if (tileData != undefined){
-                          if (!webpSupported.supported){
-                              //Because Safari doesn't support WEBP we need to convert it tiles PNG
-                              tileData = WEBPtoPNG(tileData);
-                          }else{
-                              tileData = "data:image/png;base64," + tileData;
-                          }
-                      }
-                      tile.request = getmbtileImage(tileData, done.bind(this));
-                  }.bind(this), function(tx, e) {
-                      console.log('Database Error: ' + e.message);
-                  });
-              }.bind(this));
+        } else {
+            let Rurl = url.split('/'),
+                z = Rurl[0],
+                x = Rurl[1],
+                y = Rurl[2];
+            y = (1 << z) - 1 - y;
+            //console.log(Rurl);
+            const database = this.id;
+            if (window.openDatabases[database] === undefined) {
+                if (window.AppType === "CORDOVA") {
+                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                        name: `${database}.mbtiles`,
+                        location: 2,
+                        createFromLocation: 0,
+                        androidDatabaseImplementation: 1
+                    });
+                }
             }
-            if (window.AppType == "ELECTRON"){
-                window.openDatabases[database].parallelize(function(){
-                    window.openDatabases[database].all('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-                        var tileData;
-                        if (res != undefined) {
-                          if (res.length > 0) tileData = res[0].tile_data;
+            if (window.AppType === "CORDOVA") {
+                window.openDatabases[database].transaction(function(tx) {
+                    tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+
+                        let tileData = res.rows.item(0).tile_data64;
+                        if (tileData !== undefined) {
+                            if (!webpSupported.supported){
+                                //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                                tileData = WEBPtoPNG(tileData);
+                            } else {
+                                tileData = `data:image/png;base64,${tileData}`;
+                            }
                         }
-                        tile.request = getUint8ArrayImage(tileData, done.bind(this));
-                    }.bind(this));
+                        tile.request = getmbtileImage(tileData, done.bind(this));
+                    }.bind(this), function(tx, e) {
+                        console.log(`Database Error: ${e.message}`);
+                    });
                 }.bind(this));
             }
         }
