@@ -243,7 +243,7 @@ class RasterTileSource extends Evented implements Source {
 
                         let tileData = res.rows.item(0).tile_data64;
                         if (tileData !== undefined) {
-                            if (!webpSupported.supported){
+                            if (!webpSupported.supported) {
                                 //Because Safari doesn't support WEBP we need to convert it tiles PNG
                                 tileData = WEBPtoPNG(tileData);
                             } else {

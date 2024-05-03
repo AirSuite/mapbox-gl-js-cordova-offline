@@ -214,10 +214,10 @@ class VectorTileWorkerSource extends Evented implements WorkerSource {
         const perf = requestParam && requestParam.collectResourceTiming;
 
         const workerTile = this.loading[uid] = new WorkerTile(params);
-        if (params.mbtiles == undefined) params.mbtiles = false;
-        if (!params.mbtiles){
+        if (params.mbtiles === undefined) params.mbtiles = false;
+        if (!params.mbtiles) {
             workerTile.abort = this.loadVectorData(params, done.bind(this));
-        }else{
+        } else {
             workerTile.abort = this.loadVectorMbtileData(params, done.bind(this));
         }
         function done(err, response) {

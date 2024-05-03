@@ -71,10 +71,12 @@ class VectorTileSource extends Evented implements Source {
     isTileClipped: boolean | void;
     _tileJSONRequest: ?Cancelable;
     _loaded: boolean;
-    _tileWorkers: {[string]: Actor};
+    _tileWorkers: { [string]: Actor };
     _deduped: DedupedRequest;
 
-    constructor(id: string, options: VectorSourceSpecification & {collectResourceTiming: boolean}, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: VectorSourceSpecification & {
+        collectResourceTiming: boolean
+    }, dispatcher: Dispatcher, eventedParent: Evented) {
         super();
         this.id = id;
         this.dispatcher = dispatcher;
@@ -237,91 +239,73 @@ class VectorTileSource extends Evented implements Source {
 
         if (!tile.actor || tile.state === 'expired') {
 
-          tile.actor = this._tileWorkers[url] = this._tileWorkers[url] || this.dispatcher.getActor();
+            tile.actor = this._tileWorkers[url] = this._tileWorkers[url] || this.dispatcher.getActor();
 
-          // if workers are not ready to receive messages yet, use the idle time to preemptively
-          // load tiles on the main thread and pass the result instead of requesting a worker to do so
-          if (!this.dispatcher.ready) {
-              const cancel = loadVectorTile.call({deduped: this._deduped}, params, (err: ?Error, data: ?LoadVectorTileResult) => {
-                  if (err || !data) {
-                      done.call(this, err);
-                  } else {
-                      // the worker will skip the network request if the data is already there
-                      params.data = {
-                          cacheControl: data.cacheControl,
-                          expires: data.expires,
-                          rawData: data.rawData.slice(0)
-                      };
-                      if (tile.actor) tile.actor.send('loadTile', params, done.bind(this));
-                  }
-              }, true);
-              tile.request = {cancel};
+            // if workers are not ready to receive messages yet, use the idle time to preemptively
+            // load tiles on the main thread and pass the result instead of requesting a worker to do so
+            if (!this.dispatcher.ready) {
+                const cancel = loadVectorTile.call({deduped: this._deduped}, params, (err: ?Error, data: ?LoadVectorTileResult) => {
+                    if (err || !data) {
+                        done.call(this, err);
+                    } else {
+                        // the worker will skip the network request if the data is already there
+                        params.data = {
+                            cacheControl: data.cacheControl,
+                            expires: data.expires,
+                            rawData: data.rawData.slice(0)
+                        };
+                        if (tile.actor) tile.actor.send('loadTile', params, done.bind(this));
+                    }
+                }, true);
+                tile.request = {cancel};
 
-          }else{
-          if (!params.mbtiles){
-
-              tile.request = tile.actor.send('loadTile', params, done.bind(this));
-          }else{
-              let Rurl = url.split('/'),
-              z = Rurl[0],
-              x = Rurl[1],
-              y = Rurl[2];
-              y = (1 << z) - 1 - y;
-              var database = params.source;
-              if (window.openDatabases[database] === undefined) {
-                if (window.AppType == "CORDOVA"){
-                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                        name: database + '.mbtiles',
-                        location: 2,
-                        createFromLocation: 0,
-                        androidDatabaseImplementation: 1
-                    });
-                }
-                if (window.AppType == "ELECTRON"){
-                    window.openDatabases[database] = new sqlite3.Database(app.getPath("userData") + '/' + database + '.mbtiles', sqlite3.OPEN_READONLY);
-                }
-              }
-              if (window.AppType == "CORDOVA"){
-                  window.openDatabases[database].transaction(function(tx) {
-                      tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-                          var tileData = res.rows.item(0).tile_data64,
-                              tileDataDecoded = window.atob(tileData),
-                              tileDataDecodedLength = tileDataDecoded.length,
-                              tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
-                          for (var i = 0; i < tileDataDecodedLength; ++i) {
-                              tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
-                          }
-                          var tileDataInflated = Pako.inflate(tileDataTypedArray);
-                          params.tileData = tileDataInflated;
-                          tile.actor = this.dispatcher.getActor();
-                          tile.request = tile.actor.send('loadTile', params, done.bind(this));
-                      }.bind(this), function(tx, e) {
-                          console.log('Database Error: ' + e.message);
-                      });
-                  }.bind(this));
-              }
-              if (window.AppType == "ELECTRON"){
-                  window.openDatabases[database].parallelize(function() {
-                    window.openDatabases[database].all('SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
-                        var tileData
-                        if (res != undefined) {
-                          if (res.length > 0) tileData = res[0].tile_data;
+            } else {
+                if (!params.mbtiles) {
+                    tile.request = tile.actor.send('loadTile', params, done.bind(this));
+                } else {
+                    let Rurl = url.split('/'),
+                        z = Rurl[0],
+                        x = Rurl[1],
+                        y = Rurl[2];
+                    y = (1 << z) - 1 - y;
+                    const database = params.source;
+                    if (window.openDatabases[database] === undefined) {
+                        if (window.AppType === "CORDOVA") {
+                            window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                                name: `${database}.mbtiles`,
+                                location: 2,
+                                createFromLocation: 0,
+                                androidDatabaseImplementation: 1
+                            });
                         }
-                        var tileDataInflated = Pako.inflate(tileData);
-                        params.tileData = tileDataInflated;
-                        tile.actor = this.dispatcher.getActor();
-                        tile.request = tile.actor.send('loadTile', params, done.bind(this));
-                    }.bind(this));
-                  }.bind(this));
-              }
-          }
+                    }
+                    if (window.AppType === "CORDOVA") {
+                        window.openDatabases[database].transaction(function (tx) {
+                            tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
+                                const tileData = res.rows.item(0).tile_data64,
+                                    tileDataDecoded = window.atob(tileData),
+                                    tileDataDecodedLength = tileDataDecoded.length,
+                                    tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                                for (let i = 0; i < tileDataDecodedLength; ++i) {
+                                    tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                }
+                                const tileDataInflated = Pako.inflate(tileDataTypedArray);
+                                params.tileData = tileDataInflated;
+                                tile.actor = this.dispatcher.getActor();
+                                tile.request = tile.actor.send('loadTile', params, done.bind(this));
+                            }.bind(this), function (tx, e) {
+                                console.log(`Database Error: ${e.message}`);
+                            });
+                        }.bind(this));
+                    }
+                }
+            }
+        } else if (tile.state === 'loading') {
+            // schedule tile reloading after it has been loaded
+            tile.reloadCallback = callback;
+        } else {
+            tile.request = tile.actor.send('reloadTile', params, done.bind(this));
         }
-      } else if (tile.state === 'loading') {
-          // schedule tile reloading after it has been loaded
-          tile.reloadCallback = callback;
-      } else {
-          tile.request = tile.actor.send('reloadTile', params, done.bind(this));
-      }
 
         // $FlowFixMe[missing-this-annot]
         function done(err: ?Error, data: ?WorkerTileResult) {
