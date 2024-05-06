@@ -1,3 +1,5 @@
+#include "_prelude_fog.vertex.glsl"
+
 // floor(127 / 2) == 63.0
 // the maximum allowed miter limit is 2.0 at the moment. the extrude normal is
 // stored in a byte (-128..127). we scale regular normals up to length 63, but
@@ -6,20 +8,29 @@
 // #define scale 63.0
 #define scale 0.015873016
 
-attribute vec2 a_pos_normal;
-attribute vec4 a_data;
-attribute float a_linesofar;
+in vec2 a_pos_normal;
+in vec4 a_data;
+// Includes in order: a_uv_x, a_split_index, a_clip_start, a_clip_end
+// to reduce attribute count on older devices.
+// Only line-trim-offset will requires a_packed info.
+#ifdef RENDER_LINE_TRIM_OFFSET
+in highp vec4 a_packed;
+#endif
+in float a_linesofar;
 
 uniform mat4 u_matrix;
 uniform vec2 u_units_to_pixels;
 uniform mat2 u_pixels_to_tile_units;
 uniform lowp float u_device_pixel_ratio;
 
-varying vec2 v_normal;
-varying vec2 v_width2;
-varying float v_linesofar;
-varying float v_gamma_scale;
-varying float v_width;
+out vec2 v_normal;
+out vec2 v_width2;
+out float v_linesofar;
+out float v_gamma_scale;
+out float v_width;
+#ifdef RENDER_LINE_TRIM_OFFSET
+out highp vec4 v_uv;
+#endif
 
 #pragma mapbox: define lowp float blur
 #pragma mapbox: define lowp float opacity
@@ -27,10 +38,8 @@ varying float v_width;
 #pragma mapbox: define mediump float gapwidth
 #pragma mapbox: define mediump float width
 #pragma mapbox: define lowp float floorwidth
-#pragma mapbox: define lowp vec4 pattern_from
-#pragma mapbox: define lowp vec4 pattern_to
-#pragma mapbox: define lowp float pixel_ratio_from
-#pragma mapbox: define lowp float pixel_ratio_to
+#pragma mapbox: define lowp vec4 pattern
+#pragma mapbox: define lowp float pixel_ratio
 
 void main() {
     #pragma mapbox: initialize lowp float blur
@@ -39,10 +48,8 @@ void main() {
     #pragma mapbox: initialize mediump float gapwidth
     #pragma mapbox: initialize mediump float width
     #pragma mapbox: initialize lowp float floorwidth
-    #pragma mapbox: initialize mediump vec4 pattern_from
-    #pragma mapbox: initialize mediump vec4 pattern_to
-    #pragma mapbox: initialize lowp float pixel_ratio_from
-    #pragma mapbox: initialize lowp float pixel_ratio_to
+    #pragma mapbox: initialize mediump vec4 pattern
+    #pragma mapbox: initialize lowp float pixel_ratio
 
     // the distance over which the line edge fades out.
     // Retina devices need a smaller distance to avoid aliasing.
@@ -51,7 +58,6 @@ void main() {
     vec2 a_extrude = a_data.xy - 128.0;
     float a_direction = mod(a_data.z, 4.0) - 1.0;
 
-    // float tileRatio = u_scale.x;
     vec2 pos = floor(a_pos_normal * 0.5);
 
     // x is 1 if it's a round cap, 0 otherwise
@@ -93,6 +99,14 @@ void main() {
 #else
     v_gamma_scale = 1.0;
 #endif
+
+#ifdef RENDER_LINE_TRIM_OFFSET
+    float a_uv_x = a_packed[0];
+    highp float a_clip_start = a_packed[2];
+    highp float a_clip_end = a_packed[3];
+    v_uv = vec4(a_uv_x, 0.0, a_clip_start, a_clip_end);
+#endif
+
     v_linesofar = a_linesofar;
     v_width2 = vec2(outset, inset);
     v_width = floorwidth;

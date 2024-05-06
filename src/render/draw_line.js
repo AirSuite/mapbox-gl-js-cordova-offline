@@ -19,7 +19,7 @@ import type {OverscaledTileID} from '../source/tile_id.js';
 import type {DynamicDefinesType} from './program/program_uniforms.js';
 import {clamp, nextPowerOfTwo} from '../util/util.js';
 import {renderColorRamp} from '../util/color_ramp.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 
 export default function drawLine(painter: Painter, sourceCache: SourceCache, layer: LineStyleLayer, coords: Array<OverscaledTileID>) {
     if (painter.renderPass !== 'translucent') return;
@@ -28,8 +28,10 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
     const width = layer.paint.get('line-width');
     if (opacity.constantOr(1) === 0 || width.constantOr(1) === 0) return;
 
+    const emissiveStrength = layer.paint.get('line-emissive-strength');
+
     const depthMode = painter.depthModeForSublayer(0, DepthMode.ReadOnly);
-    const colorMode = painter.colorModeForRenderPass();
+    const colorMode = painter.colorModeForDrapableLayerRenderPass(emissiveStrength);
     const pixelRatio = (painter.terrain && painter.terrain.renderingToTexture) ? 1.0 : browser.devicePixelRatio;
 
     const dasharrayProperty = layer.paint.get('line-dasharray');
@@ -37,17 +39,18 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
     const capProperty = layer.layout.get('line-cap');
     const patternProperty = layer.paint.get('line-pattern');
     const image = patternProperty.constantOr((1: any));
+    const hasPattern = layer.paint.get('line-pattern').constantOr((1: any));
+    const hasOpacity = layer.paint.get('line-opacity').constantOr(1.0) !== 1.0;
+    let useStencilMaskRenderPass = (!hasPattern && hasOpacity);
 
     const gradient = layer.paint.get('line-gradient');
-    const crossfade = layer.getCrossfadeParameters();
 
     const programId = image ? 'linePattern' : 'line';
 
     const context = painter.context;
     const gl = context.gl;
 
-    const definesValues = lineDefinesValues(layer);
-    let useStencilMaskRenderPass = definesValues.includes('RENDER_LINE_ALPHA_DISCARD');
+    const definesValues = ((lineDefinesValues(layer): any): DynamicDefinesType[]);
     if (painter.terrain && painter.terrain.clipOrMaskOverlapStencilType()) {
         useStencilMaskRenderPass = false;
     }
@@ -61,30 +64,46 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
         painter.prepareDrawTile();
 
         const programConfiguration = bucket.programConfigurations.get(layer.id);
-        const program = painter.useProgram(programId, programConfiguration, ((definesValues: any): DynamicDefinesType[]));
+        const affectedByFog = painter.isTileAffectedByFog(coord);
+        const program = painter.getOrCreateProgram(programId, {config: programConfiguration, defines: definesValues, overrideFog: affectedByFog});
 
         const constantPattern = patternProperty.constantOr(null);
         if (constantPattern && tile.imageAtlas) {
-            const atlas = tile.imageAtlas;
-            const posTo = atlas.patternPositions[constantPattern.to.toString()];
-            const posFrom = atlas.patternPositions[constantPattern.from.toString()];
-            if (posTo && posFrom) programConfiguration.setConstantPatternPositions(posTo, posFrom);
+            const posTo = tile.imageAtlas.patternPositions[constantPattern.toString()];
+            if (posTo) programConfiguration.setConstantPatternPositions(posTo);
         }
 
         const constantDash = dasharrayProperty.constantOr(null);
         const constantCap = capProperty.constantOr((null: any));
 
         if (!image && constantDash && constantCap && tile.lineAtlas) {
-            const atlas = tile.lineAtlas;
-            const posTo = atlas.getDash(constantDash.to, constantCap);
-            const posFrom = atlas.getDash(constantDash.from, constantCap);
-            if (posTo && posFrom) programConfiguration.setConstantPatternPositions(posTo, posFrom);
+            const posTo = tile.lineAtlas.getDash(constantDash, constantCap);
+            if (posTo) programConfiguration.setConstantPatternPositions(posTo);
+        }
+
+        let [trimStart, trimEnd] = layer.paint.get('line-trim-offset');
+        // When line cap is 'round' or 'square', the whole line progress will beyond 1.0 or less than 0.0.
+        // If trim_offset begin is line begin (0.0), or trim_offset end is line end (1.0), adjust the trim
+        // offset with fake offset shift so that the line_progress < 0.0 or line_progress > 1.0 part will be
+        // correctly covered.
+        if (constantCap === 'round' || constantCap === 'square') {
+            // Fake the percentage so that it will cover the round/square cap that is beyond whole line
+            const fakeOffsetShift = 1.0;
+            // To make sure that the trim offset range is effecive
+            if (trimStart !== trimEnd) {
+                if (trimStart === 0.0) {
+                    trimStart -= fakeOffsetShift;
+                }
+                if (trimEnd === 1.0) {
+                    trimEnd += fakeOffsetShift;
+                }
+            }
         }
 
         const matrix = painter.terrain ? coord.projMatrix : null;
         const uniformValues = image ?
-            linePatternUniformValues(painter, tile, layer, crossfade, matrix, pixelRatio) :
-            lineUniformValues(painter, tile, layer, crossfade, matrix, bucket.lineClipsArray.length, pixelRatio);
+            linePatternUniformValues(painter, tile, layer, matrix, pixelRatio, [trimStart, trimEnd]) :
+            lineUniformValues(painter, tile, layer, matrix, bucket.lineClipsArray.length, pixelRatio, [trimStart, trimEnd]);
 
         if (gradient) {
             const layerGradient = bucket.gradients[layer.id];
@@ -122,22 +141,26 @@ export default function drawLine(painter: Painter, sourceCache: SourceCache, lay
         }
         if (dasharray) {
             context.activeTexture.set(gl.TEXTURE0);
-            tile.lineAtlasTexture.bind(gl.LINEAR, gl.REPEAT);
-            programConfiguration.updatePaintBuffers(crossfade);
+            if (tile.lineAtlasTexture) {
+                tile.lineAtlasTexture.bind(gl.LINEAR, gl.REPEAT);
+            }
+            programConfiguration.updatePaintBuffers();
         }
         if (image) {
             context.activeTexture.set(gl.TEXTURE0);
-            tile.imageAtlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
-            programConfiguration.updatePaintBuffers(crossfade);
+            if (tile.imageAtlasTexture) {
+                tile.imageAtlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            }
+            programConfiguration.updatePaintBuffers();
         }
 
-        painter.prepareDrawProgram(context, program, coord.toUnwrapped());
+        painter.uploadCommonUniforms(context, program, coord.toUnwrapped());
 
-        const renderLine = (stencilMode) => {
-            program.draw(context, gl.TRIANGLES, depthMode,
+        const renderLine = (stencilMode: StencilMode) => {
+            program.draw(painter, gl.TRIANGLES, depthMode,
                 stencilMode, colorMode, CullFaceMode.disabled, uniformValues,
                 layer.id, bucket.layoutVertexBuffer, bucket.indexBuffer, bucket.segments,
-                layer.paint, painter.transform.zoom, programConfiguration, bucket.layoutVertexBuffer2);
+                layer.paint, painter.transform.zoom, programConfiguration, [bucket.layoutVertexBuffer2]);
         };
 
         if (useStencilMaskRenderPass) {

@@ -7,15 +7,20 @@ import {members as layoutAttributesExt} from './line_attributes_ext.js';
 import SegmentVector from '../segment.js';
 import {ProgramConfigurationSet} from '../program_configuration.js';
 import {TriangleIndexArray} from '../index_array_type.js';
-import EXTENT from '../extent.js';
-import mvt from '@mapbox/vector-tile';
-const vectorTileFeatureTypes = mvt.VectorTileFeature.types;
+import EXTENT from '../../style-spec/data/extent.js';
+import {VectorTileFeature} from '@mapbox/vector-tile';
+const vectorTileFeatureTypes = VectorTileFeature.types;
 import {register} from '../../util/web_worker_transfer.js';
 import {hasPattern, addPatternDependencies} from './pattern_bucket_features.js';
 import loadGeometry from '../load_geometry.js';
 import toEvaluationFeature from '../evaluation_feature.js';
 import EvaluationParameters from '../../style/evaluation_parameters.js';
 
+// Import LineAtlas as a module with side effects to ensure
+// it's registered as a serializable class on the main thread
+import '../../render/line_atlas.js';
+
+import type {ProjectionSpecification} from '../../style-spec/types.js';
 import type {CanonicalTileID} from '../../source/tile_id.js';
 import type {
     Bucket,
@@ -35,6 +40,7 @@ import type VertexBuffer from '../../gl/vertex_buffer.js';
 import type {FeatureStates} from '../../source/source_state.js';
 import type LineAtlas from '../../render/line_atlas.js';
 import type {TileTransform} from '../../geo/projection/tile_transform.js';
+import type {IVectorTileLayer} from '@mapbox/vector-tile';
 
 // NOTE ON EXTRUDE SCALE:
 // scale the extrusion vector so that the normal length is this value.
@@ -109,13 +115,13 @@ class LineBucket implements Bucket {
     programConfigurations: ProgramConfigurationSet<LineStyleLayer>;
     segments: SegmentVector;
     uploaded: boolean;
-    projection: string;
+    projection: ProjectionSpecification;
 
     constructor(options: BucketParameters<LineStyleLayer>) {
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.projection = options.projection;
         this.hasPattern = false;
@@ -145,6 +151,7 @@ class LineBucket implements Bucket {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
 
+            // $FlowFixMe[method-unbinding]
             if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical)) continue;
 
             const sortKey = lineSortKey ?
@@ -189,7 +196,7 @@ class LineBucket implements Bucket {
                 this.patternFeatures.push(patternBucketFeature);
 
             } else {
-                this.addFeature(bucketFeature, geometry, index, canonical, lineAtlas.positions, options.availableImages);
+                this.addFeature(bucketFeature, geometry, index, canonical, lineAtlas.positions, options.availableImages, options.brightness);
             }
 
             const feature = features[index].feature;
@@ -211,9 +218,7 @@ class LineBucket implements Bucket {
                 const constCap = capPropertyValue.value;
                 const constDash = dashPropertyValue.value;
                 if (!constDash) continue;
-                lineAtlas.addDash(constDash.from, constCap);
-                lineAtlas.addDash(constDash.to, constCap);
-                if (constDash.other) lineAtlas.addDash(constDash.other, constCap);
+                lineAtlas.addDash(constDash, constCap);
             }
         }
 
@@ -230,52 +235,41 @@ class LineBucket implements Bucket {
 
             if (dashPropertyValue.kind === 'constant' && capPropertyValue.kind === 'constant') continue;
 
-            let minDashArray, midDashArray, maxDashArray, minCap, midCap, maxCap;
+            let dashArray, cap;
 
             if (dashPropertyValue.kind === 'constant') {
-                const constDash = dashPropertyValue.value;
-                if (!constDash) continue;
-                minDashArray = constDash.other || constDash.to;
-                midDashArray = constDash.to;
-                maxDashArray = constDash.from;
+                dashArray = dashPropertyValue.value;
+                if (!dashArray) continue;
 
             } else {
-                minDashArray = dashPropertyValue.evaluate({zoom: zoom - 1}, feature);
-                midDashArray = dashPropertyValue.evaluate({zoom}, feature);
-                maxDashArray = dashPropertyValue.evaluate({zoom: zoom + 1}, feature);
+                dashArray = dashPropertyValue.evaluate({zoom}, feature);
             }
 
             if (capPropertyValue.kind === 'constant') {
-                minCap = midCap = maxCap = capPropertyValue.value;
+                cap = capPropertyValue.value;
 
             } else {
-                minCap = capPropertyValue.evaluate({zoom: zoom - 1}, feature);
-                midCap = capPropertyValue.evaluate({zoom}, feature);
-                maxCap = capPropertyValue.evaluate({zoom: zoom + 1}, feature);
+                cap = capPropertyValue.evaluate({zoom}, feature);
             }
 
-            lineAtlas.addDash(minDashArray, minCap);
-            lineAtlas.addDash(midDashArray, midCap);
-            lineAtlas.addDash(maxDashArray, maxCap);
-
-            const min = lineAtlas.getKey(minDashArray, minCap);
-            const mid = lineAtlas.getKey(midDashArray, midCap);
-            const max = lineAtlas.getKey(maxDashArray, maxCap);
+            lineAtlas.addDash(dashArray, cap);
 
             // save positions for paint array
-            feature.patterns[layer.id] = {min, mid, max};
+            feature.patterns[layer.id] = lineAtlas.getKey(dashArray, cap);
         }
 
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
     }
 
-    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform) {
+    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform, brightness: ?number) {
         for (const feature of this.patternFeatures) {
-            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages);
+            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages, brightness);
         }
     }
 
@@ -315,7 +309,7 @@ class LineBucket implements Bucket {
         }
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, brightness: ?number) {
         const layout = this.layers[0].layout;
         const join = layout.get('line-join').evaluate(feature, {});
         const cap = layout.get('line-cap').evaluate(feature, {});
@@ -327,7 +321,7 @@ class LineBucket implements Bucket {
             this.addLine(line, feature, join, cap, miterLimit, roundLimit);
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical, brightness);
     }
 
     addLine(vertices: Array<Point>, feature: BucketFeature, join: string, cap: string, miterLimit: number, roundLimit: number) {
@@ -623,7 +617,7 @@ class LineBucket implements Bucket {
 
         // Constructs a second vertex buffer with higher precision line progress
         if (this.lineClips) {
-            this.layoutVertexArray2.emplaceBack(this.scaledDistance, this.lineClipsArray.length, this.lineSoFar);
+            this.layoutVertexArray2.emplaceBack(this.scaledDistance, this.lineClipsArray.length, this.lineClips.start, this.lineClips.end);
         }
 
         const e = segment.vertexLength++;
@@ -659,6 +653,6 @@ class LineBucket implements Bucket {
     }
 }
 
-register(LineBucket, {omit: ['layers', 'patternFeatures']});
+register(LineBucket, 'LineBucket', {omit: ['layers', 'patternFeatures']});
 
 export default LineBucket;

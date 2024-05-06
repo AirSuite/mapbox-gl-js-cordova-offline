@@ -1,0 +1,27 @@
+{
+  "version": 8,
+  "metadata": {
+    "test": {
+      "allowed": 0.0005
+    }
+  },
+  "zoom": 5.5,
+  "pitch": 70.0,
+  "bearing": -16.8,
+  "longitude": 38.175,
+  "latitude": 19.955,
+  "sources": {},
+  "projection": {
+    "name": "globe"
+  },
+  "sprite": "local://sprites/emerald",
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "purple"
+      }
+    }
+  ]
+}

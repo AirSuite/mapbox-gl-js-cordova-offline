@@ -3,13 +3,14 @@
   "metadata": {
     "test": {
       "width": 200,
-      "height": 150
+      "height": 150,
+      "allowed": 0.003
     }
   },
   "sources": {
     "geojson": {
       "type": "geojson",
-      "data": "local://geojson/anchors.json"
+      "data": "local://data/anchors.json"
     }
   },
   "sprite": "local://sprites/stretch",

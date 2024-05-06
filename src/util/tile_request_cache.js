@@ -1,7 +1,6 @@
 // @flow
 
 import {warnOnce, parseCacheControl} from './util.js';
-import window from './window.js';
 
 import type Dispatcher from './dispatcher.js';
 
@@ -22,9 +21,20 @@ export type ResponseOptions = {
 // object. See https://bugs.webkit.org/show_bug.cgi?id=203991 for more information.
 let sharedCache: ?Promise<Cache>;
 
+function getCaches() {
+    try {
+        return caches;
+    } catch (e) {
+        // <iframe sandbox> triggers exceptions when trying to access window.caches
+        // Chrome: DOMException, Safari: SecurityError, Firefox: NS_ERROR_FAILURE
+        // Seems more robust to catch all exceptions instead of trying to match only these.
+    }
+}
+
 function cacheOpen() {
-    if (window.caches && !sharedCache) {
-        sharedCache = window.caches.open(CACHE_NAME);
+    const caches = getCaches();
+    if (caches && !sharedCache) {
+        sharedCache = caches.open(CACHE_NAME);
     }
 }
 
@@ -35,7 +45,7 @@ export function cacheClose() {
 }
 
 let responseConstructorSupportsReadableStream;
-function prepareBody(response: Response, callback) {
+function prepareBody(response: Response, callback: ((body: ?(Blob | ReadableStream)) => void)) {
     if (responseConstructorSupportsReadableStream === undefined) {
         try {
             new Response(new ReadableStream()); // eslint-disable-line no-undef
@@ -57,50 +67,90 @@ export function cachePut(request: Request, response: Response, requestTime: numb
     cacheOpen();
     if (!sharedCache) return;
 
+    const cacheControl = parseCacheControl(response.headers.get('Cache-Control') || '');
+    if (cacheControl['no-store']) return;
+
     const options: ResponseOptions = {
         status: response.status,
         statusText: response.statusText,
-        headers: new window.Headers()
+        headers: new Headers()
     };
+
     response.headers.forEach((v, k) => options.headers.set(k, v));
 
-    const cacheControl = parseCacheControl(response.headers.get('Cache-Control') || '');
-    if (cacheControl['no-store']) {
-        return;
-    }
     if (cacheControl['max-age']) {
         options.headers.set('Expires', new Date(requestTime + cacheControl['max-age'] * 1000).toUTCString());
     }
 
     const expires = options.headers.get('Expires');
     if (!expires) return;
+
     const timeUntilExpiry = new Date(expires).getTime() - requestTime;
     if (timeUntilExpiry < MIN_TIME_UNTIL_EXPIRY) return;
 
+    let strippedURL = stripQueryParameters(request.url);
+
+    // Handle partial responses by keeping the range header in the query string
+    if (response.status === 206) {
+        const range = request.headers.get('Range');
+        if (!range) return;
+
+        options.status = 200;
+        strippedURL = setQueryParameters(strippedURL, {range});
+    }
+
     prepareBody(response, body => {
-        const clonedResponse = new window.Response(body, options);
+        // $FlowFixMe[incompatible-call]
+        const clonedResponse = new Response(body, options);
 
         cacheOpen();
         if (!sharedCache) return;
         sharedCache
-            .then(cache => cache.put(stripQueryParameters(request.url), clonedResponse))
+            .then(cache => cache.put(strippedURL, clonedResponse))
             .catch(e => warnOnce(e.message));
     });
 }
 
-function stripQueryParameters(url: string) {
-    const start = url.indexOf('?');
-    return start < 0 ? url : url.slice(0, start);
+function stripQueryParameters(url: string): string {
+    const paramStart = url.indexOf('?');
+    if (paramStart < 0) return url;
+
+    // preserve `language` and `worldview` params if any
+    const persistentParams = ['language', 'worldview'];
+
+    const nextParams = new URLSearchParams();
+    const searchParams = new URLSearchParams(url.slice(paramStart));
+    for (const param of persistentParams) {
+        const value = searchParams.get(param);
+        if (value) nextParams.set(param, value);
+    }
+
+    return `${url.slice(0, paramStart)}?${nextParams.toString()}`;
+}
+
+function setQueryParameters(url: string, params: {[string]: string}): string {
+    const paramStart = url.indexOf('?');
+    if (paramStart < 0) return `${url}?${new URLSearchParams(params).toString()}`;
+
+    const searchParams = new URLSearchParams(url.slice(paramStart));
+    for (const key in params) {
+        searchParams.set(key, params[key]);
+    }
+
+    return `${url.slice(0, paramStart)}?${searchParams.toString()}`;
 }
 
 export function cacheGet(request: Request, callback: (error: ?any, response: ?Response, fresh: ?boolean) => void): void {
     cacheOpen();
     if (!sharedCache) return callback(null);
 
-    const strippedURL = stripQueryParameters(request.url);
-
     sharedCache
         .then(cache => {
+            let strippedURL = stripQueryParameters(request.url);
+
+            const range = request.headers.get('Range');
+            if (range) strippedURL = setQueryParameters(strippedURL, {range});
+
             // manually strip URL instead of `ignoreSearch: true` because of a known
             // performance issue in Chrome https://github.com/mapbox/mapbox-gl-js/issues/8431
             cache.match(strippedURL)
@@ -119,10 +169,9 @@ export function cacheGet(request: Request, callback: (error: ?any, response: ?Re
                 .catch(callback);
         })
         .catch(callback);
-
 }
 
-function isFresh(response) {
+function isFresh(response: Response) {
     if (!response) return false;
     const expires = new Date(response.headers.get('Expires') || 0);
     const cacheControl = parseCacheControl(response.headers.get('Cache-Control') || '');
@@ -162,7 +211,10 @@ export function enforceCacheSizeLimit(limit: number) {
 }
 
 export function clearTileCache(callback?: (err: ?Error) => void) {
-    const promise = window.caches.delete(CACHE_NAME);
+    const caches = getCaches();
+    if (!caches) return;
+
+    const promise = caches.delete(CACHE_NAME);
     if (callback) {
         promise.catch(callback).then(() => callback());
     }

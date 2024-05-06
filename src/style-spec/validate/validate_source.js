@@ -1,5 +1,6 @@
+// @flow
 
-import ValidationError from '../error/validation_error.js';
+import {default as ValidationError, ValidationWarning} from '../error/validation_error.js';
 import {unbundle} from '../util/unbundle_jsonlint.js';
 import validateObject from './validate_object.js';
 import validateEnum from './validate_enum.js';
@@ -7,11 +8,14 @@ import validateExpression from './validate_expression.js';
 import validateString from './validate_string.js';
 import getType from '../util/get_type.js';
 
+import type {StyleReference} from '../reference/latest.js';
+import type {ValidationOptions} from './validate.js';
+
 const objectElementValidators = {
     promoteId: validatePromoteId
 };
 
-export default function validateSource(options) {
+export default function validateSource(options: ValidationOptions): Array<ValidationError> {
     const value = options.value;
     const key = options.key;
     const styleSpec = options.styleSpec;
@@ -22,20 +26,27 @@ export default function validateSource(options) {
     }
 
     const type = unbundle(value.type);
-    let errors;
+    let errors = [];
+
+    if (['vector', 'raster', 'raster-dem', 'raster-array'].includes(type)) {
+        if (!value.url && !value.tiles) {
+            errors.push(new ValidationWarning(key, value, 'Either "url" or "tiles" is required.'));
+        }
+    }
 
     switch (type) {
     case 'vector':
     case 'raster':
     case 'raster-dem':
-        errors = validateObject({
+    case 'raster-array':
+        errors = errors.concat(validateObject({
             key,
             value,
             valueSpec: styleSpec[`source_${type.replace('-', '_')}`],
             style: options.style,
             styleSpec,
             objectElementValidators
-        });
+        }));
         return errors;
 
     case 'geojson':
@@ -91,14 +102,24 @@ export default function validateSource(options) {
         return validateEnum({
             key: `${key}.type`,
             value: value.type,
-            valueSpec: {values: ['vector', 'raster', 'raster-dem', 'geojson', 'video', 'image']},
+            valueSpec: {values: getSourceTypeValues(styleSpec)},
             style,
             styleSpec
         });
     }
 }
 
-function validatePromoteId({key, value}) {
+function getSourceTypeValues(styleSpec: StyleReference) {
+    return styleSpec.source.reduce((memo, source) => {
+        const sourceType = styleSpec[source];
+        if (sourceType.type.type === 'enum') {
+            memo = memo.concat(Object.keys(sourceType.type.values));
+        }
+        return memo;
+    }, []);
+}
+
+function validatePromoteId({key, value}: $Shape<ValidationOptions>) {
     if (getType(value) === 'string') {
         return validateString({key, value});
     } else {

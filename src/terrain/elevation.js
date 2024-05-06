@@ -2,13 +2,13 @@
 
 import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate.js';
 import DEMData from '../data/dem_data.js';
-import SourceCache from '../source/source_cache.js';
 import {number as interpolate} from '../style-spec/util/interpolate.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import {vec3} from 'gl-matrix';
 import Point from '@mapbox/point-geometry';
 import {OverscaledTileID} from '../source/tile_id.js';
 
+import type SourceCache from '../source/source_cache.js';
 import type Projection from '../geo/projection/projection.js';
 import type Tile from '../source/tile.js';
 import type {Vec3} from 'gl-matrix';
@@ -33,11 +33,11 @@ export class Elevation {
     /**
      * Helper that checks whether DEM data is available at a given mercator coordinate.
      * @param {MercatorCoordinate} point Mercator coordinate of the point to check against.
-     * @returns {number} `true` indicating whether the data is available at `point`, and `false` otherwise.
+     * @returns {boolean} `true` indicating whether the data is available at `point`, and `false` otherwise.
      */
-    isDataAvailableAtPoint(point: MercatorCoordinate) {
+    isDataAvailableAtPoint(point: MercatorCoordinate): boolean {
         const sourceCache = this._source();
-        if (!sourceCache || point.y < 0.0 || point.y > 1.0) {
+        if (this.isUsingMockSource() || !sourceCache || point.y < 0.0 || point.y > 1.0) {
             return false;
         }
 
@@ -50,7 +50,7 @@ export class Elevation {
         const y = Math.floor(point.y * tiles);
         const demTile = this.findDEMTileFor(new OverscaledTileID(z, wrap, z, x, y));
 
-        return demTile && demTile.dem;
+        return !!(demTile && demTile.dem);
     }
 
     /**
@@ -73,7 +73,11 @@ export class Elevation {
      * point elevation, returns `defaultIfNotLoaded`.
      * Doesn't invoke network request to fetch the data.
      */
-    getAtPoint(point: MercatorCoordinate, defaultIfNotLoaded: ?number, exaggerated: boolean = true): number | null {
+    getAtPoint(point: MercatorCoordinate, defaultIfNotLoaded: ?number, exaggerated: boolean = true): ?number {
+        if (this.isUsingMockSource()) {
+            return null;
+        }
+
         // Force a cast to null for both null and undefined
         if (defaultIfNotLoaded == null) defaultIfNotLoaded = null;
 
@@ -114,8 +118,8 @@ export class Elevation {
             (tileID.canonical.y + y / EXTENT) / tilesAtTileZoom));
     }
 
-    getAtTileOffsetFunc(tileID: OverscaledTileID, lat: number, worldSize: number, projection: Projection): Function {
-        return (p => {
+    getAtTileOffsetFunc(tileID: OverscaledTileID, lat: number, worldSize: number, projection: Projection): (Point) => VecType {
+        return ((p: Point) => {
             const elevation = this.getAtTileOffset(tileID, p.x, p.y);
             const upVector = projection.upVector(tileID.canonical, p.x, p.y);
             const upVectorScale = projection.upVectorScale(tileID.canonical, lat, worldSize).metersToTile;
@@ -133,6 +137,10 @@ export class Elevation {
      * Nearest filter sampling on dem data is done (no interpolation).
      */
     getForTilePoints(tileID: OverscaledTileID, points: Array<Vec3>, interpolated: ?boolean, useDemTile: ?Tile): boolean {
+        if (this.isUsingMockSource()) {
+            return false;
+        }
+
         const helper = DEMSampler.create(this, tileID, useDemTile);
         if (!helper) { return false; }
 
@@ -148,8 +156,16 @@ export class Elevation {
      * @returns {?{min: number, max: number}} The min and max elevation.
      */
     getMinMaxForTile(tileID: OverscaledTileID): ?{min: number, max: number} {
+        if (this.isUsingMockSource()) {
+            return null;
+        }
+
         const demTile = this.findDEMTileFor(tileID);
-        if (!(demTile && demTile.dem)) { return null; }
+
+        if (!(demTile && demTile.dem)) {
+            return null;
+        }
+
         const dem: DEMData = demTile.dem;
         const tree = dem.tree;
         const demTileID = demTile.tileID;
@@ -212,6 +228,17 @@ export class Elevation {
     }
 
     /*
+     * Whether the SourceCache instance is a mock source cache.
+     * This mock source cache is used solely for the Globe projection and with terrain disabled,
+     * where we only want to leverage the draping rendering pipeline without incurring DEM-tile
+     * download overhead. This function is useful to skip DEM processing as the mock data source
+     * placeholder contains only 0 height.
+     */
+    isUsingMockSource(): boolean {
+        throw new Error('Pure virtual method called.');
+    }
+
+    /*
      * A multiplier defined by style as terrain exaggeration. Elevation provided
      * by getXXXX methods is multiplied by this.
      */
@@ -233,6 +260,35 @@ export class Elevation {
      */
     get visibleDemTiles(): Array<Tile> {
         throw new Error('Getter must be implemented in subclass.');
+    }
+
+    /**
+     * Get elevation minimum and maximum for tiles which are visible on the current frame.
+     */
+    getMinMaxForVisibleTiles(): ?{min: number, max: number} {
+        const visibleTiles = this.visibleDemTiles;
+        if (visibleTiles.length === 0) {
+            return null;
+        }
+
+        let found = false;
+        let min = Number.MAX_VALUE;
+        let max = Number.MIN_VALUE;
+        for (const tile of visibleTiles) {
+            const minmax = this.getMinMaxForTile(tile.tileID);
+            if (!minmax) {
+                continue;
+            }
+            min = Math.min(min, minmax.min);
+            max = Math.max(max, minmax.max);
+            found = true;
+        }
+
+        if (!found) {
+            return null;
+        }
+
+        return {min, max};
     }
 }
 
@@ -262,7 +318,7 @@ export class DEMSampler {
         const scale = 1 << tileID.canonical.z - demTileID.canonical.z;
         const xOffset = (tileID.canonical.x / scale - demTileID.canonical.x) * dem.dim;
         const yOffset = (tileID.canonical.y / scale - demTileID.canonical.y) * dem.dim;
-        const k = demTile.tileSize / EXTENT / scale;
+        const k = dem.dim / EXTENT / scale;
 
         return new DEMSampler(demTile, k, [xOffset, yOffset]);
     }

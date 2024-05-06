@@ -6,17 +6,29 @@ import type {StructArrayLayout} from '../../util/struct_array.js';
 export const symbolLayoutAttributes: StructArrayLayout = createLayout([
     {name: 'a_pos_offset',   components: 4, type: 'Int16'},
     {name: 'a_tex_size',     components: 4, type: 'Uint16'},
-    {name: 'a_pixeloffset',  components: 4, type: 'Int16'},
-    {name: 'a_z_tile_anchor', components: 4, type: 'Int16'}
+    {name: 'a_pixeloffset',  components: 4, type: 'Int16'}
+], 4);
+
+export const symbolGlobeExtAttributes: StructArrayLayout = createLayout([
+    {name: 'a_globe_anchor', components: 3, type: 'Int16'},
+    {name: 'a_globe_normal', components: 3, type: 'Float32'},
 ], 4);
 
 export const dynamicLayoutAttributes: StructArrayLayout = createLayout([
-    {name: 'a_projected_pos', components: 3, type: 'Float32'}
+    {name: 'a_projected_pos', components: 4, type: 'Float32'}
 ], 4);
 
 export const placementOpacityAttributes: StructArrayLayout = createLayout([
     {name: 'a_fade_opacity', components: 1, type: 'Uint32'}
 ], 4);
+
+export const zOffsetAttributes: StructArrayLayout = createLayout([
+    {name: 'a_z_offset', components: 1, type: 'Float32'}
+], 4);
+
+export const iconTransitioningAttributes: StructArrayLayout = createLayout([
+    {name: 'a_texb', components: 2, type: 'Uint16'}
+]);
 
 export const collisionVertexAttributes: StructArrayLayout = createLayout([
     {name: 'a_placed', components: 2, type: 'Uint8'},
@@ -26,6 +38,7 @@ export const collisionVertexAttributes: StructArrayLayout = createLayout([
 export const collisionVertexAttributesExt: StructArrayLayout = createLayout([
     {name: 'a_size_scale', components: 1, type: 'Float32'},
     {name: 'a_padding', components: 2, type: 'Float32'},
+    {name: 'a_z_offset', components: 1, type: 'Float32'}
 ]);
 
 export const collisionBox: StructArrayLayout = createLayout([
@@ -94,11 +107,11 @@ export const placement: StructArrayLayout = createLayout([
 ]);
 
 export const symbolInstance: StructArrayLayout = createLayout([
+    {type: 'Float32', name: 'tileAnchorX'},
+    {type: 'Float32', name: 'tileAnchorY'},
     {type: 'Int16', name: 'projectedAnchorX'},
     {type: 'Int16', name: 'projectedAnchorY'},
     {type: 'Int16', name: 'projectedAnchorZ'},
-    {type: 'Float32', name: 'tileAnchorX'},
-    {type: 'Float32', name: 'tileAnchorY'},
     {type: 'Int16', name: 'rightJustifiedTextSymbolIndex'},
     {type: 'Int16', name: 'centerJustifiedTextSymbolIndex'},
     {type: 'Int16', name: 'leftJustifiedTextSymbolIndex'},
@@ -123,6 +136,8 @@ export const symbolInstance: StructArrayLayout = createLayout([
     {type: 'Uint32', name: 'crossTileID'},
     {type: 'Float32', components: 2, name: 'textOffset'},
     {type: 'Float32', name: 'collisionCircleDiameter'},
+    {type: 'Float32', name: 'zOffset'},
+    {type: 'Uint8', name: 'hasIconTextFit'}
 ]);
 
 export const glyphOffset: StructArrayLayout = createLayout([
@@ -131,6 +146,5 @@ export const glyphOffset: StructArrayLayout = createLayout([
 
 export const lineVertex: StructArrayLayout = createLayout([
     {type: 'Int16', name: 'x'},
-    {type: 'Int16', name: 'y'},
-    {type: 'Int16', name: 'tileUnitDistanceFromAnchor'}
+    {type: 'Int16', name: 'y'}
 ]);

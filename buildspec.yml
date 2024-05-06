@@ -1,5 +1,13 @@
 version: 0.2
+
 phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "//registry.npmjs.org/:_authToken=$NPMAccessToken" > ~/.npmrc
+      - npm whoami
+      - npm ci
   build:
     commands:
-      - echo TODO
+      - ./build/publish.sh

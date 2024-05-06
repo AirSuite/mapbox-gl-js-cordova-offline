@@ -9,14 +9,15 @@ import {
 } from '../uniform_binding.js';
 
 import type Context from '../../gl/context.js';
-import type {UniformValues, UniformLocations} from '../uniform_binding.js';
-import type {OverscaledTileID} from '../../source/tile_id.js';
+import type {UniformValues} from '../uniform_binding.js';
+import {CanonicalTileID, OverscaledTileID} from '../../source/tile_id.js';
 import type Tile from '../../source/tile.js';
 import type CircleStyleLayer from '../../style/style_layer/circle_style_layer.js';
 import type Painter from '../painter.js';
 import browser from '../../util/browser.js';
 import {mat4} from 'gl-matrix';
 import {globeToMercatorTransition, globePixelsToTileUnits} from '../../geo/projection/globe_util.js';
+import EXTENT from '../../style-spec/data/extent.js';
 
 export type CircleUniformsType = {|
     'u_camera_to_center_distance': Uniform1f,
@@ -28,20 +29,22 @@ export type CircleUniformsType = {|
     'u_tile_id': Uniform3f,
     'u_zoom_transition': Uniform1f,
     'u_up_dir': Uniform3f,
+    'u_emissive_strength': Uniform1f,
 |};
 
-export type CircleDefinesType = 'PITCH_WITH_MAP' | 'SCALE_WITH_MAP' | 'PROJECTION_GLOBE_VIEW';
+export type CircleDefinesType = 'PITCH_WITH_MAP' | 'SCALE_WITH_MAP';
 
-const circleUniforms = (context: Context, locations: UniformLocations): CircleUniformsType => ({
-    'u_camera_to_center_distance': new Uniform1f(context, locations.u_camera_to_center_distance),
-    'u_extrude_scale': new UniformMatrix2f(context, locations.u_extrude_scale),
-    'u_device_pixel_ratio': new Uniform1f(context, locations.u_device_pixel_ratio),
-    'u_matrix': new UniformMatrix4f(context, locations.u_matrix),
-    'u_inv_rot_matrix': new UniformMatrix4f(context, locations.u_inv_rot_matrix),
-    'u_merc_center': new Uniform2f(context, locations.u_merc_center),
-    'u_tile_id': new Uniform3f(context, locations.u_tile_id),
-    'u_zoom_transition': new Uniform1f(context, locations.u_zoom_transition),
-    'u_up_dir': new Uniform3f(context, locations.u_up_dir),
+const circleUniforms = (context: Context): CircleUniformsType => ({
+    'u_camera_to_center_distance': new Uniform1f(context),
+    'u_extrude_scale': new UniformMatrix2f(context),
+    'u_device_pixel_ratio': new Uniform1f(context),
+    'u_matrix': new UniformMatrix4f(context),
+    'u_inv_rot_matrix': new UniformMatrix4f(context),
+    'u_merc_center': new Uniform2f(context),
+    'u_tile_id': new Uniform3f(context),
+    'u_zoom_transition': new Uniform1f(context),
+    'u_up_dir': new Uniform3f(context),
+    'u_emissive_strength': new Uniform1f(context),
 });
 
 const identityMatrix = mat4.create();
@@ -60,7 +63,7 @@ const circleUniformValues = (
     let extrudeScale;
     if (layer.paint.get('circle-pitch-alignment') === 'map') {
         if (isGlobe) {
-            const s = globePixelsToTileUnits(transform.zoom, coord.canonical);
+            const s = globePixelsToTileUnits(transform.zoom, coord.canonical) * transform._pixelsPerMercatorPixel;
             extrudeScale = Float32Array.from([s, 0, 0, s]);
         } else {
             extrudeScale = transform.calculatePixelsToTileUnitsMatrix(tile);
@@ -74,7 +77,7 @@ const circleUniformValues = (
     }
 
     const values = {
-        'u_camera_to_center_distance': transform.cameraToCenterDistance,
+        'u_camera_to_center_distance': painter.transform.getCameraToCenterDistance(transform.projection),
         'u_matrix': painter.translatePosMatrix(
             coord.projMatrix,
             tile,
@@ -87,6 +90,7 @@ const circleUniformValues = (
         'u_tile_id': [0, 0, 0],
         'u_zoom_transition': 0,
         'u_up_dir': [0, 0, 0],
+        'u_emissive_strength': layer.paint.get('circle-emissive-strength')
     };
 
     if (isGlobe) {
@@ -94,7 +98,9 @@ const circleUniformValues = (
         values['u_merc_center'] = mercatorCenter;
         values['u_tile_id'] = [coord.canonical.x, coord.canonical.y, 1 << coord.canonical.z];
         values['u_zoom_transition'] = globeToMercatorTransition(transform.zoom);
-        values['u_up_dir'] = (transform.projection.upVector(coord.canonical, mercatorCenter[0], mercatorCenter[1]): any);
+        const x = mercatorCenter[0] * EXTENT;
+        const y = mercatorCenter[1] * EXTENT;
+        values['u_up_dir'] = (transform.projection.upVector(new CanonicalTileID(0, 0, 0), x, y): any);
     }
 
     return values;

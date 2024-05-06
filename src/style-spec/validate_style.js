@@ -36,9 +36,13 @@ export default function validateStyle(style: StyleSpecification | string | Buffe
 
 export {
     validateSource as source,
+    validateModel as model,
     validateLight as light,
     validateLayer as layer,
     validateFilter as filter,
+    validateLights as lights,
+    validateTerrain as terrain,
+    validateFog as fog,
     validatePaintProperty as paintProperty,
     validateLayoutProperty as layoutProperty
 } from './validate_style.min.js';

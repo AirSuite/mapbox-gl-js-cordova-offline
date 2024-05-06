@@ -3,7 +3,7 @@ import {createPropertyExpression} from '../src/style-spec/expression/index.js';
 import {isFunction} from '../src/style-spec/function/index.js';
 import convertFunction from '../src/style-spec/function/convert.js';
 import {toString} from '../src/style-spec/expression/types.js';
-import ignores from './ignores.json';
+import ignores from './ignores/all.js';
 import {CanonicalTileID} from '../src/source/tile_id.js';
 import MercatorCoordinate from '../src/geo/mercator_coordinate.js';
 import tileTransform, {getTilePoint} from '../src/geo/projection/tile_transform.js';
@@ -66,9 +66,7 @@ function getGeometry(feature, geometry, canonical) {
         } else if (type === 'MultiPolygon') {
             feature.type = 'Polygon';
             for (let i = 0; i < coords.length; i++) {
-                const polygon = [];
-                convertLines(coords[i], canonical, polygon);
-                feature.geometry.push(polygon);
+                convertLines(coords[i], canonical, feature.geometry);
             }
         }
     }

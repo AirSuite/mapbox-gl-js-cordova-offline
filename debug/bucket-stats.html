@@ -34,6 +34,7 @@ let curStyle = style.value;
 
 var map = window.map = new mapboxgl.Map({
     container: 'map',
+    devtools: true,
     zoom: 12,
     center: [-122.4194, 37.7749],
     style: curStyle,
@@ -80,7 +81,8 @@ function symbolStats(bucketKey, bucket) {
         bucket.dynamicLayoutVertexArray.arrayBuffer.byteLength +
         bucket.layoutVertexArray.arrayBuffer.byteLength +
         bucket.opacityVertexArray.arrayBuffer.byteLength +
-        bucket.placedSymbolArray.arrayBuffer.byteLength;
+        bucket.placedSymbolArray.arrayBuffer.byteLength +
+        bucket.iconTransitioningVertexArray.arrayBuffer.byteLength;
 }
 
 const statsEl = document.getElementById('stats');

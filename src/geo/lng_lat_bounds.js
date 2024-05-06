@@ -96,16 +96,18 @@ class LngLatBounds {
 
             if (!sw2 || !ne2) return this;
 
-        } else {
-            if (Array.isArray(obj)) {
-                if (obj.length === 4 || obj.every(Array.isArray)) {
-                    const lngLatBoundsObj = ((obj: any): LngLatBoundsLike);
-                    return this.extend(LngLatBounds.convert(lngLatBoundsObj));
-                } else {
-                    const lngLatObj = ((obj: any): LngLatLike);
-                    return this.extend(LngLat.convert(lngLatObj));
-                }
+        } else if (Array.isArray(obj)) {
+            // $FlowFixMe[method-unbinding]
+            if (obj.length === 4 || obj.every(Array.isArray)) {
+                const lngLatBoundsObj = ((obj: any): LngLatBoundsLike);
+                return this.extend(LngLatBounds.convert(lngLatBoundsObj));
+            } else {
+                const lngLatObj = ((obj: any): LngLatLike);
+                return this.extend(LngLat.convert(lngLatObj));
             }
+        } else if (typeof obj === 'object' && obj !== null && obj.hasOwnProperty("lat") && (obj.hasOwnProperty("lon") || obj.hasOwnProperty("lng"))) {
+            return this.extend(LngLat.convert(obj));
+        } else {
             return this;
         }
 
@@ -219,7 +221,7 @@ class LngLatBounds {
      * Returns the bounding box represented as an array.
      *
      * @returns {Array<Array<number>>} The bounding box represented as an array, consisting of the
-     *   southwest and northeast coordinates of the bounding represented as arrays of numbers.
+     *     southwest and northeast coordinates of the bounding represented as arrays of numbers.
      * @example
      * const llb = new mapboxgl.LngLatBounds([-73.9876, 40.7661], [-73.9397, 40.8002]);
      * llb.toArray(); // = [[-73.9876, 40.7661], [-73.9397, 40.8002]]
@@ -232,7 +234,7 @@ class LngLatBounds {
      * Return the bounding box represented as a string.
      *
      * @returns {string} The bounding box represents as a string of the format
-     *   `'LngLatBounds(LngLat(lng, lat), LngLat(lng, lat))'`.
+     *     `'LngLatBounds(LngLat(lng, lat), LngLat(lng, lat))'`.
      * @example
      * const llb = new mapboxgl.LngLatBounds([-73.9876, 40.7661], [-73.9397, 40.8002]);
      * llb.toString(); // = "LngLatBounds(LngLat(-73.9876, 40.7661), LngLat(-73.9397, 40.8002))"

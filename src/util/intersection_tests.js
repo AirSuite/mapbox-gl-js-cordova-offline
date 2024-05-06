@@ -4,13 +4,13 @@ import {isCounterClockwise} from './util.js';
 
 import Point from '@mapbox/point-geometry';
 
-export {polygonIntersectsBufferedPoint, polygonIntersectsMultiPolygon, polygonIntersectsBufferedMultiLine, polygonIntersectsPolygon, distToSegmentSquared, polygonIntersectsBox};
+export {polygonIntersectsBufferedPoint, polygonIntersectsMultiPolygon, polygonIntersectsBufferedMultiLine, polygonIntersectsPolygon, distToSegmentSquared, polygonIntersectsBox, polygonContainsPoint, triangleIntersectsTriangle};
 
-type Line = Array<Point>;
-type MultiLine = Array<Line>;
-type Ring = Array<Point>;
-type Polygon = Array<Point>;
-type MultiPolygon = Array<Polygon>;
+type Line = $ReadOnlyArray<Point>;
+type MultiLine = $ReadOnlyArray<Line>;
+type Ring = $ReadOnlyArray<Point>;
+type Polygon = $ReadOnlyArray<Point>;
+type MultiPolygon = $ReadOnlyArray<Polygon>;
 
 function polygonIntersectsPolygon(polygonA: Polygon, polygonB: Polygon): boolean {
     for (let i = 0; i < polygonA.length; i++) {
@@ -133,7 +133,7 @@ function distToSegmentSquared(p: Point, v: Point, w: Point): number {
 }
 
 // point in polygon ray casting algorithm
-function multiPolygonContainsPoint(rings: Array<Ring>, p: Point) {
+function multiPolygonContainsPoint(rings: MultiPolygon, p: Point) {
     let c = false,
         ring, p1, p2;
 
@@ -150,7 +150,7 @@ function multiPolygonContainsPoint(rings: Array<Ring>, p: Point) {
     return c;
 }
 
-function polygonContainsPoint(ring: Ring, p: Point) {
+function polygonContainsPoint(ring: Ring, p: Point): boolean {
     let c = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
         const p1 = ring[i];
@@ -205,4 +205,51 @@ function edgeIntersectsBox(e1: Point, e2: Point, corners: Array<Point>) {
     return dir !== isCounterClockwise(e1, e2, corners[1]) ||
         dir !== isCounterClockwise(e1, e2, corners[2]) ||
         dir !== isCounterClockwise(e1, e2, corners[3]);
+}
+
+// Checks whether the triangle [p0, p1, p2] is on the left side of the edge [a, b].
+function triangleLeftSideOfEdge(a: Point, b: Point, p0: Point, p1: Point, p2: Point, padding: ?number): boolean {
+    let nx = b.y - a.y;
+    let ny = a.x - b.x;
+
+    padding = padding || 0;
+
+    if (padding) {
+        const nLenSq = nx * nx + ny * ny;
+        if (nLenSq === 0) {
+            return true;
+        }
+
+        const len = Math.sqrt(nLenSq);
+        nx /= len;
+        ny /= len;
+    }
+
+    if ((p0.x - a.x) * nx + (p0.y - a.y) * ny - padding < 0) {
+        return false;
+    } else if ((p1.x - a.x) * nx + (p1.y - a.y) * ny - padding < 0) {
+        return false;
+    } else if ((p2.x - a.x) * nx + (p2.y - a.y) * ny - padding < 0) {
+        return false;
+    }
+
+    return true;
+}
+
+function triangleIntersectsTriangle(a0: Point, b0: Point, c0: Point, a1: Point, b1: Point, c1: Point, padding: ?number): boolean {
+    // Triangles are not intersecting if even one separating axis can be found
+    if (triangleLeftSideOfEdge(a0, b0, a1, b1, c1, padding)) {
+        return false;
+    } else if (triangleLeftSideOfEdge(b0, c0, a1, b1, c1, padding)) {
+        return false;
+    } else if (triangleLeftSideOfEdge(c0, a0, a1, b1, c1, padding)) {
+        return false;
+    } else if (triangleLeftSideOfEdge(a1, b1, a0, b0, c0, padding)) {
+        return false;
+    } else if (triangleLeftSideOfEdge(b1, c1, a0, b0, c0, padding)) {
+        return false;
+    } else if (triangleLeftSideOfEdge(c1, a1, a0, b0, c0, padding)) {
+        return false;
+    }
+    return true;
 }

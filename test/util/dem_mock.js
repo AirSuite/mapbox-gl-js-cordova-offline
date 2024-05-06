@@ -12,17 +12,17 @@ export function createConstElevationDEM(elevation, tileSize) {
         pixelData[i + 2] = encoded[2];
         pixelData[i + 3] = encoded[3];
     }
-    return new DEMData(0, new RGBAImage({height: tileSize + 2, width: tileSize + 2}, pixelData, "mapbox", false, true));
+    return new DEMData(0, new RGBAImage({height: tileSize + 2, width: tileSize + 2}, pixelData), "mapbox");
 }
 
-export function setMockElevationTerrain(map, demData, tileSize) {
+export function setMockElevationTerrain(map, demData, tileSize, maxzoom) {
     map.addSource('mapbox-dem', {
         "type": "raster-dem",
         "tiles": ['http://example.com/{z}/{x}/{y}.png'],
         tileSize,
-        "maxzoom": 14
+        "maxzoom": maxzoom ? maxzoom : 14
     });
-    const cache = map.style._getSourceCache('mapbox-dem');
+    const cache = map.style.getOwnSourceCache('mapbox-dem');
     cache.used = cache._sourceLoaded = true;
     cache._loadTile = (tile, callback) => {
         tile.dem = demData;

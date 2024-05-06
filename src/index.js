@@ -1,5 +1,7 @@
 // @flow
 
+import {PerformanceUtils} from './util/performance.js';
+
 import assert from 'assert';
 import {supported} from '@mapbox/mapbox-gl-supported';
 
@@ -13,8 +15,7 @@ import FullscreenControl from './ui/control/fullscreen_control.js';
 import Popup from './ui/popup.js';
 import Marker from './ui/marker.js';
 import Style from './style/style.js';
-import LngLat from './geo/lng_lat.js';
-import LngLatBounds from './geo/lng_lat_bounds.js';
+import LngLat, {LngLatBounds} from './geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
 import MercatorCoordinate from './geo/mercator_coordinate.js';
 import {Evented} from './util/evented.js';
@@ -23,11 +24,12 @@ import {Debug} from './util/debug.js';
 import {isSafari} from './util/util.js';
 import {setRTLTextPlugin, getRTLTextPluginStatus} from './source/rtl_text_plugin.js';
 import WorkerPool from './util/worker_pool.js';
+import WorkerClass from './util/worker_class.js';
 import {prewarm, clearPrewarmedResources} from './util/global_worker_pool.js';
 import {clearTileCache} from './util/tile_request_cache.js';
 import {WorkerPerformanceUtils} from './util/worker_performance_utils.js';
-import {PerformanceUtils} from './util/performance.js';
 import {FreeCameraOptions} from './ui/free_camera.js';
+import {getDracoUrl, setDracoUrl, setMeshoptUrl, getMeshoptUrl} from '../3d-style/util/loaders.js';
 import browser from './util/browser.js';
 
 const exported = {
@@ -53,7 +55,8 @@ const exported = {
     config,
     /**
      * Initializes resources like WebWorkers that can be shared across maps to lower load
-     * times in some situations. `mapboxgl.workerUrl` and `mapboxgl.workerCount`, if being
+     * times in some situations. [`mapboxgl.workerUrl`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#workerurl)
+     * and [`mapboxgl.workerCount`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#workercount), if being
      * used, must be set before `prewarm()` is called to have an effect.
      *
      * By default, the lifecycle of these resources is managed automatically, and they are
@@ -61,10 +64,10 @@ const exported = {
      * resources ahead of time and ensures they are not cleared when the last `Map`
      * is removed from the page. This allows them to be re-used by new `Map` instances that
      * are created later. They can be manually cleared by calling
-     * `mapboxgl.clearPrewarmedResources()`. This is only necessary if your web page
-     * remains active but stops using maps altogether. `prewarm()` is idempotent
-     * and has guards against being executed multiple times, and any resources
-     * allocated by `prewarm()` are created synchronously.
+     * [`mapboxgl.clearPrewarmedResources()`](https://docs.mapbox.com/mapbox-gl-js/api/properties/#clearprewarmedresources).
+     * This is only necessary if your web page remains active but stops using maps altogether.
+     * `prewarm()` is idempotent and has guards against being executed multiple times,
+     * and any resources allocated by `prewarm()` are created synchronously.
      *
      * This is primarily useful when using Mapbox GL JS maps in a single page app,
      * in which a user navigates between various views, resulting in
@@ -76,7 +79,7 @@ const exported = {
      */
     prewarm,
     /**
-     * Clears up resources that have previously been created by `mapboxgl.prewarm()`.
+     * Clears up resources that have previously been created by [`mapboxgl.prewarm()](https://docs.mapbox.com/mapbox-gl-js/api/properties/#prewarm)`.
      * Note that this is typically not necessary. You should only call this function
      * if you expect the user of your app to not return to a Map view at any point
      * in your application.
@@ -192,7 +195,13 @@ const exported = {
      * ...
      * </script>
      */
-    workerUrl: '',
+    get workerUrl(): string {
+        return WorkerClass.workerUrl;
+    },
+
+    set workerUrl(url: string) {
+        WorkerClass.workerUrl = url;
+    },
 
     /**
      * Provides an interface for external module bundlers such as Webpack or Rollup to package
@@ -208,7 +217,54 @@ const exported = {
      *
      * mapboxgl.workerClass = MapboxGLWorker;
      */
-    workerClass: null,
+    get workerClass(): Object {
+        return WorkerClass.workerClass;
+    },
+
+    set workerClass(klass: Object) {
+        WorkerClass.workerClass = klass;
+    },
+
+    get workerParams(): Object {
+        return WorkerClass.workerParams;
+    },
+
+    set workerParams(params: Object) {
+        WorkerClass.workerParams = params;
+    },
+
+    /**
+     * Provides an interface for loading Draco decoding library (draco_decoder_gltf.wasm v1.5.6) from a self-hosted URL.
+     * This needs to be set only once, and before any call to `new mapboxgl.Map(..)` takes place.
+     * This is useful if your site needs to operate in a strict CSP (Content Security Policy) environment
+     * wherein you are not allowed to load JavaScript code from a [`Blob` URL](https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL), which is default behavior.
+     *
+     * See our documentation on [CSP Directives](https://docs.mapbox.com/mapbox-gl-js/api/#csp-directives) for more details.
+     *
+     * @var {string} dracoUrl
+     * @returns {string} A URL hosting Google Draco decoding library (`draco_wasm_wrapper_gltf.js` and `draco_decoder_gltf.wasm`).
+     * @example
+     * <script src='https://api.mapbox.com/mapbox-gl-js/v3.0.0/mapbox-gl.js'></script>
+     * <script>
+     * mapboxgl.dracoUrl = "https://www.gstatic.com/draco/versioned/decoders/1.5.6/draco_decoder_gltf.wasm";
+     * ...
+     * </script>
+     */
+    get dracoUrl(): string {
+        return getDracoUrl();
+    },
+
+    set dracoUrl(url: string) {
+        setDracoUrl(url);
+    },
+
+    get meshoptUrl(): string {
+        return getMeshoptUrl();
+    },
+
+    set meshoptUrl(url: string) {
+        setMeshoptUrl(url);
+    },
 
     /**
      * Sets the time used by Mapbox GL JS internally for all animations. Useful for generating videos from Mapbox GL JS.
@@ -241,9 +297,9 @@ Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPer
  * @function supported
  * @param {Object} [options]
  * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`,
- *   the function will return `false` if the performance of Mapbox GL JS would
- *   be dramatically worse than expected (for example, a software WebGL renderer
- *   would be used).
+ *     the function will return `false` if the performance of Mapbox GL JS would
+ *     be dramatically worse than expected (for example, a software WebGL renderer
+ *     would be used).
  * @return {boolean}
  * @example
  * // Show an alert if the browser does not support Mapbox GL
@@ -261,7 +317,7 @@ Debug.extend(exported, {isSafari, getPerformanceMetrics: PerformanceUtils.getPer
  * @param {string} pluginURL URL pointing to the Mapbox RTL text plugin source.
  * @param {Function} callback Called with an error argument if there is an error, or no arguments if the plugin loads successfully.
  * @param {boolean} lazy If set to `true`, MapboxGL will defer loading the plugin until right-to-left text is encountered, and
- *    right-to-left text will be rendered only after the plugin finishes loading.
+ *     right-to-left text will be rendered only after the plugin finishes loading.
  * @example
  * mapboxgl.setRTLTextPlugin('https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.2.0/mapbox-gl-rtl-text.js');
  * @see [Example: Add support for right-to-left scripts](https://www.mapbox.com/mapbox-gl-js/example/mapbox-gl-rtl-text/)

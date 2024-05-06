@@ -10,13 +10,11 @@ import type {RequestManager} from '../util/mapbox.js';
 import type {Callback} from '../types/callback.js';
 import type {Cancelable} from '../types/cancelable.js';
 
-export default function(baseURL: string,
-                          requestManager: RequestManager,
-                          callback: Callback<{[_: string]: StyleImage}>): Cancelable {
+export default function(baseURL: string, requestManager: RequestManager, callback: Callback<{[_: string]: StyleImage}>): Cancelable {
     let json: any, image, error;
     const format = browser.devicePixelRatio > 1 ? '@2x' : '';
 
-    let jsonRequest = getJSON(requestManager.transformRequest(requestManager.normalizeSpriteURL(baseURL, format, '.json'), ResourceType.SpriteJSON), (err: ?Error, data: ?Object) => {
+    let jsonRequest: ?Cancelable = getJSON(requestManager.transformRequest(requestManager.normalizeSpriteURL(baseURL, format, '.json'), ResourceType.SpriteJSON), (err: ?Error, data: ?Object) => {
         jsonRequest = null;
         if (!error) {
             error = err;
@@ -25,7 +23,7 @@ export default function(baseURL: string,
         }
     });
 
-    let imageRequest = getImage(requestManager.transformRequest(requestManager.normalizeSpriteURL(baseURL, format, '.png'), ResourceType.SpriteImage), (err, img) => {
+    let imageRequest: ?Cancelable = getImage(requestManager.transformRequest(requestManager.normalizeSpriteURL(baseURL, format, '.png'), ResourceType.SpriteImage), (err, img) => {
         imageRequest = null;
         if (!error) {
             error = err;

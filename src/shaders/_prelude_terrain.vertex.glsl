@@ -26,19 +26,14 @@ vec3 elevationVector(vec2 pos) { return vec3(0, 0, 1); }
 
 #ifdef TERRAIN
 
-#ifdef TERRAIN_DEM_FLOAT_FORMAT
 uniform highp sampler2D u_dem;
 uniform highp sampler2D u_dem_prev;
-#else
-uniform sampler2D u_dem;
-uniform sampler2D u_dem_prev;
-#endif
-uniform vec4 u_dem_unpack;
+
 uniform vec2 u_dem_tl;
 uniform vec2 u_dem_tl_prev;
 uniform float u_dem_scale;
 uniform float u_dem_scale_prev;
-uniform float u_dem_size;
+uniform float u_dem_size; // Texture size without 1px border padding
 uniform float u_dem_lerp;
 uniform float u_exaggeration;
 uniform float u_meter_to_dem;
@@ -53,27 +48,20 @@ vec4 tileUvToDemSample(vec2 uv, float dem_size, float dem_scale, vec2 dem_tl) {
     return vec4((pos - f + 0.5) / (dem_size + 2.0), f);
 }
 
-float decodeElevation(vec4 v) {
-    return dot(vec4(v.xyz * 255.0, -1.0), u_dem_unpack);
-}
-
 float currentElevation(vec2 apos) {
 #ifdef TERRAIN_DEM_FLOAT_FORMAT
     vec2 pos = (u_dem_size * (apos / 8192.0 * u_dem_scale + u_dem_tl) + 1.5) / (u_dem_size + 2.0);
-    return u_exaggeration * texture2D(u_dem, pos).a;
+    return u_exaggeration * texture(u_dem, pos).r;
 #else
     float dd = 1.0 / (u_dem_size + 2.0);
     vec4 r = tileUvToDemSample(apos / 8192.0, u_dem_size, u_dem_scale, u_dem_tl);
     vec2 pos = r.xy;
     vec2 f = r.zw;
 
-    float tl = decodeElevation(texture2D(u_dem, pos));
-#ifdef TERRAIN_DEM_NEAREST_FILTER
-    return u_exaggeration * tl;
-#endif
-    float tr = decodeElevation(texture2D(u_dem, pos + vec2(dd, 0.0)));
-    float bl = decodeElevation(texture2D(u_dem, pos + vec2(0.0, dd)));
-    float br = decodeElevation(texture2D(u_dem, pos + vec2(dd, dd)));
+    float tl = texture(u_dem, pos).r;
+    float tr = texture(u_dem, pos + vec2(dd, 0)).r;
+    float bl = texture(u_dem, pos + vec2(0, dd)).r;
+    float br = texture(u_dem, pos + vec2(dd, dd)).r;
 
     return u_exaggeration * mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
 #endif
@@ -82,17 +70,17 @@ float currentElevation(vec2 apos) {
 float prevElevation(vec2 apos) {
 #ifdef TERRAIN_DEM_FLOAT_FORMAT
     vec2 pos = (u_dem_size * (apos / 8192.0 * u_dem_scale_prev + u_dem_tl_prev) + 1.5) / (u_dem_size + 2.0);
-    return u_exaggeration * texture2D(u_dem_prev, pos).a;
+    return u_exaggeration * texture(u_dem_prev, pos).r;
 #else
     float dd = 1.0 / (u_dem_size + 2.0);
     vec4 r = tileUvToDemSample(apos / 8192.0, u_dem_size, u_dem_scale_prev, u_dem_tl_prev);
     vec2 pos = r.xy;
     vec2 f = r.zw;
 
-    float tl = decodeElevation(texture2D(u_dem_prev, pos));
-    float tr = decodeElevation(texture2D(u_dem_prev, pos + vec2(dd, 0.0)));
-    float bl = decodeElevation(texture2D(u_dem_prev, pos + vec2(0.0, dd)));
-    float br = decodeElevation(texture2D(u_dem_prev, pos + vec2(dd, dd)));
+    float tl = texture(u_dem_prev, pos).r;
+    float tr = texture(u_dem_prev, pos + vec2(dd, 0)).r;
+    float bl = texture(u_dem_prev, pos + vec2(0, dd)).r;
+    float br = texture(u_dem_prev, pos + vec2(dd, dd)).r;
 
     return u_exaggeration * mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
 #endif
@@ -100,27 +88,34 @@ float prevElevation(vec2 apos) {
 
 #ifdef TERRAIN_VERTEX_MORPHING
 float elevation(vec2 apos) {
+    #ifdef ZERO_EXAGGERATION
+        return 0.0;
+    #endif
     float nextElevation = currentElevation(apos);
     float prevElevation = prevElevation(apos);
     return mix(prevElevation, nextElevation, u_dem_lerp);
 }
 #else
 float elevation(vec2 apos) {
+    #ifdef ZERO_EXAGGERATION
+        return 0.0;
+    #endif
     return currentElevation(apos);
 }
 #endif
 
 // Unpack depth from RGBA. A piece of code copied in various libraries and WebGL
 // shadow mapping examples.
-float unpack_depth(vec4 rgba_depth)
+// https://aras-p.info/blog/2009/07/30/encoding-floats-to-rgba-the-final/
+highp float unpack_depth(highp vec4 rgba_depth)
 {
-    const vec4 bit_shift = vec4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
+    const highp vec4 bit_shift = vec4(1.0 / (255.0 * 255.0 * 255.0), 1.0 / (255.0 * 255.0), 1.0 / 255.0, 1.0);
     return dot(rgba_depth, bit_shift) * 2.0 - 1.0;
 }
 
 bool isOccluded(vec4 frag) {
     vec3 coord = frag.xyz / frag.w;
-    float depth = unpack_depth(texture2D(u_depth, (coord.xy + 1.0) * 0.5));
+    float depth = unpack_depth(texture(u_depth, (coord.xy + 1.0) * 0.5));
     return coord.z > depth + 0.0005;
 }
 
@@ -130,10 +125,10 @@ float occlusionFade(vec4 frag) {
     vec3 df = vec3(5.0 * u_depth_size_inv, 0.0);
     vec2 uv = 0.5 * coord.xy + 0.5;
     vec4 depth = vec4(
-        unpack_depth(texture2D(u_depth, uv - df.xz)),
-        unpack_depth(texture2D(u_depth, uv + df.xz)),
-        unpack_depth(texture2D(u_depth, uv - df.zy)),
-        unpack_depth(texture2D(u_depth, uv + df.zy))
+        unpack_depth(texture(u_depth, uv - df.xz)),
+        unpack_depth(texture(u_depth, uv + df.xz)),
+        unpack_depth(texture(u_depth, uv - df.zy)),
+        unpack_depth(texture(u_depth, uv + df.zy))
     );
     return dot(vec4(0.25), vec4(1.0) - clamp(300.0 * (vec4(coord.z - 0.001) - depth), 0.0, 1.0));
 }
@@ -143,21 +138,10 @@ float occlusionFade(vec4 frag) {
  // This is so that rendering changes are reflected on CPU side for feature querying.
 
 vec4 fourSample(vec2 pos, vec2 off) {
-#ifdef TERRAIN_DEM_FLOAT_FORMAT
-    float tl = texture2D(u_dem, pos).a;
-    float tr = texture2D(u_dem, pos + vec2(off.x, 0.0)).a;
-    float bl = texture2D(u_dem, pos + vec2(0.0, off.y)).a;
-    float br = texture2D(u_dem, pos + off).a;
-#else
-    vec4 demtl = vec4(texture2D(u_dem, pos).xyz * 255.0, -1.0);
-    float tl = dot(demtl, u_dem_unpack);
-    vec4 demtr = vec4(texture2D(u_dem, pos + vec2(off.x, 0.0)).xyz * 255.0, -1.0);
-    float tr = dot(demtr, u_dem_unpack);
-    vec4 dembl = vec4(texture2D(u_dem, pos + vec2(0.0, off.y)).xyz * 255.0, -1.0);
-    float bl = dot(dembl, u_dem_unpack);
-    vec4 dembr = vec4(texture2D(u_dem, pos + off).xyz * 255.0, -1.0);
-    float br = dot(dembr, u_dem_unpack);
-#endif
+    float tl = texture(u_dem, pos).r;
+    float tr = texture(u_dem, pos + vec2(off.x, 0.0)).r;
+    float bl = texture(u_dem, pos + vec2(0.0, off.y)).r;
+    float br = texture(u_dem, pos + off).r;
     return vec4(tl, tr, bl, br);
 }
 
@@ -179,7 +163,6 @@ float flatElevation(vec2 pack) {
 
     vec2 w = floor(0.5 * (span * u_meter_to_dem - 1.0));
     vec2 d = dd * w;
-    vec4 bounds = vec4(d, vec2(1.0) - d);
 
     // Get building wide sample, to get better slope estimate.
     h = fourSample(pos - d, 2.0 * d + vec2(dd));

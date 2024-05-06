@@ -10,20 +10,32 @@ const generateResultHTML = template(`
     <% } else { %>
       <input type="checkbox" id="<%- r.id %>">
     <% } %>
-    <label class="tab-label" style="background: <%- r.color %>" for="<%- r.id %>"><p class="status-container"><span class="status"><%- r.status %></span> - <%- r.name %></p></label>
+    <label class="tab-label" style="background: <%- r.color %>" for="<%- r.id %>"><p class="status-container"><span class="status"><%- r.status %></span> - <%- r.name %> - diff: <%- r.minDiff %></p></label>
     <div class="tab-content">
-      <% if (r.status !== 'errored') { %>
-          <img src="<%- r.actual %>">
+      <% if (r.actual) { %>
+          <img title="actual" src="<%- r.actual %>">
       <% } %>
       <% if (r.expected) { %>
-          <img src="<%- r.expected %>">
+          <img title="expected <%- r.expectedPath %>" src="<%- r.expected %>">
       <% } %>
       <% if (r.imgDiff) { %>
-          <img src="<%- r.imgDiff %>">
+          <img title="diff" src="<%- r.imgDiff %>">
       <% } %>
-      <% if (r.error) { %><p style="color: red"><strong>Error:</strong> <%- r.error.message %></p><% } %>
-      <% if (r.jsonDiff) { %>
-          <pre><%- r.jsonDiff.trim() %></pre>
+      <% if (r.error) { %>
+          <p style="color: red">
+            <strong>Error:</strong>
+            <pre><%- r.error.stack %></pre>
+          </p>
+      <% } %>
+      <% if (r.errors && r.errors.length !== 0) { %>
+          <p style="color: red">
+            <strong>Errors:</strong>
+            <dl>
+                <% r.errors.forEach(function(error) { %>
+                    <dt><%- error.message %></dt>
+                    <dd><pre><%- error.stack %></pre></dd>
+                <% }); %>
+            </dl>
       <% } %>
     </div>
   </div>
@@ -32,7 +44,7 @@ const generateResultHTML = template(`
 const pageCss = `
 body { font: 18px/1.2 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 10px; background: #ecf0f1 }
 h1 { font-size: 32px; margin-bottom: 0; }
-img { margin: 0 10px 10px 0; border: 1px dotted #ccc; }
+img { margin: 0 10px 10px 0; border: 1px dotted #ccc; image-rendering: pixelated; }
 input { position: absolute; opacity: 0; z-index: -1;}
 .tests { border-top: 1px dotted #bbb; margin-top: 10px; padding-top: 15px; overflow: hidden; }
 .status-container { margin: 0; }
@@ -42,12 +54,12 @@ input { position: absolute; opacity: 0; z-index: -1;}
 .tab-label { display: flex; color: white; border-radius: 5px; justify-content: space-between; padding: 1em; font-weight: bold; cursor: pointer; }
 .tab-label:hover { filter: brightness(85%); }
 .tab-label::after { content: "\\276F"; width: 1em; height: 1em; text-align: center; transition: all .35s; }
-.tab-content { max-height: 0; padding: 0 1em; background: white; transition: all .35s; }
+.tab-content { max-height: 0; padding: 0 1em; background: white; overflow: scroll; transition: all .35s; }
 .tab-content pre { font-size: 14px; margin: 0 0 10px; }
 input:checked + .tab-label { filter: brightness(90%); };
 input:checked + .tab-label::after { transform: rotate(90deg); }
 input:checked ~ .tab-content { max-height: 100vh; padding: 1em; border: 1px solid #eee; border-top: 0; border-radius: 5px; }
-iframe { pointer-events: none; }
+iframe { pointer-events: none; opacity: 0; }
 `;
 
 const stats = {
@@ -119,13 +131,13 @@ export function setupHTML() {
 export function updateHTML(testData) {
     const status = testData.status;
     stats[status]++;
-
-    testData["color"] = colors[status];
-    testData["id"] = `${status}Test-${stats[status]}`;
     counterDom[status].innerHTML = stats[status];
 
     // skip adding passing tests to report in CI mode
     if (CI && status === 'passed') return;
+
+    testData["color"] = colors[status];
+    testData["id"] = `${status}Test-${stats[status]}`;
     const resultHTMLFrag = document.createRange().createContextualFragment(generateResultHTML({r: testData}));
     resultsContainer.appendChild(resultHTMLFrag);
 }

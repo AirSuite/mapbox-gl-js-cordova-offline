@@ -1,7 +1,6 @@
 // @flow
 
 import DEMData from '../data/dem_data.js';
-import window from '../util/window.js';
 
 import type Actor from '../util/actor.js';
 import type {WorkerDEMTileParameters, WorkerDEMTileCallback} from './worker_source.js';
@@ -12,11 +11,11 @@ class RasterDEMTileWorkerSource {
     offscreenCanvasContext: CanvasRenderingContext2D;
 
     loadTile(params: WorkerDEMTileParameters, callback: WorkerDEMTileCallback) {
-        const {uid, encoding, rawImageData, padding, buildQuadTree} = params;
+        const {uid, encoding, rawImageData, padding} = params;
         // Main thread will transfer ImageBitmap if offscreen decode with OffscreenCanvas is supported, else it will transfer an already decoded image.
-        // Flow struggles to refine ImageBitmap type, likely due to the JSDom shim
-        const imagePixels = window.ImageBitmap && rawImageData instanceof window.ImageBitmap ? this.getImageData(rawImageData, padding) : ((rawImageData: any): ImageData);
-        const dem = new DEMData(uid, imagePixels, encoding, padding < 1, buildQuadTree);
+        // Flow struggles to refine ImageBitmap type
+        const imagePixels = ImageBitmap && rawImageData instanceof ImageBitmap ? this.getImageData(rawImageData, padding) : ((rawImageData: any): ImageData);
+        const dem = new DEMData(uid, imagePixels, encoding, padding < 1);
         callback(null, dem);
     }
 
@@ -25,7 +24,8 @@ class RasterDEMTileWorkerSource {
         if (!this.offscreenCanvas || !this.offscreenCanvasContext) {
             // Dem tiles are typically 256x256
             this.offscreenCanvas = new OffscreenCanvas(imgBitmap.width, imgBitmap.height);
-            this.offscreenCanvasContext = this.offscreenCanvas.getContext('2d');
+            // $FlowIssue[extra-arg]: internal Flow types don't yet know about willReadFrequently
+            this.offscreenCanvasContext = this.offscreenCanvas.getContext('2d', {willReadFrequently: true});
         }
 
         this.offscreenCanvas.width = imgBitmap.width;

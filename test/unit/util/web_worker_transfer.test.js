@@ -1,15 +1,11 @@
-// @flow
-
-import {test} from '../../util/test.js';
+import {test, expect} from "../../util/vitest.js";
 import {register, serialize, deserialize} from '../../../src/util/web_worker_transfer.js';
 
-import type {Serialized} from '../../../src/util/web_worker_transfer.js';
-
-test('round trip', (t) => {
+test('round trip', () => {
     class Foo {
-        n: number;
-        buffer: ArrayBuffer;
-        _cached: ?number;
+        n;
+        buffer;
+        _cached;
 
         constructor(n) {
             this.n = n;
@@ -26,54 +22,59 @@ test('round trip', (t) => {
         }
     }
 
-    register(Foo, {omit: ['_cached']});
+    register(Foo, 'Foo', {omit: ['_cached']});
 
     const foo = new Foo(10);
-    const transferables = [];
+    const transferables = new Set();
     const deserialized = deserialize(serialize(foo, transferables));
-    t.assert(deserialized instanceof Foo);
-    const bar: Foo = (deserialized: any);
+    expect(deserialized instanceof Foo).toBeTruthy();
+    const bar = deserialized;
 
-    t.assert(foo !== bar);
-    t.assert(bar.constructor === Foo);
-    t.assert(bar.n === 10);
-    t.assert(bar.buffer === foo.buffer);
-    t.assert(transferables[0] === foo.buffer);
-    t.assert(bar._cached === undefined);
-    t.assert(bar.squared() === 100);
-    t.end();
+    expect(foo !== bar).toBeTruthy();
+    expect(bar.constructor === Foo).toBeTruthy();
+    expect(bar.n === 10).toBeTruthy();
+    expect(bar.buffer === foo.buffer).toBeTruthy();
+    expect(transferables.has(foo.buffer)).toBeTruthy();
+    expect(bar._cached === undefined).toBeTruthy();
+    expect(bar.squared() === 100).toBeTruthy();
 });
 
-test('custom serialization', (t) => {
+test('duplicate buffers', () => {
+    const foo = new ArrayBuffer(1);
+    const transferables = new Set();
+    const deserialized = deserialize(serialize([foo, foo], transferables));
+    expect(deserialized).toEqual([foo, foo]);
+    expect(transferables.size === 1).toBeTruthy();
+});
+
+test('custom serialization', () => {
     class Bar {
-        id: string;
-        _deserialized: boolean;
+        id;
+        _deserialized;
         constructor(id) {
             this.id = id;
             this._deserialized = false;
         }
 
-        static serialize(b: Bar): Serialized {
+        static serialize(b) {
             return {foo: `custom serialization,${b.id}`};
         }
 
-        static deserialize(input: Serialized): Bar {
-            const b = new Bar((input: any).foo.split(',')[1]);
+        static deserialize(input) {
+            const b = new Bar(input.foo.split(',')[1]);
             b._deserialized = true;
             return b;
         }
     }
 
-    register(Bar);
+    register(Bar, 'Bar');
 
     const bar = new Bar('a');
-    t.assert(!bar._deserialized);
+    expect(!bar._deserialized).toBeTruthy();
 
     const deserialized = deserialize(serialize(bar));
-    t.assert(deserialized instanceof Bar);
-    const bar2: Bar = (deserialized: any);
-    t.equal(bar2.id, bar.id);
-    t.assert(bar2._deserialized);
-    t.end();
+    expect(deserialized instanceof Bar).toBeTruthy();
+    const bar2 = deserialized;
+    expect(bar2.id).toEqual(bar.id);
+    expect(bar2._deserialized).toBeTruthy();
 });
-

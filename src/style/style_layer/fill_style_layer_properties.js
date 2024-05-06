@@ -1,4 +1,4 @@
-// This file is generated. Edit build/generate-style-code.js, then run `yarn run codegen`.
+// This file is generated. Edit build/generate-style-code.js, then run `npm run codegen`.
 // @flow
 /* eslint-disable */
 
@@ -8,8 +8,6 @@ import {
     Properties,
     DataConstantProperty,
     DataDrivenProperty,
-    CrossFadedDataDrivenProperty,
-    CrossFadedProperty,
     ColorRampProperty
 } from '../properties.js';
 
@@ -21,10 +19,12 @@ import type ResolvedImage from '../../style-spec/expression/types/resolved_image
 
 export type LayoutProps = {|
     "fill-sort-key": DataDrivenProperty<number>,
+    "visibility": DataConstantProperty<"visible" | "none">,
 |};
 
 const layout: Properties<LayoutProps> = new Properties({
     "fill-sort-key": new DataDrivenProperty(styleSpec["layout_fill"]["fill-sort-key"]),
+    "visibility": new DataConstantProperty(styleSpec["layout_fill"]["visibility"]),
 });
 
 export type PaintProps = {|
@@ -34,7 +34,8 @@ export type PaintProps = {|
     "fill-outline-color": DataDrivenProperty<Color>,
     "fill-translate": DataConstantProperty<[number, number]>,
     "fill-translate-anchor": DataConstantProperty<"map" | "viewport">,
-    "fill-pattern": CrossFadedDataDrivenProperty<ResolvedImage>,
+    "fill-pattern": DataDrivenProperty<?ResolvedImage>,
+    "fill-emissive-strength": DataConstantProperty<number>,
 |};
 
 const paint: Properties<PaintProps> = new Properties({
@@ -44,7 +45,8 @@ const paint: Properties<PaintProps> = new Properties({
     "fill-outline-color": new DataDrivenProperty(styleSpec["paint_fill"]["fill-outline-color"]),
     "fill-translate": new DataConstantProperty(styleSpec["paint_fill"]["fill-translate"]),
     "fill-translate-anchor": new DataConstantProperty(styleSpec["paint_fill"]["fill-translate-anchor"]),
-    "fill-pattern": new CrossFadedDataDrivenProperty(styleSpec["paint_fill"]["fill-pattern"]),
+    "fill-pattern": new DataDrivenProperty(styleSpec["paint_fill"]["fill-pattern"]),
+    "fill-emissive-strength": new DataConstantProperty(styleSpec["paint_fill"]["fill-emissive-strength"]),
 });
 
 // Note: without adding the explicit type annotation, Flow infers weaker types

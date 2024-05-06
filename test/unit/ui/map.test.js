@@ -1,126 +1,158 @@
-import {test} from '../../util/test.js';
+import assert from 'assert';
+
+import {describe, test, beforeEach, afterEach, expect, waitFor, vi, createMap} from '../../util/vitest.js';
+import {createStyle, createStyleSource} from './map/util.js';
+import {getPNGResponse, getRequestBody} from '../../util/network.js';
 import {extend} from '../../../src/util/util.js';
-import window from '../../../src/util/window.js';
 import Map from '../../../src/ui/map.js';
-import {createMap} from '../../util/index.js';
+import Actor from '../../../src/util/actor.js';
 import LngLat from '../../../src/geo/lng_lat.js';
-import LngLatBounds from '../../../src/geo/lng_lat_bounds.js';
 import Tile from '../../../src/source/tile.js';
 import {OverscaledTileID} from '../../../src/source/tile_id.js';
-import {Event, ErrorEvent} from '../../../src/util/evented.js';
-import simulate from '../../util/simulate_interaction.js';
-import {fixedLngLat, fixedNum} from '../../util/fixed.js';
-import Fog from '../../../src/style/fog.js';
-import Color from '../../../src/style-spec/util/color.js';
-import {MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
+import {ErrorEvent} from '../../../src/util/evented.js';
+import simulate, {constructTouch} from '../../util/simulate_interaction.js';
+import {fixedNum} from '../../util/fixed.js';
+import {performanceEvent_} from '../../../src/util/mapbox.js';
+import {makeFQID} from '../../../src/util/fqid.js';
 
-function createStyleSource() {
+// Mock implementation of elevation
+const createElevation = (func, exaggeration) => {
     return {
-        type: "geojson",
-        data: {
-            type: "FeatureCollection",
-            features: []
+        _exaggeration: exaggeration,
+        isDataAvailableAtPoint(_) {
+            return true;
+        },
+        getAtPointOrZero(point, def) {
+            return this.getAtPoint(point, def) || 0;
+        },
+        getAtPoint(point, def) {
+            return func(point) * this.exaggeration() || def;
+        },
+        getForTilePoints() {
+            return false;
+        },
+        getMinElevationBelowMSL: () => 0,
+
+        exaggeration() {
+            return this._exaggeration;
         }
     };
-}
+};
 
-test('Map', (t) => {
-    t.beforeEach((callback) => {
-        window.useFakeXMLHttpRequest();
-        callback();
-    });
-
-    t.afterEach((callback) => {
-        window.restore();
-        callback();
-    });
-
-    t.test('constructor', (t) => {
-        const map = createMap(t, {interactive: true, style: null});
-        t.ok(map.getContainer());
-        t.equal(map.getStyle(), undefined);
-        t.ok(map.boxZoom.isEnabled());
-        t.ok(map.doubleClickZoom.isEnabled());
-        t.ok(map.dragPan.isEnabled());
-        t.ok(map.dragRotate.isEnabled());
-        t.ok(map.keyboard.isEnabled());
-        t.ok(map.scrollZoom.isEnabled());
-        t.ok(map.touchZoomRotate.isEnabled());
-        t.throws(() => {
+describe('Map', () => {
+    test('constructor', () => {
+        const map = createMap({interactive: true, style: null});
+        expect(map.getContainer()).toBeTruthy();
+        expect(map.getStyle()).toEqual(undefined);
+        expect(map.boxZoom.isEnabled()).toBeTruthy();
+        expect(map.doubleClickZoom.isEnabled()).toBeTruthy();
+        expect(map.dragPan.isEnabled()).toBeTruthy();
+        expect(map.dragRotate.isEnabled()).toBeTruthy();
+        expect(map.keyboard.isEnabled()).toBeTruthy();
+        expect(map.scrollZoom.isEnabled()).toBeTruthy();
+        expect(map.touchZoomRotate.isEnabled()).toBeTruthy();
+        expect(map._language).toBeFalsy();
+        expect(map._worldview).toBeFalsy();
+        expect(() => {
             new Map({
                 container: 'anElementIdWhichDoesNotExistInTheDocument',
                 testMode: true
             });
-        }, new Error("Container 'anElementIdWhichDoesNotExistInTheDocument' not found"), 'throws on invalid map container id');
-        t.end();
+        }).toThrowError("Container 'anElementIdWhichDoesNotExistInTheDocument' not found");
     });
 
-    t.test('warns when map container is not empty', (t) => {
+    test('default style', () => {
+        vi.spyOn(Map.prototype, '_detectMissingCSS').mockImplementation(() => {});
+
+        const stub = vi.spyOn(Map.prototype, 'setStyle').mockImplementation(() => {});
+        new Map({container: window.document.createElement('div'), testMode: false});
+
+        expect(stub).toHaveBeenCalledTimes(1);
+        expect(stub.mock.calls[0][0]).toEqual('mapbox://styles/mapbox/standard');
+    });
+
+    test('disablePerformanceMetricsCollection', async () => {
+        const fetchSpy = vi.spyOn(window, 'fetch');
+        const map = createMap({performanceMetricsCollection: false});
+        await waitFor(map, "idle");
+        map.triggerRepaint();
+        await waitFor(map, "idle");
+        expect(map._fullyLoaded).toBeTruthy();
+        expect(map._loaded).toBeTruthy();
+        expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    test('default performance metrics collection', async () => {
+        const fetchSpy = vi.spyOn(window, 'fetch').mockImplementation(async () => {
+            return new window.Response('{}');
+        });
+        const map = createMap({performanceMetricsCollection: true});
+        map._requestManager._customAccessToken = 'access-token';
+        await waitFor(map, "idle");
+        map.triggerRepaint();
+        await waitFor(map, "idle");
+        expect(map._fullyLoaded).toBeTruthy();
+        expect(map._loaded).toBeTruthy();
+        const reqBody = await getRequestBody(fetchSpy.mock.calls[0][0]);
+        const performanceEvent = JSON.parse(reqBody.slice(1, reqBody.length - 1));
+        expect(performanceEvent.event).toEqual('gljs.performance');
+        performanceEvent_.pendingRequest = null;
+    });
+
+    test('performance metrics event stores explicit projection', async () => {
+        const fetchSpy = vi.spyOn(window, 'fetch').mockImplementation(async () => {
+            return new window.Response('{}');
+        });
+        const map = createMap({performanceMetricsCollection: true, projection: 'globe', zoom: 20});
+        map._requestManager._customAccessToken = 'access-token';
+        await waitFor(map, "idle");
+        map.triggerRepaint();
+        await waitFor(map, "idle");
+        expect(map._fullyLoaded).toBeTruthy();
+        expect(map._loaded).toBeTruthy();
+        const reqBody = await getRequestBody(fetchSpy.mock.calls[0][0]);
+        const performanceEvent = JSON.parse(reqBody.slice(1, reqBody.length - 1));
+        const checkMetric = (data, metricName, metricValue) => {
+            for (const metric of data) {
+                if (metric.name === metricName) {
+                    expect(metric.value).toEqual(metricValue);
+                    return;
+                }
+            }
+            assert(false);
+        };
+        checkMetric(performanceEvent.attributes, 'projection', 'globe');
+        performanceEvent_.pendingRequest = null;
+    });
+
+    test('warns when map container is not empty', () => {
         const container = window.document.createElement('div');
         container.textContent = 'Hello World';
-        const stub = t.stub(console, 'warn');
+        const stub = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-        createMap(t, {container, testMode: true});
+        createMap({container, testMode: true});
 
-        t.ok(stub.calledOnce);
-
-        t.end();
+        expect(stub).toHaveBeenCalledTimes(1);
     });
 
-    t.test('bad map-specific token breaks map', (t) => {
+    test('bad map-specific token breaks map', () => {
         const container = window.document.createElement('div');
         Object.defineProperty(container, 'offsetWidth', {value: 512});
         Object.defineProperty(container, 'offsetHeight', {value: 512});
-        createMap(t, {accessToken:'notAToken'});
-        t.error();
-        t.end();
+        createMap({accessToken:'notAToken'});
     });
 
-    t.test('initial bounds in constructor options', (t) => {
-        const container = window.document.createElement('div');
-        Object.defineProperty(container, 'offsetWidth', {value: 512});
-        Object.defineProperty(container, 'offsetHeight', {value: 512});
+    describe('disables handlers', () => {
+        test('disables all handlers', () => {
+            const map = createMap({interactive: false});
 
-        const bounds = [[-133, 16], [-68, 50]];
-        const map = createMap(t, {container, bounds});
-
-        t.deepEqual(fixedLngLat(map.getCenter(), 4), {lng: -100.5, lat: 34.7171});
-        t.equal(fixedNum(map.getZoom(), 3), 2.113);
-
-        t.end();
-    });
-
-    t.test('initial bounds options in constructor options', (t) => {
-        const bounds = [[-133, 16], [-68, 50]];
-
-        const map = (fitBoundsOptions, skipCSSStub) => {
-            const container = window.document.createElement('div');
-            Object.defineProperty(container, 'offsetWidth', {value: 512});
-            Object.defineProperty(container, 'offsetHeight', {value: 512});
-            return createMap(t, {skipCSSStub, container, bounds, fitBoundsOptions});
-        };
-
-        const unpadded = map(undefined, false);
-        const padded = map({padding: 100}, true);
-
-        t.ok(unpadded.getZoom() > padded.getZoom());
-
-        t.end();
-    });
-
-    t.test('disables handlers', (t) => {
-        t.test('disables all handlers', (t) => {
-            const map = createMap(t, {interactive: false});
-
-            t.notOk(map.boxZoom.isEnabled());
-            t.notOk(map.doubleClickZoom.isEnabled());
-            t.notOk(map.dragPan.isEnabled());
-            t.notOk(map.dragRotate.isEnabled());
-            t.notOk(map.keyboard.isEnabled());
-            t.notOk(map.scrollZoom.isEnabled());
-            t.notOk(map.touchZoomRotate.isEnabled());
-
-            t.end();
+            expect(map.boxZoom.isEnabled()).toBeFalsy();
+            expect(map.doubleClickZoom.isEnabled()).toBeFalsy();
+            expect(map.dragPan.isEnabled()).toBeFalsy();
+            expect(map.dragRotate.isEnabled()).toBeFalsy();
+            expect(map.keyboard.isEnabled()).toBeFalsy();
+            expect(map.scrollZoom.isEnabled()).toBeFalsy();
+            expect(map.touchZoomRotate.isEnabled()).toBeFalsy();
         });
 
         const handlerNames = [
@@ -133,574 +165,109 @@ test('Map', (t) => {
             'touchZoomRotate'
         ];
         handlerNames.forEach((handlerName) => {
-            t.test(`disables "${handlerName}" handler`, (t) => {
+            test(`disables "${handlerName}" handler`, () => {
                 const options = {};
                 options[handlerName] = false;
-                const map = createMap(t, options);
+                const map = createMap(options);
 
-                t.notOk(map[handlerName].isEnabled());
-
-                t.end();
+                expect(map[handlerName].isEnabled()).toBeFalsy();
             });
         });
-
-        t.end();
     });
 
-    t.test('emits load event after a style is set', (t) => {
-        t.stub(Map.prototype, '_detectMissingCSS');
-        t.stub(Map.prototype, '_authenticate');
-        const map = new Map({container: window.document.createElement('div'), testMode: true});
-
-        map.on('load', fail);
-
-        setTimeout(() => {
-            map.off('load', fail);
-            map.on('load', pass);
-            map.setStyle(createStyle());
-        }, 1);
-
-        function fail() { t.ok(false); }
-        function pass() { t.end(); }
-    });
-
-    t.test('#setStyle', (t) => {
-        t.test('returns self', (t) => {
-            t.stub(Map.prototype, '_detectMissingCSS');
-            const map = new Map({container: window.document.createElement('div'), testMode: true});
-            t.equal(map.setStyle({
-                version: 8,
-                sources: {},
-                layers: []
-            }), map);
-            t.end();
-        });
-
-        t.test('sets up event forwarding', (t) => {
-            createMap(t, {}, (error, map) => {
-                t.error(error);
-
-                const events = [];
-                function recordEvent(event) { events.push(event.type); }
-
-                map.on('error', recordEvent);
-                map.on('data', recordEvent);
-                map.on('dataloading', recordEvent);
-
-                map.style.fire(new Event('error'));
-                map.style.fire(new Event('data'));
-                map.style.fire(new Event('dataloading'));
-
-                t.deepEqual(events, [
-                    'error',
-                    'data',
-                    'dataloading',
-                ]);
-
-                t.end();
-            });
-        });
-
-        t.test('fires *data and *dataloading events', (t) => {
-            createMap(t, {}, (error, map) => {
-                t.error(error);
-
-                const events = [];
-                function recordEvent(event) { events.push(event.type); }
-
-                map.on('styledata', recordEvent);
-                map.on('styledataloading', recordEvent);
-                map.on('sourcedata', recordEvent);
-                map.on('sourcedataloading', recordEvent);
-                map.on('tiledata', recordEvent);
-                map.on('tiledataloading', recordEvent);
-
-                map.style.fire(new Event('data', {dataType: 'style'}));
-                map.style.fire(new Event('dataloading', {dataType: 'style'}));
-                map.style.fire(new Event('data', {dataType: 'source'}));
-                map.style.fire(new Event('dataloading', {dataType: 'source'}));
-                map.style.fire(new Event('data', {dataType: 'tile'}));
-                map.style.fire(new Event('dataloading', {dataType: 'tile'}));
-
-                t.deepEqual(events, [
-                    'styledata',
-                    'styledataloading',
-                    'sourcedata',
-                    'sourcedataloading',
-                    'tiledata',
-                    'tiledataloading'
-                ]);
-
-                t.end();
-            });
-        });
-
-        t.test('can be called more than once', (t) => {
-            const map = createMap(t);
-
-            map.setStyle({version: 8, sources: {}, layers: []}, {diff: false});
-            map.setStyle({version: 8, sources: {}, layers: []}, {diff: false});
-
-            t.end();
-        });
-
-        t.test('style transform overrides unmodified map transform', (t) => {
-            t.stub(Map.prototype, '_detectMissingCSS');
-            t.stub(Map.prototype, '_authenticate');
-            const map = new Map({container: window.document.createElement('div'), testMode: true});
-
-            map.transform.setMaxBounds(LngLatBounds.convert([-120, -60, 140, 80]));
-            map.transform.resize(600, 400);
-            t.ok(map.transform.zoom, 0.698303973797101, 'map transform is constrained');
-            t.ok(map.transform.unmodified, 'map transform is not modified');
-            map.setStyle(createStyle());
-            map.on('style.load', () => {
-                t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({lng: -73.9749, lat: 40.7736}));
-                t.equal(fixedNum(map.transform.zoom), 12.5);
-                t.equal(fixedNum(map.transform.bearing), 29);
-                t.equal(fixedNum(map.transform.pitch), 50);
-                t.end();
-            });
-        });
-
-        t.test('style transform does not override map transform modified via options', (t) => {
-            t.stub(Map.prototype, '_detectMissingCSS');
-            t.stub(Map.prototype, '_authenticate');
-            const map = new Map({container: window.document.createElement('div'), zoom: 10, center: [-77.0186, 38.8888], testMode: true});
-            t.notOk(map.transform.unmodified, 'map transform is modified by options');
-            map.setStyle(createStyle());
-            map.on('style.load', () => {
-                t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({lng: -77.0186, lat: 38.8888}));
-                t.equal(fixedNum(map.transform.zoom), 10);
-                t.equal(fixedNum(map.transform.bearing), 0);
-                t.equal(fixedNum(map.transform.pitch), 0);
-                t.end();
-            });
-        });
-
-        t.test('style transform does not override map transform modified via setters', (t) => {
-            t.stub(Map.prototype, '_detectMissingCSS');
-            t.stub(Map.prototype, '_authenticate');
-            const map = new Map({container: window.document.createElement('div'), testMode: true});
-            t.ok(map.transform.unmodified);
-            map.setZoom(10);
-            map.setCenter([-77.0186, 38.8888]);
-            t.notOk(map.transform.unmodified, 'map transform is modified via setters');
-            map.setStyle(createStyle());
-            map.on('style.load', () => {
-                t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({lng: -77.0186, lat: 38.8888}));
-                t.equal(fixedNum(map.transform.zoom), 10);
-                t.equal(fixedNum(map.transform.bearing), 0);
-                t.equal(fixedNum(map.transform.pitch), 0);
-                t.end();
-            });
-        });
-
-        t.test('passing null removes style', (t) => {
-            const map = createMap(t);
-            const style = map.style;
-            t.ok(style);
-            t.spy(style, '_remove');
-            map.setStyle(null);
-            t.equal(style._remove.callCount, 1);
-            t.end();
-        });
-
-        t.test('Setting globe projection as part of the style enables draping but does not enable terrain', (t) => {
-            const map = createMap(t, {style: createStyle(), projection: 'globe'});
-            t.equal(map.getProjection().name, 'globe');
-            const initStyleObj = map.style;
-            t.spy(initStyleObj, 'setTerrain');
-            map.on('style.load', () => {
-                t.equal(initStyleObj.setTerrain.callCount, 1);
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-                t.end();
-            });
-        });
-
-        t.test('Setting globe projection at low zoom enables draping but does not enable terrain', (t) => {
-            const map = createMap(t, {style: createStyle()});
-            t.equal(map.getProjection().name, 'mercator');
-            const initStyleObj = map.style;
-            t.spy(initStyleObj, 'setTerrain');
-            map.on('style.load', () => {
-                map.setZoom(3); // Below threshold for Mercator transition
-                map.setProjection('globe');
-                t.equal(initStyleObj.setTerrain.callCount, 1);
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-                map.setZoom(12); // Above threshold for Mercator transition
-                map.once('render', () => {
-                    t.notOk(map.style.terrain);
-                    t.end();
-                });
-            });
-        });
-
-        t.test('Setting globe projection at high zoom does not enable draping', (t) => {
-            const map = createMap(t, {style: createStyle()});
-            t.equal(map.getProjection().name, 'mercator');
-            const initStyleObj = map.style;
-            t.spy(initStyleObj, 'setTerrain');
-            map.on('style.load', () => {
-                map.setZoom(12); // Above threshold for Mercator transition
-                map.setProjection('globe');
-                t.equal(initStyleObj.setTerrain.callCount, 0);
-                t.notOk(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-                map.setZoom(3); // Below threshold for Mercator transition
-                map.once('render', () => {
-                    t.equal(initStyleObj.setTerrain.callCount, 1);
-                    t.ok(map.style.terrain);
-                    t.equal(map.getTerrain(), null);
-                    t.end();
-                });
-            });
-        });
-
-        t.test('Setting globe projection retains style.terrain when terrain is set to null', (t) => {
-            const map = createMap(t, {style: createStyle(), projection: 'globe'});
-            t.equal(map.getProjection().name, 'globe');
-            const initStyleObj = map.style;
-            t.spy(initStyleObj, 'setTerrain');
-            map.on('style.load', () => {
-                map.setTerrain(null);
-                t.equal(initStyleObj.setTerrain.callCount, 2);
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-                t.end();
-            });
-        });
-
-        t.test('Setting globe and terrain as part of the style retains the terrain properties', (t) => {
+    describe('#is_Loaded', () => {
+        test('Map#isSourceLoaded', async () => {
             const style = createStyle();
-            style['projection'] = {
-                'name': 'globe'
-            };
-            style['sources']['mapbox-dem'] = {
-                'type': 'raster-dem',
-                'tiles': ['http://example.com/{z}/{x}/{y}.png']
-            };
-            style['terrain'] = {
-                'source': 'mapbox-dem'
-            };
-            const map = createMap(t, {style});
-            map.on('style.load', () => {
-                t.equal(map.getProjection().name, 'globe');
-                t.ok(map.style.terrain);
-                t.deepEqual(map.getTerrain(), style['terrain']);
+            const map = createMap({style});
 
-                t.end();
-            });
-        });
-
-        t.test('https://github.com/mapbox/mapbox-gl-js/issues/11352', (t) => {
-            const styleSheet = new window.CSSStyleSheet();
-            styleSheet.insertRule('.mapboxgl-canary { background-color: rgb(250, 128, 114); }', 0);
-            window.document.styleSheets[0] = styleSheet;
-            window.document.styleSheets.length = 1;
-            const style = createStyle();
-            const div = window.document.createElement('div');
-            let map = new Map({style, container: div, testMode: true});
-            map.setZoom(3);
-            map.on('load', () => {
-                map.setProjection('globe');
-                t.equal(map.getProjection().name, 'globe');
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-                t.ok(style.terrain);
-                t.equal(style.terrain.source, '');
-                map.remove();
-
-                map = new Map({style, container: div, testMode: true});
-                t.equal(map.getProjection().name, 'mercator');
-                t.equal(map.getTerrain(), null);
-                t.equal(style.terrain, undefined);
-                t.end();
-            });
-        });
-
-        t.test('https://github.com/mapbox/mapbox-gl-js/issues/11367', (t) => {
-            const style1 = createStyle();
-            const map = createMap(t, {style1});
-            map.on('style.load', () => {
-                map.setProjection('globe');
-                t.equal(map.getProjection().name, 'globe');
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-
-                const style2 = createStyle();
-                map.setStyle(style2);
-                t.equal(map.getProjection().name, 'globe');
-                t.ok(map.style.terrain);
-                t.equal(map.getTerrain(), null);
-
-                t.end();
-            });
-        });
-
-        t.test('updating terrain triggers style diffing using setTerrain operation', (t) => {
-            t.test('removing terrain', (t) => {
-                const style = createStyle();
-                style['sources']["mapbox-dem"] = {
-                    "type": "raster-dem",
-                    "tiles": ['http://example.com/{z}/{x}/{y}.png'],
-                    "tileSize": 256,
-                    "maxzoom": 14
-                };
-                style['terrain'] = {
-                    "source": "mapbox-dem"
-                };
-                const map = createMap(t, {style});
-                const initStyleObj = map.style;
-                t.spy(initStyleObj, 'setTerrain');
-                t.spy(initStyleObj, 'setState');
-                map.on('style.load', () => {
-                    map.setStyle(createStyle());
-                    t.equal(initStyleObj, map.style);
-                    t.equal(initStyleObj.setState.callCount, 1);
-                    t.equal(initStyleObj.setTerrain.callCount, 1);
-                    t.ok(map.style.terrain == null);
-                    t.end();
-                });
-
-            });
-
-            t.test('adding terrain', (t) => {
-                const style = createStyle();
-                const map = createMap(t, {style});
-                const initStyleObj = map.style;
-                t.spy(initStyleObj, 'setTerrain');
-                t.spy(initStyleObj, 'setState');
-                map.on('style.load', () => {
-                    const styleWithTerrain = JSON.parse(JSON.stringify(style));
-
-                    styleWithTerrain['sources']["mapbox-dem"] = {
-                        "type": "raster-dem",
-                        "tiles": ['http://example.com/{z}/{x}/{y}.png'],
-                        "tileSize": 256,
-                        "maxzoom": 14
-                    };
-                    styleWithTerrain['terrain'] = {
-                        "source": "mapbox-dem"
-                    };
-                    map.setStyle(styleWithTerrain);
-                    t.equal(initStyleObj, map.style);
-                    t.equal(initStyleObj.setState.callCount, 1);
-                    t.equal(initStyleObj.setTerrain.callCount, 1);
-                    t.ok(map.style.terrain);
-                    t.end();
-                });
-            });
-
-            t.end();
-        });
-
-        t.test('updating fog results in correct transitions', (t) => {
-            t.test('sets fog with transition', (t) => {
-                const fog = new Fog({
-                    'color': 'white',
-                    'range': [0, 1],
-                    'horizon-blend': 0.0
-                });
-                fog.set({'color-transition': {duration: 3000}});
-
-                fog.set({'color': 'red'});
-                fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
-                t.deepEqual(fog.properties.get('color'), new Color(1, 0.5, 0.5, 1));
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
-                t.deepEqual(fog.properties.get('color'), new Color(1, 0.0, 0.0, 1));
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
-                t.deepEqual(fog.properties.get('color'), new Color(1, 0.0, 0.0, 1));
-
-                fog.set({'range-transition': {duration: 3000}});
-                fog.set({'range': [2, 5]});
-                fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
-                t.deepEqual(fog.properties.get('range')[0], 1);
-                t.deepEqual(fog.properties.get('range')[1], 3);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
-                t.deepEqual(fog.properties.get('range')[0], 2);
-                t.deepEqual(fog.properties.get('range')[1], 5);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
-                t.deepEqual(fog.properties.get('range')[0], 2);
-                t.deepEqual(fog.properties.get('range')[1], 5);
-
-                fog.set({'horizon-blend-transition': {duration: 3000}});
-                fog.set({'horizon-blend': 0.5});
-                fog.updateTransitions({transition: true}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 1500});
-                t.deepEqual(fog.properties.get('horizon-blend'), 0.25);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3000});
-                t.deepEqual(fog.properties.get('horizon-blend'), 0.5);
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 3500});
-                t.deepEqual(fog.properties.get('horizon-blend'), 0.5);
-
-                t.end();
-            });
-
-            t.test('fog respects validation option', (t) => {
-                const fog = new Fog({});
-                const fogSpy = t.spy(fog, '_validate');
-
-                fog.set({color: [444]}, {validate: false});
-                fog.updateTransitions({transition: false}, {});
-                fog.recalculate({zoom: 16, zoomHistory: {}, now: 10});
-
-                t.ok(fogSpy.calledOnce);
-                t.deepEqual(fog.properties.get('color'), [444]);
-                t.end();
-            });
-            t.end();
-        });
-
-        t.test('updating fog triggers style diffing using setFog operation', (t) => {
-            t.test('removing fog', (t) => {
-                const style = createStyle();
-                style['fog'] = {
-                    "range": [2, 5],
-                    "color": "white"
-                };
-                const map = createMap(t, {style});
-                const initStyleObj = map.style;
-                t.spy(initStyleObj, 'setFog');
-                t.spy(initStyleObj, 'setState');
-                map.on('style.load', () => {
-                    map.setStyle(createStyle());
-                    t.equal(initStyleObj, map.style);
-                    t.equal(initStyleObj.setState.callCount, 1);
-                    t.equal(initStyleObj.setFog.callCount, 1);
-                    t.ok(map.style.fog == null);
-                    t.end();
-                });
-            });
-
-            t.test('adding fog', (t) => {
-                const style = createStyle();
-                const map = createMap(t, {style});
-                const initStyleObj = map.style;
-                t.spy(initStyleObj, 'setFog');
-                t.spy(initStyleObj, 'setState');
-                map.on('style.load', () => {
-                    const styleWithFog = JSON.parse(JSON.stringify(style));
-
-                    styleWithFog['fog'] = {
-                        "range": [2, 5],
-                        "color": "white"
-                    };
-                    map.setStyle(styleWithFog);
-                    t.equal(initStyleObj, map.style);
-                    t.equal(initStyleObj.setState.callCount, 1);
-                    t.equal(initStyleObj.setFog.callCount, 1);
-                    t.ok(map.style.fog);
-                    t.end();
-                });
-            });
-
-            t.end();
-        });
-
-        t.end();
-    });
-
-    t.test('#is_Loaded', (t) => {
-
-        t.test('Map#isSourceLoaded', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                map.on('data', (e) => {
+            await waitFor(map, "load");
+            await new Promise(resolve => {
+                map.on("data", e => {
                     if (e.dataType === 'source' && e.sourceDataType === 'metadata') {
-                        t.equal(map.isSourceLoaded('geojson'), true, 'true when loaded');
-                        t.end();
+                        expect(map.isSourceLoaded('geojson')).toEqual(true);
+                        resolve();
                     }
                 });
                 map.addSource('geojson', createStyleSource());
-                t.equal(map.isSourceLoaded('geojson'), false, 'false before loaded');
+                expect(map.isSourceLoaded('geojson')).toEqual(false);
             });
         });
 
-        t.test('Map#isStyleLoaded', (t) => {
+        test('Map#isStyleLoaded', async () => {
             const style = createStyle();
-            const map = createMap(t, {style});
+            const map = createMap({style});
 
-            t.equal(map.isStyleLoaded(), false, 'false before style has loaded');
-            map.on('load', () => {
-                t.equal(map.isStyleLoaded(), true, 'true when style is loaded');
-                t.end();
-            });
+            expect(map.isStyleLoaded()).toEqual(false);
+            await waitFor(map, "load");
+            expect(map.isStyleLoaded()).toEqual(true);
         });
 
-        t.test('Map#areTilesLoaded', (t) => {
+        test('Map#areTilesLoaded', async () => {
             const style = createStyle();
-            const map = createMap(t, {style});
-            t.equal(map.areTilesLoaded(), true, 'returns true if there are no sources on the map');
-            map.on('load', () => {
-                const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
-                map.addSource('geojson', createStyleSource());
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
-                t.equal(map.areTilesLoaded(), false, 'returns false if tiles are loading');
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key].state = 'loaded';
-                t.equal(map.areTilesLoaded(), true, 'returns true if tiles are loaded');
-                t.end();
-            });
+            const map = createMap({style});
+            expect(map.areTilesLoaded()).toEqual(true);
+            await waitFor(map, "load");
+            const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
+            map.addSource('geojson', createStyleSource());
+            map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
+            expect(map.areTilesLoaded()).toEqual(false);
+            map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key].state = 'loaded';
+            expect(map.areTilesLoaded()).toEqual(true);
         });
-
-        t.end();
     });
 
-    t.test('#isSourceLoaded', (t) => {
-
-        t.afterEach((callback) => {
-            Map.prototype._detectMissingCSS.restore();
-            callback();
+    describe('#isSourceLoaded', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
         });
 
-        function setupIsSourceLoaded(tileState, callback) {
-            const map = createMap(t);
-            map.on('load', () => {
-                map.addSource('geojson', createStyleSource());
-                const source = map.getSource('geojson');
-                const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key].state = tileState;
-                callback(map, source);
-            });
+        async function setupIsSourceLoaded(tileState) {
+            const map = createMap();
+            await waitFor(map, "load");
+            map.addSource('geojson', createStyleSource());
+            const source = map.getSource('geojson');
+            const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
+            map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
+            map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key].state = tileState;
+
+            return {map, source};
         }
 
-        t.test('e.isSourceLoaded should return `false` if source tiles are not loaded', (t) => {
-            setupIsSourceLoaded('loading', (map) => {
-                map.on('data', (e) => {
+        test('e.isSourceLoaded should return `false` if source tiles are not loaded', async () => {
+            const {map} = await setupIsSourceLoaded('loading');
+
+            await new Promise(resolve => {
+                map.on("data", (e) => {
                     if (e.sourceDataType === 'metadata') {
-                        t.equal(e.isSourceLoaded, false, 'false when source is not loaded');
-                        t.end();
+                        expect(e.isSourceLoaded).toEqual(false);
+                        resolve();
                     }
                 });
             });
         });
 
-        t.test('e.isSourceLoaded should return `true` if source tiles are loaded', (t) => {
-            setupIsSourceLoaded('loaded', (map) => {
-                map.on('data', (e) => {
+        test('e.isSourceLoaded should return `true` if source tiles are loaded', async () => {
+            const {map} = await setupIsSourceLoaded('loaded');
+            await new Promise(resolve => {
+                map.on("data", (e) => {
                     if (e.sourceDataType === 'metadata') {
-                        t.equal(e.isSourceLoaded, true, 'true when source is loaded');
-                        t.end();
+                        expect(e.isSourceLoaded).toEqual(true);
+                        resolve();
                     }
                 });
             });
         });
 
-        t.test('e.isSourceLoaded should return `true` if source tiles are loaded after calling `setData`', (t) => {
-            setupIsSourceLoaded('loaded', (map, source) => {
-                map.on('data', (e) => {
+        test('e.isSourceLoaded should return `true` if source tiles are loaded after calling `setData`', async () => {
+            const {map, source} = await setupIsSourceLoaded('loaded');
+            await new Promise(resolve => {
+                map.on("data", (e) => {
                     if (source._data.features[0].properties.name === 'Null Island' && e.sourceDataType === 'metadata') {
-                        t.equal(e.isSourceLoaded, true, 'true when source is loaded');
-                        t.end();
+                        expect(e.isSourceLoaded).toEqual(true);
+                        resolve();
                     }
                 });
+
                 source.setData({
                     'type': 'FeatureCollection',
                     'features': [{
@@ -710,195 +277,22 @@ test('Map', (t) => {
                 });
             });
         });
-
-        t.end();
     });
 
-    t.test('#getStyle', (t) => {
-        t.test('returns the style', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                t.deepEqual(map.getStyle(), style);
-                t.end();
-            });
+    test('#moveLayer', async () => {
+        vi.spyOn(Actor.prototype, 'send').mockImplementation(() => {});
+        vi.spyOn(window, 'fetch').mockImplementation(async () => {
+            const res = await getPNGResponse();
+            return new window.Response(res);
         });
-
-        t.test('returns the style with added sources', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                map.addSource('geojson', createStyleSource());
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    sources: {geojson: createStyleSource()}
-                }));
-                t.end();
-            });
-        });
-
-        t.test('returns the style with added terrain', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                const terrain = {source: "terrain-source-id", exaggeration: 2};
-                map.addSource('terrain-source-id', {
-                    "type": "raster-dem",
-                    "tiles": [
-                        "local://tiles/{z}-{x}-{y}.terrain.png"
-                    ]
-                });
-                map.setTerrain(terrain);
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    terrain, 'sources': map.getStyle().sources
-                }));
-                t.end();
-            });
-        });
-
-        t.test('returns the style with added fog', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                const fog = {
-                    "range": [2, 5],
-                    "color": "blue"
-                };
-                map.setFog(fog);
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    fog
-                }));
-                t.ok(map.getFog());
-                t.end();
-            });
-        });
-
-        t.test('returns the style with removed fog', (t) => {
-            const style = createStyle();
-            style['fog'] = {
-                "range": [2, 5],
-                "color": "white"
-            };
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                map.setFog(null);
-                t.deepEqual(map.getStyle(), createStyle());
-                t.equal(map.getFog(), null);
-                t.end();
-            });
-        });
-
-        t.test('fires an error on checking if non-existant source is loaded', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /There is no source with ID/);
-                    t.end();
-                });
-                map.isSourceLoaded('geojson');
-            });
-        });
-
-        t.test('returns the style with added layers', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-            const layer = {
-                id: 'background',
-                type: 'background'
-            };
-
-            map.on('load', () => {
-                map.addLayer(layer);
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    layers: [layer]
-                }));
-                t.end();
-            });
-        });
-
-        t.test('a layer can be added even if a map is created without a style', (t) => {
-            const map = createMap(t, {deleteStyle: true});
-            const layer = {
-                id: 'background',
-                type: 'background'
-            };
-            map.addLayer(layer);
-            t.end();
-        });
-
-        t.test('a source can be added even if a map is created without a style', (t) => {
-            const map = createMap(t, {deleteStyle: true});
-            const source = createStyleSource();
-            map.addSource('fill', source);
-            t.end();
-        });
-
-        t.test('returns the style with added source and layer', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-            const source = createStyleSource();
-            const layer = {
-                id: 'fill',
-                type: 'fill',
-                source: 'fill'
-            };
-
-            map.on('load', () => {
-                map.addSource('fill', source);
-                map.addLayer(layer);
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    sources: {fill: source},
-                    layers: [layer]
-                }));
-                t.end();
-            });
-        });
-
-        t.test('creates a new Style if diff fails', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-            t.stub(map.style, 'setState').callsFake(() => {
-                throw new Error('Dummy error');
-            });
-            t.stub(console, 'warn');
-
-            const previousStyle = map.style;
-            map.setStyle(style);
-            t.ok(map.style && map.style !== previousStyle);
-            t.end();
-        });
-
-        t.test('creates a new Style if diff option is false', (t) => {
-            const style = createStyle();
-            const map = createMap(t, {style});
-            t.stub(map.style, 'setState').callsFake(() => {
-                t.fail();
-            });
-
-            const previousStyle = map.style;
-            map.setStyle(style, {diff: false});
-            t.ok(map.style && map.style !== previousStyle);
-            t.end();
-        });
-
-        t.end();
-    });
-
-    t.test('#moveLayer', (t) => {
-        const map = createMap(t, {
+        const map = createMap({
             style: extend(createStyle(), {
                 sources: {
                     mapbox: {
                         type: 'vector',
                         minzoom: 1,
                         maxzoom: 10,
-                        tiles: ['http://example.com/{z}/{x}/{y}.png']
+                        tiles: ['/test/util/fixtures/{z}/{x}/{y}.pbf']
                     }
                 },
                 layers: [{
@@ -914,48 +308,45 @@ test('Map', (t) => {
                 }]
             })
         });
-
-        map.once('render', () => {
-            map.moveLayer('layerId1', 'layerId2');
-            t.equal(map.getLayer('layerId1').id, 'layerId1');
-            t.equal(map.getLayer('layerId2').id, 'layerId2');
-            t.end();
-        });
+        await waitFor(map, "render");
+        map.moveLayer('layerId1', 'layerId2');
+        expect(map.getLayer('layerId1').id).toEqual('layerId1');
+        expect(map.getLayer('layerId2').id).toEqual('layerId2');
     });
 
-    t.test('#getLayer', (t) => {
+    test('#getLayer', async () => {
         const layer = {
             id: 'layerId',
             type: 'circle',
             source: 'mapbox',
             'source-layer': 'sourceLayer'
         };
-        const map = createMap(t, {
+
+        const map = createMap({
             style: extend(createStyle(), {
                 sources: {
                     mapbox: {
-                        type: 'vector',
-                        minzoom: 1,
-                        maxzoom: 10,
-                        tiles: ['http://example.com/{z}/{x}/{y}.png']
+                        type: "geojson",
+                        data: {
+                            "type": "FeatureCollection",
+                            "features": []
+                        },
                     }
                 },
                 layers: [layer]
             })
         });
 
-        map.once('render', () => {
-            const mapLayer = map.getLayer('layerId');
-            t.equal(mapLayer.id, layer.id);
-            t.equal(mapLayer.type, layer.type);
-            t.equal(mapLayer.source, layer.source);
-            t.end();
-        });
+        await waitFor(map, "render");
+        const mapLayer = map.getLayer('layerId');
+        expect(mapLayer.id).toEqual(layer.id);
+        expect(mapLayer.type).toEqual(layer.type);
+        expect(mapLayer.source).toEqual(layer.source);
     });
 
-    t.test('#resize', (t) => {
-        t.test('sets width and height from container clients', (t) => {
-            const map = createMap(t),
+    describe('#resize', () => {
+        test('sets width and height from container clients', () => {
+            const map = createMap(),
                 container = map.getContainer();
 
             Object.defineProperty(container, 'getBoundingClientRect',
@@ -963,43 +354,37 @@ test('Map', (t) => {
 
             map.resize();
 
-            t.equal(map.transform.width, 250);
-            t.equal(map.transform.height, 250);
-
-            t.end();
+            expect(map.transform.width).toEqual(250);
+            expect(map.transform.height).toEqual(250);
         });
 
-        t.test('does nothing if container size is the same', (t) => {
-            const map = createMap(t);
+        test('does nothing if container size is the same', () => {
+            const map = createMap();
 
-            t.spy(map.transform, 'resize');
-            t.spy(map.painter, 'resize');
+            vi.spyOn(map.transform, 'resize');
+            vi.spyOn(map.painter, 'resize');
 
             map.resize();
 
-            t.notOk(map.transform.resize.called);
-            t.notOk(map.painter.resize.called);
-
-            t.end();
+            expect(map.transform.resize.called).toBeFalsy();
+            expect(map.painter.resize.called).toBeFalsy();
         });
 
-        t.test('does not call stop on resize', (t) => {
-            const map = createMap(t);
+        test('does not call stop on resize', () => {
+            const map = createMap();
 
             Object.defineProperty(map.getContainer(), 'getBoundingClientRect',
                 {value: () => ({height: 250, width: 250})});
 
-            t.spy(map, 'stop');
+            vi.spyOn(map, 'stop');
 
             map.resize();
 
-            t.notOk(map.stop.called);
-
-            t.end();
+            expect(map.stop.called).toBeFalsy();
         });
 
-        t.test('fires movestart, move, resize, and moveend events', (t) => {
-            const map = createMap(t),
+        test('fires movestart, move, resize, and moveend events', async () => {
+            const map = createMap(),
                 events = [];
 
             Object.defineProperty(map.getContainer(), 'getBoundingClientRect',
@@ -1012,1893 +397,468 @@ test('Map', (t) => {
             });
 
             map.resize();
-            t.deepEqual(events, ['movestart', 'move', 'resize', 'moveend']);
-
-            t.end();
+            expect(events).toEqual(['movestart', 'move', 'resize', 'moveend']);
         });
 
-        t.test('listen to window resize event', (t) => {
+        test('listen to window resize event', () => {
             window.addEventListener = function(type) {
                 if (type === 'resize') {
                     //restore empty function not to mess with other tests
                     window.addEventListener = function() {};
-
-                    t.end();
                 }
             };
 
-            createMap(t);
+            createMap();
         });
 
-        t.test('do not resize if trackResize is false', (t) => {
-            const map = createMap(t, {trackResize: false});
+        test('do not resize if trackResize is false', () => {
+            const map = createMap({trackResize: false});
 
-            t.spy(map, 'stop');
-            t.spy(map, '_update');
-            t.spy(map, 'resize');
+            vi.spyOn(map, 'stop');
+            vi.spyOn(map, '_update');
+            vi.spyOn(map, 'resize');
 
             map._onWindowResize();
 
-            t.notOk(map.stop.called);
-            t.notOk(map._update.called);
-            t.notOk(map.resize.called);
-
-            t.end();
+            expect(map.stop.called).toBeFalsy();
+            expect(map._update.called).toBeFalsy();
+            expect(map.resize.called).toBeFalsy();
         });
 
-        t.test('do resize if trackResize is true (default)', (t) => {
-            const map = createMap(t);
+        test('do resize if trackResize is true (default)', () => {
+            const map = createMap();
 
-            t.spy(map, '_update');
-            t.spy(map, 'resize');
+            vi.spyOn(map, '_update');
+            vi.spyOn(map, 'resize');
 
             map._onWindowResize();
 
-            t.ok(map._update.called);
-            t.ok(map.resize.called);
-
-            t.end();
+            expect(map._update).toHaveBeenCalled();
+            expect(map.resize).toHaveBeenCalled();
         });
-
-        t.end();
     });
 
-    t.test('#getBounds', (t) => {
-        const map = createMap(t, {zoom: 0});
-        t.deepEqual(parseFloat(map.getBounds().getCenter().lng.toFixed(10)), 0, 'getBounds');
-        t.deepEqual(parseFloat(map.getBounds().getCenter().lat.toFixed(10)), 0, 'getBounds');
-
-        t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
-            [ -70.31249999999976, -57.326521225216965 ],
-            [ 70.31249999999977, 57.32652122521695 ] ]));
-
-        t.test('rotated bounds', (t) => {
-            const map = createMap(t, {zoom: 1, bearing: 45, skipCSSStub: true});
-            t.deepEqual(
-                toFixed([[-49.718445552178764, -44.44541580601936], [49.7184455522, 44.445415806019355]]),
-                toFixed(map.getBounds().toArray())
-            );
-
-            map.setBearing(135);
-            t.deepEqual(
-                toFixed([[-49.718445552178764, -44.44541580601936], [49.7184455522, 44.445415806019355]]),
-                toFixed(map.getBounds().toArray())
-            );
-
-            t.end();
+    describe('#getRenderWorldCopies', () => {
+        test('initially false', () => {
+            const map = createMap({renderWorldCopies: false});
+            expect(map.getRenderWorldCopies()).toEqual(false);
         });
 
-        t.test('padded bounds', (t) => {
-            const map = createMap(t, {zoom: 1, bearing: 45, skipCSSStub: true});
-
-            map.setPadding({
-                left: 100,
-                right: 10,
-                top: 10,
-                bottom: 10
-            });
-
-            t.deepEqual(
-                toFixed([[-33.5599507477, -31.7907658998], [33.5599507477, 31.7907658998]]),
-                toFixed(map.getBounds().toArray())
-            );
-
-            t.end();
+        test('initially true', () => {
+            const map = createMap({renderWorldCopies: true});
+            expect(map.getRenderWorldCopies()).toEqual(true);
         });
-
-        t.test('bounds cut off at poles (#10261)', (t) => {
-            const map = createMap(t,
-                {zoom: 2, center: [0, 90], pitch: 80, skipCSSStub: true});
-            const bounds = map.getBounds();
-            t.same(bounds.getNorth().toFixed(6), MAX_MERCATOR_LATITUDE);
-            t.same(
-                toFixed(bounds.toArray()),
-                toFixed([[ -23.3484820899, 77.6464759596 ], [ 23.3484820899, 85.0511287798 ]])
-            );
-
-            map.setBearing(180);
-            map.setCenter({lng: 0, lat: -90});
-
-            const sBounds = map.getBounds();
-            t.same(sBounds.getSouth().toFixed(6), -MAX_MERCATOR_LATITUDE);
-            t.same(
-                toFixed(sBounds.toArray()),
-                toFixed([[ -23.3484820899, -85.0511287798 ], [ 23.3484820899, -77.6464759596]])
-            );
-
-            t.end();
-        });
-
-        t.end();
-
-        function toFixed(bounds) {
-            const n = 10;
-            return [
-                [normalizeFixed(bounds[0][0], n), normalizeFixed(bounds[0][1], n)],
-                [normalizeFixed(bounds[1][0], n), normalizeFixed(bounds[1][1], n)]
-            ];
-        }
-
-        function normalizeFixed(num, n) {
-            // workaround for "-0.0000000000" ≠ "0.0000000000"
-            return parseFloat(num.toFixed(n)).toFixed(n);
-        }
     });
 
-    t.test('#setMaxBounds', (t) => {
-        t.test('constrains map bounds', (t) => {
-            const map = createMap(t, {zoom:0});
-            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
-            t.deepEqual(
-                toFixed([[-130.4297000000, 7.0136641176], [-61.5234400000, 60.2398142283]]),
-                toFixed(map.getBounds().toArray())
-            );
-            t.end();
-        });
-
-        t.test('when no argument is passed, map bounds constraints are removed', (t) => {
-            const map = createMap(t, {zoom:0});
-            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
-            t.deepEqual(
-                toFixed([[-166.28906999999964, -27.6835270554], [-25.664070000000066, 73.8248206697]]),
-                toFixed(map.setMaxBounds(null).setZoom(0).getBounds().toArray())
-            );
-            t.end();
-        });
-
-        t.test('should not zoom out farther than bounds', (t) => {
-            const map = createMap(t);
-            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
-            t.notEqual(map.setZoom(0).getZoom(), 0);
-            t.end();
-        });
-
-        t.test('throws on invalid bounds', (t) => {
-            const map = createMap(t, {zoom:0});
-            t.throws(() => {
-                map.setMaxBounds([-130.4297, 50.0642], [-61.52344, 24.20688]);
-            }, Error, 'throws on two decoupled array coordinate arguments');
-            t.throws(() => {
-                map.setMaxBounds(-130.4297, 50.0642, -61.52344, 24.20688);
-            }, Error, 'throws on individual coordinate arguments');
-            t.end();
-        });
-
-        function toFixed(bounds) {
-            const n = 9;
-            return [
-                [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
-                [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
-            ];
-        }
-
-        t.end();
-    });
-
-    t.test('#getMaxBounds', (t) => {
-        t.test('returns null when no bounds set', (t) => {
-            const map = createMap(t, {zoom:0});
-            t.equal(map.getMaxBounds(), null);
-            t.end();
-        });
-
-        t.test('returns bounds', (t) => {
-            const map = createMap(t, {zoom:0});
-            const bounds = [[-130.4297, 50.0642], [-61.52344, 24.20688]];
-            map.setMaxBounds(bounds);
-            t.deepEqual(map.getMaxBounds().toArray(), bounds);
-            t.end();
-        });
-
-        t.end();
-    });
-
-    t.test('#getRenderWorldCopies', (t) => {
-        t.test('initially false', (t) => {
-            const map = createMap(t, {renderWorldCopies: false});
-            t.equal(map.getRenderWorldCopies(), false);
-            t.end();
-        });
-
-        t.test('initially true', (t) => {
-            const map = createMap(t, {renderWorldCopies: true});
-            t.equal(map.getRenderWorldCopies(), true);
-            t.end();
-        });
-
-        t.end();
-    });
-
-    t.test('#setRenderWorldCopies', (t) => {
-        t.test('initially false', (t) => {
-            const map = createMap(t, {renderWorldCopies: false});
+    describe('#setRenderWorldCopies', () => {
+        test('initially false', () => {
+            const map = createMap({renderWorldCopies: false});
             map.setRenderWorldCopies(true);
-            t.equal(map.getRenderWorldCopies(), true);
-            t.end();
+            expect(map.getRenderWorldCopies()).toEqual(true);
         });
 
-        t.test('initially true', (t) => {
-            const map = createMap(t, {renderWorldCopies: true});
+        test('initially true', () => {
+            const map = createMap({renderWorldCopies: true});
             map.setRenderWorldCopies(false);
-            t.equal(map.getRenderWorldCopies(), false);
-            t.end();
+            expect(map.getRenderWorldCopies()).toEqual(false);
         });
 
-        t.test('undefined', (t) => {
-            const map = createMap(t, {renderWorldCopies: false});
+        test('undefined', () => {
+            const map = createMap({renderWorldCopies: false});
             map.setRenderWorldCopies(undefined);
-            t.equal(map.getRenderWorldCopies(), true);
-            t.end();
+            expect(map.getRenderWorldCopies()).toEqual(true);
         });
 
-        t.test('null', (t) => {
-            const map = createMap(t, {renderWorldCopies: true});
+        test('null', () => {
+            const map = createMap({renderWorldCopies: true});
             map.setRenderWorldCopies(null);
-            t.equal(map.getRenderWorldCopies(), false);
-            t.end();
+            expect(map.getRenderWorldCopies()).toEqual(false);
         });
-
-        t.end();
     });
 
-    t.test('#setMinZoom', (t) => {
-        const map = createMap(t, {zoom:5});
-
-        const onZoomStart = t.spy();
-        const onZoom = t.spy();
-        const onZoomEnd = t.spy();
-
-        map.on('zoomstart', onZoomStart);
-        map.on('zoom', onZoom);
-        map.on('zoomend', onZoomEnd);
-
-        map.setMinZoom(3.5);
-
-        t.ok(onZoomStart.calledOnce);
-        t.ok(onZoom.calledOnce);
-        t.ok(onZoomEnd.calledOnce);
-
-        map.setZoom(1);
-
-        t.equal(onZoomStart.callCount, 2);
-        t.equal(onZoom.callCount, 2);
-        t.equal(onZoomEnd.callCount, 2);
-
-        t.equal(map.getZoom(), 3.5);
-        t.end();
-    });
-
-    t.test('unset minZoom', (t) => {
-        const map = createMap(t, {minZoom:5});
-        map.setMinZoom(null);
-        map.setZoom(1);
-        t.equal(map.getZoom(), 1);
-        t.end();
-    });
-
-    t.test('#getMinZoom', (t) => {
-        const map = createMap(t, {zoom: 0});
-        t.equal(map.getMinZoom(), -2, 'returns default value');
-        map.setMinZoom(10);
-        t.equal(map.getMinZoom(), 10, 'returns custom value');
-        t.end();
-    });
-
-    t.test('ignore minZooms over maxZoom', (t) => {
-        const map = createMap(t, {zoom:2, maxZoom:5});
-        t.throws(() => {
-            map.setMinZoom(6);
-        });
-        map.setZoom(0);
-        t.equal(map.getZoom(), 0);
-        t.end();
-    });
-
-    t.test('#setMaxZoom', (t) => {
-        const map = createMap(t, {zoom:0});
-
-        const onZoomStart = t.spy();
-        const onZoom = t.spy();
-        const onZoomEnd = t.spy();
-
-        map.on('zoomstart', onZoomStart);
-        map.on('zoom', onZoom);
-        map.on('zoomend', onZoomEnd);
-
-        map.setMaxZoom(3.5);
-
-        t.ok(onZoomStart.calledOnce);
-        t.ok(onZoom.calledOnce);
-        t.ok(onZoomEnd.calledOnce);
-
-        map.setZoom(4);
-
-        t.equal(onZoomStart.callCount, 2);
-        t.equal(onZoom.callCount, 2);
-        t.equal(onZoomEnd.callCount, 2);
-
-        t.equal(map.getZoom(), 3.5);
-        t.end();
-    });
-
-    t.test('unset maxZoom', (t) => {
-        const map = createMap(t, {maxZoom:5});
-        map.setMaxZoom(null);
-        map.setZoom(6);
-        t.equal(map.getZoom(), 6);
-        t.end();
-    });
-
-    t.test('#getMaxZoom', (t) => {
-        const map = createMap(t, {zoom: 0});
-        t.equal(map.getMaxZoom(), 22, 'returns default value');
-        map.setMaxZoom(10);
-        t.equal(map.getMaxZoom(), 10, 'returns custom value');
-        t.end();
-    });
-
-    t.test('ignore maxZooms over minZoom', (t) => {
-        const map = createMap(t, {minZoom:5});
-        t.throws(() => {
-            map.setMaxZoom(4);
-        });
-        map.setZoom(5);
-        t.equal(map.getZoom(), 5);
-        t.end();
-    });
-
-    t.test('throw on maxZoom smaller than minZoom at init', (t) => {
-        t.throws(() => {
-            createMap(t, {minZoom:10, maxZoom:5});
-        }, new Error(`maxZoom must be greater than or equal to minZoom`));
-        t.end();
-    });
-
-    t.test('throw on maxZoom smaller than minZoom at init with falsey maxZoom', (t) => {
-        t.throws(() => {
-            createMap(t, {minZoom:1, maxZoom:0});
-        }, new Error(`maxZoom must be greater than or equal to minZoom`));
-        t.end();
-    });
-
-    t.test('#setMinPitch', (t) => {
-        const map = createMap(t, {pitch: 20});
-
-        const onPitchStart = t.spy();
-        const onPitch = t.spy();
-        const onPitchEnd = t.spy();
-
-        map.on('pitchstart', onPitchStart);
-        map.on('pitch', onPitch);
-        map.on('pitchend', onPitchEnd);
-
-        map.setMinPitch(10);
-
-        t.ok(onPitchStart.calledOnce);
-        t.ok(onPitch.calledOnce);
-        t.ok(onPitchEnd.calledOnce);
-
-        map.setPitch(0);
-
-        t.equal(onPitchStart.callCount, 2);
-        t.equal(onPitch.callCount, 2);
-        t.equal(onPitchEnd.callCount, 2);
-
-        t.equal(map.getPitch(), 10);
-        t.end();
-    });
-
-    t.test('unset minPitch', (t) => {
-        const map = createMap(t, {minPitch: 20});
-        map.setMinPitch(null);
-        map.setPitch(0);
-        t.equal(map.getPitch(), 0);
-        t.end();
-    });
-
-    t.test('#getMinPitch', (t) => {
-        const map = createMap(t, {pitch: 0});
-        t.equal(map.getMinPitch(), 0, 'returns default value');
-        map.setMinPitch(10);
-        t.equal(map.getMinPitch(), 10, 'returns custom value');
-        t.end();
-    });
-
-    t.test('ignore minPitchs over maxPitch', (t) => {
-        const map = createMap(t, {pitch: 0, maxPitch: 10});
-        t.throws(() => {
-            map.setMinPitch(20);
-        });
-        map.setPitch(0);
-        t.equal(map.getPitch(), 0);
-        t.end();
-    });
-
-    t.test('#setMaxPitch', (t) => {
-        const map = createMap(t, {pitch: 0});
-
-        const onPitchStart = t.spy();
-        const onPitch = t.spy();
-        const onPitchEnd = t.spy();
-
-        map.on('pitchstart', onPitchStart);
-        map.on('pitch', onPitch);
-        map.on('pitchend', onPitchEnd);
-
-        map.setMaxPitch(10);
-
-        t.ok(onPitchStart.calledOnce);
-        t.ok(onPitch.calledOnce);
-        t.ok(onPitchEnd.calledOnce);
-
-        map.setPitch(20);
-
-        t.equal(onPitchStart.callCount, 2);
-        t.equal(onPitch.callCount, 2);
-        t.equal(onPitchEnd.callCount, 2);
-
-        t.equal(map.getPitch(), 10);
-        t.end();
-    });
-
-    t.test('unset maxPitch', (t) => {
-        const map = createMap(t, {maxPitch:10});
-        map.setMaxPitch(null);
-        map.setPitch(20);
-        t.equal(map.getPitch(), 20);
-        t.end();
-    });
-
-    t.test('#getMaxPitch', (t) => {
-        const map = createMap(t, {pitch: 0});
-        t.equal(map.getMaxPitch(), 85, 'returns default value');
-        map.setMaxPitch(10);
-        t.equal(map.getMaxPitch(), 10, 'returns custom value');
-        t.end();
-    });
-
-    t.test('ignore maxPitchs over minPitch', (t) => {
-        const map = createMap(t, {minPitch:10});
-        t.throws(() => {
-            map.setMaxPitch(0);
-        });
-        map.setPitch(10);
-        t.equal(map.getPitch(), 10);
-        t.end();
-    });
-
-    t.test('throw on maxPitch smaller than minPitch at init', (t) => {
-        t.throws(() => {
-            createMap(t, {minPitch: 10, maxPitch: 5});
-        }, new Error(`maxPitch must be greater than or equal to minPitch`));
-        t.end();
-    });
-
-    t.test('throw on maxPitch smaller than minPitch at init with falsey maxPitch', (t) => {
-        t.throws(() => {
-            createMap(t, {minPitch: 1, maxPitch: 0});
-        }, new Error(`maxPitch must be greater than or equal to minPitch`));
-        t.end();
-    });
-
-    t.test('throw on maxPitch greater than valid maxPitch at init', (t) => {
-        t.throws(() => {
-            createMap(t, {maxPitch: 90});
-        }, new Error(`maxPitch must be less than or equal to 85`));
-        t.end();
-    });
-
-    t.test('throw on minPitch less than valid minPitch at init', (t) => {
-        t.throws(() => {
-            createMap(t, {minPitch: -10});
-        }, new Error(`minPitch must be greater than or equal to 0`));
-        t.end();
-    });
-
-    t.test('#getProjection', (t) => {
-        t.test('map defaults to Mercator', (t) => {
-            const map = createMap(t);
-            t.deepEqual(map.getProjection(), {name: 'mercator', center: [0, 0]});
-            t.end();
-        });
-
-        t.test('respects projection options object', (t) => {
-            const options = {
-                name: 'albers',
-                center: [12, 34],
-                parallels: [10, 42]
-            };
-            const map = createMap(t, {projection: options});
-            t.deepEqual(map.getProjection(), options);
-            t.end();
-        });
-
-        t.test('respects projection options string', (t) => {
-            const map = createMap(t, {projection: 'albers'});
-            t.deepEqual(map.getProjection(), {
-                name: 'albers',
-                center: [-96, 37.5],
-                parallels: [29.5, 45.5]
-            });
-            t.end();
-        });
-
-        t.test('composites user and default projection options', (t) => {
-            const options = {
-                name: 'albers',
-                center: [12, 34]
-            };
-            const map = createMap(t, {projection: options});
-            t.deepEqual(map.getProjection(), {
-                name: 'albers',
-                center: [12, 34],
-                parallels: [29.5, 45.5]
-            });
-            t.end();
-        });
-
-        t.test('does not composite user and default projection options for non-conical projections', (t) => {
-            const options = {
-                name: 'naturalEarth',
-                center: [12, 34]
-            };
-            const map = createMap(t, {projection: options});
-            t.deepEqual(map.getProjection(), {
-                name: 'naturalEarth',
-                center: [0, 0]
-            });
-            t.end();
-        });
-
-        t.test('returns conic projections when cylindrical functions are used', (t) => {
-            let options = {
-                name: 'albers',
-                center: [12, 34],
-                parallels: [40, -40]
-            };
-            const map = createMap(t, {projection: options});
-            t.deepEqual(map.getProjection(), options);
-            options = {name: 'lambertConformalConic', center: [20, 25], parallels: [30, -30]};
-            map.setProjection(options);
-            t.deepEqual(map.getProjection(), options);
-            t.end();
-        });
-
-        t.test('returns Albers projection at high zoom', (t) => {
-            const map = createMap(t, {projection: 'albers'});
-            map.setZoom(12);
-            map.once('render', () => {
-                t.deepEqual(map.getProjection(), {
-                    name: 'albers',
-                    center: [-96, 37.5],
-                    parallels: [29.5, 45.5]
-                });
-                t.deepEqual(map.getProjection(), map.transform.getProjection());
-                t.end();
-            });
-        });
-
-        t.test('returns globe projection at low zoom', (t) => {
-            const map = createMap(t, {projection: 'globe'});
-            map.once('render', () => {
-                t.deepEqual(map.getProjection(), {
-                    name: 'globe',
-                    center: [0, 0],
-                });
-                t.deepEqual(map.getProjection(), map.transform.getProjection());
-                t.end();
-            });
-
-        });
-
-        t.test('returns globe projection at high zoom', (t) => {
-            const map = createMap(t, {projection: 'globe'});
-            map.setZoom(12);
-            map.once('render', () => {
-                t.deepEqual(map.getProjection(), {
-                    name: 'globe',
-                    center: [0, 0],
-                });
-                t.deepEqual(map.transform.getProjection(), {
-                    name: 'mercator',
-                    center: [0, 0],
-                });
-                t.end();
-            });
-
-        });
-
-        t.test('defaults to style sheet projection',  (t) => {
-            const map = createMap(t, {projection: 'globe'});
-            map.setZoom(12);
-            map.once('render', () => {
-                t.end();
-            });
-        });
-
-        // Behavior described at https://github.com/mapbox/mapbox-gl-js/pull/11204
-        t.test('runtime projection overrides style projection', (t) => {
-            const map = createMap(t, {style: {
-                "version": 8,
-                "projection": {
-                    "name": "albers"
-                },
-                "sources": {},
-                "layers": []
-            }});
-            const style = map.style;
-
-            map.on('load', () =>  {
-                // Defaults to style projection
-                t.equal(style.serialize().projection.name, 'albers');
-                t.equal(map.transform.getProjection().name, 'albers');
-
-                // Runtime api overrides style projection
-                // Stylesheet projection not changed by runtime apis
-                map.setProjection({name: 'winkelTripel'});
-                t.equal(style.serialize().projection.name, 'albers');
-                t.equal(map.transform.getProjection().name, 'winkelTripel');
-
-                // Runtime api overrides stylesheet projection
-                map.style.setState(Object.assign({}, style.serialize(), {projection: {name: 'naturalEarth'}}));
-                t.equal(style.serialize().projection.name, 'naturalEarth');
-                t.equal(map.transform.getProjection().name, 'winkelTripel');
-
-                // Unsetting runtime projection reveals stylesheet projection
-                map.setProjection(null);
-                style._updateProjection();
-                t.equal(style.serialize().projection.name, 'naturalEarth');
-                t.equal(map.transform.getProjection().name, 'naturalEarth');
-                t.equal(map.getProjection().name, 'naturalEarth');
-
-                // Unsetting stylesheet projection reveals mercator
-                const stylesheet = style.serialize();
-                delete stylesheet.projection;
-                style.setState(stylesheet);
-                t.equal(style.serialize().projection, undefined);
-                t.equal(map.transform.getProjection().name, 'mercator');
-
-                t.end();
-            });
-        });
-
-        t.end();
-    });
-
-    t.test('#setProjection', (t) => {
-        t.test('sets projection by string', (t) => {
-            const map = createMap(t);
-            map.setProjection('albers');
-            t.deepEqual(map.getProjection(), {
-                name: 'albers',
-                center: [-96, 37.5],
-                parallels: [29.5, 45.5]
-            });
-            t.end();
-        });
-
-        t.test('throws error if invalid projection name is supplied', (t) => {
-            const map = createMap(t);
-            map.on('error', ({error}) => {
-                t.match(error.message, /Invalid projection name: fakeProj/);
-                t.end();
-            });
-            t.end();
-        });
-
-        t.test('sets projection by options object', (t) => {
-            const options = {
-                name: 'albers',
-                center: [12, 34],
-                parallels: [10, 42]
-            };
-            const map = createMap(t);
-            map.setProjection(options);
-            t.deepEqual(map.getProjection(), options);
-            t.end();
-        });
-
-        t.test('sets projection by options object with just name', (t) => {
-            const map = createMap(t);
-            map.setProjection({name: 'albers'});
-            t.deepEqual(map.getProjection(), {
-                name: 'albers',
-                center: [-96, 37.5],
-                parallels: [29.5, 45.5]
-            });
-            t.end();
-        });
-
-        t.test('setProjection with no argument defaults to Mercator', (t) => {
-            const map = createMap(t);
-            map.setProjection({name: 'albers'});
-            t.equal(map.getProjection().name, 'albers');
-            map.setProjection();
-            t.deepEqual(map.getProjection(), {name: 'mercator', center: [0, 0]});
-            t.end();
-        });
-
-        t.test('setProjection(null) defaults to Mercator', (t) => {
-            const map = createMap(t);
-            map.setProjection({name: 'albers'});
-            t.equal(map.getProjection().name, 'albers');
-            map.setProjection(null);
-            t.deepEqual(map.getProjection(), {name: 'mercator', center: [0, 0]});
-            t.end();
-        });
-
-        t.test('setProjection persists after new style', (t) => {
-            const map = createMap(t);
-            map.once('style.load', () => {
-                map.setProjection({name: 'albers'});
-                t.equal(map.getProjection().name, 'albers');
-
-                // setStyle with diffing
-                map.setStyle(Object.assign({}, map.getStyle(), {projection: {name: 'winkelTripel'}}));
-                t.equal(map.getProjection().name, 'albers');
-                t.equal(map.style.stylesheet.projection.name, 'winkelTripel');
-
-                map.setProjection({name: 'globe'});
-                t.equal(map.getProjection().name, 'globe');
-                t.equal(map.style.stylesheet.projection.name, 'winkelTripel');
-                map.setProjection({name: 'lambertConformalConic'});
-
-                // setStyle without diffing
-                const s = map.getStyle();
-                delete s.projection;
-                map.setStyle(s, {diff: false});
-                map.once('style.load', () => {
-                    t.equal(map.getProjection().name, 'lambertConformalConic');
-                    t.equal(map.style.stylesheet.projection, undefined);
-                    t.end();
-                });
-            });
-        });
-        t.end();
-    });
-
-    t.test('#remove', (t) => {
-        const map = createMap(t);
-        t.equal(map.getContainer().childNodes.length, 3);
+    test('#hasImage doesn\'t throw after map is removed', () => {
+        const map = createMap();
         map.remove();
-        t.equal(map.getContainer().childNodes.length, 0);
-        t.end();
+        expect(map.hasImage('image')).toBeFalsy();
     });
 
-    t.test('#remove calls onRemove on added controls', (t) => {
-        const map = createMap(t);
-        const control = {
-            onRemove: t.spy(),
-            onAdd (_) {
-                return window.document.createElement('div');
-            }
-        };
-        map.addControl(control);
+    test('#updateImage doesn\'t throw after map is removed', () => {
+        const map = createMap();
         map.remove();
-        t.ok(control.onRemove.calledOnce);
-        t.end();
+
+        const stub = vi.spyOn(console, 'error').mockImplementation(() => {});
+        map.updateImage('image', {});
+        expect(stub).toHaveBeenCalledTimes(1);
+        expect(stub.mock.calls[0][0].message).toMatch('The map has no image with that id');
     });
 
-    t.test('#remove calls onRemove on added controls before style is destroyed', (t) => {
-        const map = createMap(t);
-        let onRemoveCalled = 0;
-        let style;
-        const control = {
-            onRemove(map) {
-                onRemoveCalled++;
-                t.deepEqual(map.getStyle(), style);
-            },
-            onAdd (_) {
-                return window.document.createElement('div');
-            }
-        };
+    test('#listImages', async () => {
+        const map = createMap();
 
-        map.addControl(control);
+        await waitFor(map, "load");
+        expect(map.listImages().length).toEqual(0);
 
-        map.on('style.load', () => {
-            style = map.getStyle();
-            map.remove();
-            t.equal(onRemoveCalled, 1);
-            t.end();
-        });
+        map.addImage('img', {width: 1, height: 1, data: new Uint8Array(4)});
+
+        const images = map.listImages();
+        expect(images.length).toEqual(1);
+        expect(images[0]).toEqual('img');
     });
 
-    t.test('#addControl', (t) => {
-        const map = createMap(t);
-        const control = {
-            onAdd(_) {
-                t.equal(map, _, 'addTo() called with map');
-                return window.document.createElement('div');
-            }
-        };
-        map.addControl(control);
-        t.equal(map._controls[1], control, "saves reference to added controls");
-        t.end();
-    });
-
-    t.test('#removeControl errors on invalid arguments', (t) => {
-        const map = createMap(t);
-        const control = {};
-        const stub = t.stub(console, 'error');
-
-        map.addControl(control);
-        map.removeControl(control);
-        t.ok(stub.calledTwice);
-        t.end();
-
-    });
-
-    t.test('#removeControl', (t) => {
-        const map = createMap(t);
-        const control = {
-            onAdd() {
-                return window.document.createElement('div');
-            },
-            onRemove(_) {
-                t.equal(map, _, 'onRemove() called with map');
-            }
-        };
-        map.addControl(control);
-        map.removeControl(control);
-        t.equal(map._controls.length, 1, "removes removed controls from map's control array");
-        t.end();
-
-    });
-
-    t.test('#hasControl', (t) => {
-        const map = createMap(t);
-        function Ctrl() {}
-        Ctrl.prototype = {
-            onAdd(_) {
-                return window.document.createElement('div');
-            }
-        };
-
-        const control = new Ctrl();
-        t.equal(map.hasControl(control), false, 'Reference to control is not found');
-        map.addControl(control);
-        t.equal(map.hasControl(control), true, 'Reference to control is found');
-        t.end();
-    });
-
-    t.test('#project', (t) => {
-        const map = createMap(t);
-        t.deepEqual(map.project([0, 0]), {x: 100, y: 100});
-        t.end();
-    });
-
-    t.test('#unproject', (t) => {
-        const map = createMap(t);
-        t.deepEqual(fixedLngLat(map.unproject([100, 100])), {lng: 0, lat: 0});
-        t.end();
-    });
-
-    t.test('#listImages', (t) => {
-        const map = createMap(t);
-
-        map.on('load', () => {
-            t.equals(map.listImages().length, 0);
-
-            map.addImage('img', {width: 1, height: 1, data: new Uint8Array(4)});
-
-            const images = map.listImages();
-            t.equals(images.length, 1);
-            t.equals(images[0], 'img');
-            t.end();
-        });
-    });
-
-    t.test('#queryFogOpacity', (t) => {
-        t.test('normal range', (t) => {
+    describe('#queryFogOpacity', () => {
+        test('normal range', async () => {
             const style = createStyle();
-            const map = createMap(t, {style});
-            map.on('load', () => {
-                map.setFog({
-                    "range": [0.5, 10.5]
-                });
-
-                t.ok(map.getFog());
-
-                map.once('render', () => {
-                    map.setZoom(10);
-                    map.setCenter([0, 0]);
-                    map.setPitch(0);
-
-                    t.deepEqual(map._queryFogOpacity([0, 0]), 0.0);
-
-                    t.deepEqual(map._queryFogOpacity([50, 0]), 0.0);
-                    t.deepEqual(map._queryFogOpacity([0, 50]), 0.0);
-                    t.deepEqual(map._queryFogOpacity([-50, 0]), 0.0);
-                    t.deepEqual(map._queryFogOpacity([-50, -50]), 0.0);
-
-                    map.setBearing(90);
-                    map.setPitch(70);
-
-                    t.deepEqual(map._queryFogOpacity([0, 0]), 0.0);
-
-                    t.deepEqual(map._queryFogOpacity([0.5, 0]), 0.5963390859543484);
-                    t.deepEqual(map._queryFogOpacity([0, 0.5]), 0.31817612773293763);
-                    t.deepEqual(map._queryFogOpacity([-0.5, 0]), 0.0021931905967484703);
-                    t.deepEqual(map._queryFogOpacity([-0.5, -0.5]), 0.4147318524978687);
-
-                    t.deepEqual(map._queryFogOpacity([2, 0]), 1.0);
-                    t.deepEqual(map._queryFogOpacity([0, 2]), 1.0);
-                    t.deepEqual(map._queryFogOpacity([-2, 0]), 1.0);
-                    t.deepEqual(map._queryFogOpacity([-2, -2]), 1.0);
-
-                    map.transform.fov = 30;
-
-                    t.deepEqual(map._queryFogOpacity([0.5, 0]), 0.5917784571074153);
-                    t.deepEqual(map._queryFogOpacity([0, 0.5]), 0.2567224170602245);
-                    t.deepEqual(map._queryFogOpacity([-0.5, 0]), 0);
-                    t.deepEqual(map._queryFogOpacity([-0.5, -0.5]), 0.2727527139608868);
-
-                    t.end();
-                });
+            const map = createMap({style});
+            await waitFor(map, "load");
+            map.setFog({
+                "range": [0.5, 10.5]
             });
+
+            expect(map.getFog()).toBeTruthy();
+
+            await waitFor(map, "render");
+            map.setZoom(10);
+            map.setCenter([0, 0]);
+            map.setPitch(0);
+
+            expect(map._queryFogOpacity([0, 0])).toEqual(0.0);
+
+            expect(map._queryFogOpacity([50, 0])).toEqual(0.0);
+            expect(map._queryFogOpacity([0, 50])).toEqual(0.0);
+            expect(map._queryFogOpacity([-50, 0])).toEqual(0.0);
+            expect(map._queryFogOpacity([-50, -50])).toEqual(0.0);
+
+            map.setBearing(90);
+            map.setPitch(70);
+
+            expect(map._queryFogOpacity([0, 0])).toEqual(0.0);
+
+            expect(map._queryFogOpacity([0.5, 0])).toEqual(0.5963390859543484);
+            expect(map._queryFogOpacity([0, 0.5])).toEqual(0.31817612773293763);
+            expect(map._queryFogOpacity([-0.5, 0])).toEqual(0.0021931905967484703);
+            expect(map._queryFogOpacity([-0.5, -0.5])).toEqual(0.4147318524978687);
+
+            expect(map._queryFogOpacity([2, 0])).toEqual(1.0);
+            expect(map._queryFogOpacity([0, 2])).toEqual(1.0);
+            expect(map._queryFogOpacity([-2, 0])).toEqual(1.0);
+            expect(map._queryFogOpacity([-2, -2])).toEqual(1.0);
+
+            map.transform.fov = 30;
+
+            expect(map._queryFogOpacity([0.5, 0])).toEqual(0.5917784571074153);
+            expect(map._queryFogOpacity([0, 0.5])).toEqual(0.2567224170602245);
+            expect(map._queryFogOpacity([-0.5, 0])).toEqual(0);
+            expect(map._queryFogOpacity([-0.5, -0.5])).toEqual(0.2727527139608868);
         });
 
-        t.test('inverted range', (t) => {
+        test('inverted range', async () => {
             const style = createStyle();
-            const map = createMap(t, {style});
-            map.on('load', () => {
-                map.setFog({
-                    "range": [10.5, 0.5]
-                });
-
-                t.ok(map.getFog());
-
-                map.once('render', () => {
-                    map.setZoom(10);
-                    map.setCenter([0, 0]);
-                    map.setBearing(90);
-                    map.setPitch(70);
-
-                    t.deepEqual(map._queryFogOpacity([0, 0]), 1.0);
-
-                    t.deepEqual(map._queryFogOpacity([0.5, 0]), 0.961473076058084);
-                    t.deepEqual(map._queryFogOpacity([0, 0.5]), 0.9841669559435576);
-                    t.deepEqual(map._queryFogOpacity([-0.5, 0]), 0.9988871471476187);
-                    t.deepEqual(map._queryFogOpacity([-0.5, -0.5]), 0.9784993261529342);
-
-                    t.end();
-                });
+            const map = createMap({style});
+            await waitFor(map, "load");
+            map.setFog({
+                "range": [10.5, 0.5]
             });
+
+            expect(map.getFog()).toBeTruthy();
+
+            await waitFor(map, "render");
+            map.setZoom(10);
+            map.setCenter([0, 0]);
+            map.setBearing(90);
+            map.setPitch(70);
+
+            expect(map._queryFogOpacity([0, 0])).toEqual(1.0);
+
+            expect(map._queryFogOpacity([0.5, 0])).toEqual(0.961473076058084);
+            expect(map._queryFogOpacity([0, 0.5])).toEqual(0.9841669559435576);
+            expect(map._queryFogOpacity([-0.5, 0])).toEqual(0.9988871471476187);
+            expect(map._queryFogOpacity([-0.5, -0.5])).toEqual(0.9784993261529342);
         });
 
-        t.test('identical range', (t) => {
+        test('identical range', async () => {
             const style = createStyle();
-            const map = createMap(t, {style});
-            map.on('load', () => {
-                map.setFog({
-                    "range": [0, 0]
-                });
-
-                t.ok(map.getFog());
-
-                map.once('render', () => {
-                    map.setZoom(5);
-                    map.setCenter([0, 0]);
-                    map.setBearing(90);
-                    map.setPitch(70);
-
-                    t.deepEqual(map._queryFogOpacity([0, 0]), 0);
-
-                    t.deepEqual(map._queryFogOpacity([0.5, 0]), 1);
-                    t.deepEqual(map._queryFogOpacity([0, 0.5]), 0);
-                    t.deepEqual(map._queryFogOpacity([-0.5, 0]), 0);
-                    t.deepEqual(map._queryFogOpacity([0, -0.5]), 0);
-
-                    t.end();
-                });
+            const map = createMap({style});
+            await waitFor(map, "load");
+            map.setFog({
+                "range": [0, 0]
             });
-        });
 
-        t.end();
+            expect(map.getFog()).toBeTruthy();
+
+            await waitFor(map, "render");
+            map.setZoom(5);
+            map.setCenter([0, 0]);
+            map.setBearing(90);
+            map.setPitch(70);
+
+            expect(map._queryFogOpacity([0, 0])).toEqual(0);
+
+            expect(map._queryFogOpacity([0.5, 0])).toEqual(1);
+            expect(map._queryFogOpacity([0, 0.5])).toEqual(0);
+            expect(map._queryFogOpacity([-0.5, 0])).toEqual(0);
+            expect(map._queryFogOpacity([0, -0.5])).toEqual(0);
+        });
     });
 
-    t.test('#listImages throws an error if called before "load"', (t) => {
-        const map = createMap(t);
-        t.throws(() => {
+    test('#listImages throws an error if called before "load"', () => {
+        const map = createMap();
+        expect(() => {
             map.listImages();
-        }, Error);
-        t.end();
+        }).toThrowError(Error);
     });
 
-    t.test('#queryRenderedFeatures', (t) => {
+    describe('#queryRenderedFeatures', () => {
+        const defaultParams = {scope: '', availableImages: [], serializedLayers: {}};
+        test('if no arguments provided', async () => {
+            await new Promise(resolve => {
+                createMap({}, (err, map) => {
+                    expect(err).toBeFalsy();
+                    vi.spyOn(map.style, 'queryRenderedFeatures');
 
-        t.test('if no arguments provided', (t) => {
-            createMap(t, {}, (err, map) => {
-                t.error(err);
-                t.spy(map.style, 'queryRenderedFeatures');
+                    const output = map.queryRenderedFeatures();
 
-                const output = map.queryRenderedFeatures();
-
-                const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.ok(args[0]);
-                t.deepEqual(args[1], {availableImages: []});
-                t.deepEqual(output, []);
-
-                t.end();
-            });
-        });
-
-        t.test('if only "geometry" provided', (t) => {
-            createMap(t, {}, (err, map) => {
-                t.error(err);
-                t.spy(map.style, 'queryRenderedFeatures');
-
-                const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)));
-
-                const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.deepEqual(args[0], {x: 100, y: 100}); // query geometry
-                t.deepEqual(args[1], {availableImages: []}); // params
-                t.deepEqual(args[2], map.transform); // transform
-                t.deepEqual(output, []);
-
-                t.end();
-            });
-        });
-
-        t.test('if only "params" provided', (t) => {
-            createMap(t, {}, (err, map) => {
-                t.error(err);
-                t.spy(map.style, 'queryRenderedFeatures');
-
-                const output = map.queryRenderedFeatures({filter: ['all']});
-
-                const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.ok(args[0]);
-                t.deepEqual(args[1], {availableImages: [], filter: ['all']});
-                t.deepEqual(output, []);
-
-                t.end();
-            });
-        });
-
-        t.test('if both "geometry" and "params" provided', (t) => {
-            createMap(t, {}, (err, map) => {
-                t.error(err);
-                t.spy(map.style, 'queryRenderedFeatures');
-
-                const output = map.queryRenderedFeatures({filter: ['all']});
-
-                const args = map.style.queryRenderedFeatures.getCall(0).args;
-                t.ok(args[0]);
-                t.deepEqual(args[1], {availableImages: [], filter: ['all']});
-                t.deepEqual(output, []);
-
-                t.end();
-            });
-        });
-
-        t.test('if "geometry" with unwrapped coords provided', (t) => {
-            createMap(t, {}, (err, map) => {
-                t.error(err);
-                t.spy(map.style, 'queryRenderedFeatures');
-
-                map.queryRenderedFeatures(map.project(new LngLat(360, 0)));
-
-                t.deepEqual(map.style.queryRenderedFeatures.getCall(0).args[0], {x: 612, y: 100});
-                t.end();
-            });
-        });
-
-        t.test('returns an empty array when no style is loaded', (t) => {
-            const map = createMap(t, {style: undefined});
-            t.deepEqual(map.queryRenderedFeatures(), []);
-            t.end();
-        });
-
-        t.end();
-    });
-
-    t.test('#setLayoutProperty', (t) => {
-        t.test('sets property', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": {
-                            "type": "geojson",
-                            "data": {
-                                "type": "FeatureCollection",
-                                "features": []
-                            }
-                        }
-                    },
-                    "layers": [{
-                        "id": "symbol",
-                        "type": "symbol",
-                        "source": "geojson",
-                        "layout": {
-                            "text-transform": "uppercase"
-                        }
-                    }]
-                }
-            });
-
-            map.on('style.load', () => {
-                map.style.dispatcher.broadcast = function(key, value) {
-                    t.equal(key, 'updateLayers');
-                    t.deepEqual(value.layers.map((layer) => { return layer.id; }), ['symbol']);
-                };
-
-                map.setLayoutProperty('symbol', 'text-transform', 'lowercase');
-                map.style.update({});
-                t.deepEqual(map.getLayoutProperty('symbol', 'text-transform'), 'lowercase');
-                t.end();
-            });
-        });
-
-        t.test('throw before loaded', (t) => {
-            const map = createMap(t, {
-                style: {
-                    version: 8,
-                    sources: {},
-                    layers: []
-                }
-            });
-
-            t.throws(() => {
-                map.setLayoutProperty('symbol', 'text-transform', 'lowercase');
-            }, Error, /load/i);
-
-            t.end();
-        });
-
-        t.test('fires an error if layer not found', (t) => {
-            const map = createMap(t, {
-                style: {
-                    version: 8,
-                    sources: {},
-                    layers: []
-                }
-            });
-
-            map.on('style.load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
-                    t.end();
+                    const args = map.style.queryRenderedFeatures.mock.calls[0];
+                    expect(args[0]).toBeTruthy();
+                    expect(args[1]).toEqual(defaultParams);
+                    expect(output).toEqual([]);
+                    resolve();
                 });
-                map.setLayoutProperty('non-existant', 'text-transform', 'lowercase');
             });
         });
 
-        t.test('fires a data event on background layer', (t) => {
-            // background layers do not have a source
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {},
-                    "layers": [{
-                        "id": "background",
-                        "type": "background",
-                        "layout": {
-                            "visibility": "none"
+        test('if only "geometry" provided', async () => {
+            await new Promise(resolve => {
+                createMap({}, (err, map) => {
+                    expect(err).toBeFalsy();
+                    vi.spyOn(map.style, 'queryRenderedFeatures');
+
+                    const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)));
+
+                    const args = map.style.queryRenderedFeatures.mock.calls[0];
+                    expect(args[0]).toEqual({x: 100, y: 100}); // query geometry
+                    expect(args[1]).toEqual(defaultParams); // params
+                    expect(args[2]).toEqual(map.transform); // transform
+                    expect(output).toEqual([]);
+                    resolve();
+                });
+
+            });
+        });
+
+        test('if only "params" provided', async () => {
+            await new Promise(resolve => {
+                createMap({}, (err, map) => {
+                    expect(err).toBeFalsy();
+                    vi.spyOn(map.style, 'queryRenderedFeatures');
+
+                    const output = map.queryRenderedFeatures({filter: ['all']});
+
+                    const args = map.style.queryRenderedFeatures.mock.calls[0];
+                    expect(args[0]).toBeTruthy();
+                    expect(args[1]).toEqual({...defaultParams, filter: ['all']});
+                    expect(output).toEqual([]);
+                    resolve();
+                });
+            });
+        });
+
+        test('if both "geometry" and "params" provided', async () => {
+            await new Promise(resolve => {
+                createMap({}, (err, map) => {
+                    expect(err).toBeFalsy();
+                    vi.spyOn(map.style, 'queryRenderedFeatures');
+
+                    const output = map.queryRenderedFeatures(map.project(new LngLat(0, 0)), {filter: ['all']});
+
+                    const args = map.style.queryRenderedFeatures.mock.calls[0];
+                    expect(args[0]).toEqual({x: 100, y: 100});
+                    expect(args[1]).toEqual({...defaultParams, filter: ['all']});
+                    expect(args[2]).toEqual(map.transform);
+                    expect(output).toEqual([]);
+                    resolve();
+                });
+            });
+        });
+
+        test('if "geometry" with unwrapped coords provided', async () => {
+            await new Promise(resolve => {
+                createMap({}, (err, map) => {
+                    expect(err).toBeFalsy();
+                    vi.spyOn(map.style, 'queryRenderedFeatures');
+
+                    map.queryRenderedFeatures(map.project(new LngLat(360, 0)));
+
+                    expect(map.style.queryRenderedFeatures.mock.calls[0][0]).toEqual({x: 612, y: 100});
+                    resolve();
+                });
+            });
+        });
+
+        test('returns an empty array when no style is loaded', () => {
+            const map = createMap({style: undefined});
+            expect(map.queryRenderedFeatures()).toEqual([]);
+        });
+    });
+
+    describe('#language', () => {
+        test('can instantiate map with language', async () => {
+            const map = createMap({language: 'uk'});
+            await waitFor(map, "style.load");
+            expect(map.getLanguage()).toEqual('uk');
+        });
+
+        test('can instantiate map with fallback language', async () => {
+            const map = createMap({language: ['en-GB', 'en-US']});
+            await waitFor(map, "style.load");
+            expect(map.getLanguage()).toEqual(['en-GB', 'en-US']);
+        });
+
+        test('can instantiate map with the preferred language of the user', async () => {
+            const map = createMap({language: 'auto'});
+            await waitFor(map, "style.load");
+            expect(map.getLanguage()).toEqual(window.navigator.language);
+        });
+
+        test('sets and gets language property', async () => {
+            const map = createMap({
+                style: extend(createStyle(), {
+                    sources: {
+                        mapbox: {
+                            type: 'vector',
+                            minzoom: 1,
+                            maxzoom: 10,
+                            tiles: ['http://example.com/{z}/{x}/{y}.png']
                         }
-                    }]
-                }
+                    }
+                })
             });
 
-            map.once('style.load', () => {
-                map.once('data', (e) => {
-                    if (e.dataType === 'style') {
-                        t.end();
+            await waitFor(map, "style.load");
+            const source = map.getSource('mapbox');
+            const loadSpy = vi.spyOn(source, 'load');
+            const clearSourceSpy = vi.spyOn(map.style, 'clearSource');
+
+            await new Promise(resolve => {
+                source.on("data", (e) => {
+                    if (e.sourceDataType === 'metadata') {
+                        setTimeout(() => {
+                            expect(clearSourceSpy).toHaveBeenCalledTimes(1);
+                            expect(clearSourceSpy.mock.calls[clearSourceSpy.mock.calls.length - 1][0]).toEqual('mapbox');
+                            resolve();
+                        }, 0);
                     }
                 });
 
-                map.setLayoutProperty('background', 'visibility', 'visible');
+                map.setLanguage('es');
             });
+
+            expect(map.getLanguage()).toEqual('es');
+            expect(loadSpy).toHaveBeenCalledTimes(1);
         });
 
-        t.test('fires a data event on sky layer', (t) => {
-            // sky layers do not have a source
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {},
-                    "layers": [{
-                        "id": "sky",
-                        "type": "sky",
-                        "layout": {
-                            "visibility": "none"
-                        },
-                        "paint": {
-                            "sky-type": "atmosphere",
-                            "sky-atmosphere-sun": [0, 0]
+        test('can reset language property to default', async () => {
+            const map = createMap();
+            await waitFor(map, "style.load");
+            map.setLanguage('es');
+            expect(map.getLanguage()).toEqual('es');
+
+            map.setLanguage(['auto', 'en-GB', 'en-US']);
+            expect(map.getLanguage()).toEqual([window.navigator.language, 'en-GB', 'en-US']);
+
+            map.setLanguage([]);
+            expect(map.getLanguage()).toEqual(undefined);
+
+            map.setLanguage('auto');
+            expect(map.getLanguage()).toEqual(window.navigator.language);
+
+            map.setLanguage();
+            expect(map.getLanguage()).toEqual(undefined);
+        });
+    });
+
+    describe('#worldview', () => {
+        test('can instantiate map with worldview', async () => {
+            const map = createMap({worldview: 'JP'});
+            await waitFor(map, "style.load");
+            expect(map.getWorldview()).toEqual('JP');
+        });
+
+        test('sets and gets worldview property', async () => {
+            const map = createMap({
+                style: extend(createStyle(), {
+                    sources: {
+                        mapbox: {
+                            type: 'vector',
+                            minzoom: 1,
+                            maxzoom: 10,
+                            tiles: ['http://example.com/{z}/{x}/{y}.png']
                         }
-                    }]
-                }
+                    }
+                })
             });
 
-            map.once('style.load', () => {
-                map.once('data', (e) => {
-                    if (e.dataType === 'style') {
-                        t.end();
+            await waitFor(map, "style.load");
+            const source = map.getSource('mapbox');
+            const loadSpy = vi.spyOn(source, 'load');
+            const clearSourceSpy = vi.spyOn(map.style, 'clearSource');
+
+            await new Promise(resolve => {
+                source.on("data", e => {
+                    if (e.sourceDataType === 'metadata') {
+                        setTimeout(() => {
+                            expect(clearSourceSpy).toHaveBeenCalledTimes(1);
+                            expect(clearSourceSpy.mock.calls[clearSourceSpy.mock.calls.length - 1][0]).toEqual('mapbox');
+                            resolve();
+                        }, 0);
                     }
                 });
-
-                map.setLayoutProperty('sky', 'visibility', 'visible');
+                map.setWorldview('JP');
             });
+
+            expect(map.getWorldview()).toEqual('JP');
+            expect(loadSpy).toHaveBeenCalledTimes(1);
         });
 
-        t.test('sets visibility on background layer', (t) => {
-            // background layers do not have a source
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {},
-                    "layers": [{
-                        "id": "background",
-                        "type": "background",
-                        "layout": {
-                            "visibility": "none"
-                        }
-                    }]
-                }
-            });
-
-            map.on('style.load', () => {
-                map.setLayoutProperty('background', 'visibility', 'visible');
-                t.deepEqual(map.getLayoutProperty('background', 'visibility'), 'visible');
-                t.end();
-            });
+        test('can remove worldview property', async () => {
+            const map = createMap();
+            await waitFor(map, "style.load");
+            map.setWorldview('JP');
+            expect(map.getWorldview()).toEqual('JP');
+            map.setWorldview();
+            expect(map.getWorldview()).toBeFalsy();
         });
-
-        t.test('sets visibility on raster layer', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "mapbox://mapbox.satellite": {
-                            "type": "raster",
-                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
-                        }
-                    },
-                    "layers": [{
-                        "id": "satellite",
-                        "type": "raster",
-                        "source": "mapbox://mapbox.satellite",
-                        "layout": {
-                            "visibility": "none"
-                        }
-                    }]
-                }
-            });
-
-            // Suppress errors because we're not loading tiles from a real URL.
-            map.on('error', () => {});
-
-            map.on('style.load', () => {
-                map.setLayoutProperty('satellite', 'visibility', 'visible');
-                t.deepEqual(map.getLayoutProperty('satellite', 'visibility'), 'visible');
-                t.end();
-            });
-        });
-
-        t.test('sets visibility on video layer', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "drone": {
-                            "type": "video",
-                            "urls": [],
-                            "coordinates": [
-                                [-122.51596391201019, 37.56238816766053],
-                                [-122.51467645168304, 37.56410183312965],
-                                [-122.51309394836426, 37.563391708549425],
-                                [-122.51423120498657, 37.56161849366671]
-                            ]
-                        }
-                    },
-                    "layers": [{
-                        "id": "shore",
-                        "type": "raster",
-                        "source": "drone",
-                        "layout": {
-                            "visibility": "none"
-                        }
-                    }]
-                }
-            });
-
-            map.on('style.load', () => {
-                map.setLayoutProperty('shore', 'visibility', 'visible');
-                t.deepEqual(map.getLayoutProperty('shore', 'visibility'), 'visible');
-                t.end();
-            });
-        });
-
-        t.test('sets visibility on image layer', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "image": {
-                            "type": "image",
-                            "url": "",
-                            "coordinates": [
-                                [-122.51596391201019, 37.56238816766053],
-                                [-122.51467645168304, 37.56410183312965],
-                                [-122.51309394836426, 37.563391708549425],
-                                [-122.51423120498657, 37.56161849366671]
-                            ]
-                        }
-                    },
-                    "layers": [{
-                        "id": "image",
-                        "type": "raster",
-                        "source": "image",
-                        "layout": {
-                            "visibility": "none"
-                        }
-                    }]
-                }
-            });
-
-            map.on('style.load', () => {
-                map.setLayoutProperty('image', 'visibility', 'visible');
-                t.deepEqual(map.getLayoutProperty('image', 'visibility'), 'visible');
-                t.end();
-            });
-        });
-
-        t.end();
     });
 
-    t.test('#getLayoutProperty', (t) => {
-        t.test('fires an error if layer not found', (t) => {
-            const map = createMap(t, {
-                style: {
-                    version: 8,
-                    sources: {},
-                    layers: []
-                }
-            });
-
-            map.on('style.load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /does not exist in the map\'s style/);
-                    t.end();
-                });
-                map.getLayoutProperty('non-existant', 'text-transform', 'lowercase');
-            });
-        });
-
-        t.end();
-    });
-
-    t.test('#setPaintProperty', (t) => {
-        t.test('sets property', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {},
-                    "layers": [{
-                        "id": "background",
-                        "type": "background"
-                    }]
-                }
-            });
-
-            map.on('style.load', () => {
-                map.setPaintProperty('background', 'background-color', 'red');
-                t.deepEqual(map.getPaintProperty('background', 'background-color'), 'red');
-                t.end();
-            });
-        });
-
-        t.test('throw before loaded', (t) => {
-            const map = createMap(t, {
-                style: {
-                    version: 8,
-                    sources: {},
-                    layers: []
-                }
-            });
-
-            t.throws(() => {
-                map.setPaintProperty('background', 'background-color', 'red');
-            }, Error, /load/i);
-
-            t.end();
-        });
-
-        t.test('fires an error if layer not found', (t) => {
-            const map = createMap(t, {
-                style: {
-                    version: 8,
-                    sources: {},
-                    layers: []
-                }
-            });
-
-            map.on('style.load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
-                    t.end();
-                });
-                map.setPaintProperty('non-existant', 'background-color', 'red');
-            });
-        });
-
-        t.end();
-    });
-
-    t.test('#setFeatureState', (t) => {
-        t.test('sets state', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-                const fState = map.getFeatureState({source: 'geojson', id: 12345});
-                t.equal(fState.hover, true);
-                t.end();
-            });
-        });
-        t.test('works with string ids', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 'foo'}, {'hover': true});
-                const fState = map.getFeatureState({source: 'geojson', id: 'foo'});
-                t.equal(fState.hover, true);
-                t.end();
-            });
-        });
-        t.test('parses feature id as an int', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: '12345'}, {'hover': true});
-                const fState = map.getFeatureState({source: 'geojson', id: 12345});
-                t.equal(fState.hover, true);
-                t.end();
-            });
-        });
-        t.test('throw before loaded', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            t.throws(() => {
-                map.setFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-            }, Error, /load/i);
-
-            t.end();
-        });
-        t.test('fires an error if source not found', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /source/);
-                    t.end();
-                });
-                map.setFeatureState({source: 'vector', id: 12345}, {'hover': true});
-            });
-        });
-        t.test('fires an error if sourceLayer not provided for a vector source', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "vector": {
-                            "type": "vector",
-                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
-                        }
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /sourceLayer/);
-                    t.end();
-                });
-                map.setFeatureState({source: 'vector', sourceLayer: 0, id: 12345}, {'hover': true});
-            });
-        });
-        t.test('fires an error if id not provided', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "vector": {
-                            "type": "vector",
-                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
-                        }
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /id/);
-                    t.end();
-                });
-                map.setFeatureState({source: 'vector', sourceLayer: "1"}, {'hover': true});
-            });
-        });
-        t.end();
-    });
-
-    t.test('#removeFeatureState', (t) => {
-
-        t.test('accepts "0" id', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 0}, {'hover': true, 'click': true});
-                map.removeFeatureState({source: 'geojson', id: 0}, 'hover');
-                const fState = map.getFeatureState({source: 'geojson', id: 0});
-                t.equal(fState.hover, undefined);
-                t.equal(fState.click, true);
-                t.end();
-            });
-        });
-        t.test('accepts string id', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 'foo'}, {'hover': true, 'click': true});
-                map.removeFeatureState({source: 'geojson', id: 'foo'}, 'hover');
-                const fState = map.getFeatureState({source: 'geojson', id: 'foo'});
-                t.equal(fState.hover, undefined);
-                t.equal(fState.click, true);
-                t.end();
-            });
-        });
-        t.test('remove specific state property', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-                map.removeFeatureState({source: 'geojson', id: 12345}, 'hover');
-                const fState = map.getFeatureState({source: 'geojson', id: 12345});
-                t.equal(fState.hover, undefined);
-                t.end();
-            });
-        });
-        t.test('remove all state properties of one feature', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 1}, {'hover': true, 'foo': true});
-                map.removeFeatureState({source: 'geojson', id: 1});
-
-                const fState = map.getFeatureState({source: 'geojson', id: 1});
-                t.equal(fState.hover, undefined);
-                t.equal(fState.foo, undefined);
-
-                t.end();
-            });
-        });
-        t.test('remove properties for zero-based feature IDs.', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 0}, {'hover': true, 'foo': true});
-                map.removeFeatureState({source: 'geojson', id: 0});
-
-                const fState = map.getFeatureState({source: 'geojson', id: 0});
-                t.equal(fState.hover, undefined);
-                t.equal(fState.foo, undefined);
-
-                t.end();
-            });
-        });
-        t.test('other properties persist when removing specific property', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 1}, {'hover': true, 'foo': true});
-                map.removeFeatureState({source: 'geojson', id: 1}, 'hover');
-
-                const fState = map.getFeatureState({source: 'geojson', id: 1});
-                t.equal(fState.foo, true);
-
-                t.end();
-            });
-        });
-        t.test('remove all state properties of all features in source', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 1}, {'hover': true, 'foo': true});
-                map.setFeatureState({source: 'geojson', id: 2}, {'hover': true, 'foo': true});
-
-                map.removeFeatureState({source: 'geojson'});
-
-                const fState1 = map.getFeatureState({source: 'geojson', id: 1});
-                t.equal(fState1.hover, undefined);
-                t.equal(fState1.foo, undefined);
-
-                const fState2 = map.getFeatureState({source: 'geojson', id: 2});
-                t.equal(fState2.hover, undefined);
-                t.equal(fState2.foo, undefined);
-
-                t.end();
-            });
-        });
-        t.test('specific state deletion should not interfere with broader state deletion', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 1}, {'hover': true, 'foo': true});
-                map.setFeatureState({source: 'geojson', id: 2}, {'hover': true, 'foo': true});
-
-                map.removeFeatureState({source: 'geojson', id: 1});
-                map.removeFeatureState({source: 'geojson', id: 1}, 'foo');
-
-                const fState1 = map.getFeatureState({source: 'geojson', id: 1});
-                t.equal(fState1.hover, undefined);
-
-                map.setFeatureState({source: 'geojson', id: 1}, {'hover': true, 'foo': true});
-                map.removeFeatureState({source: 'geojson'});
-                map.removeFeatureState({source: 'geojson', id: 1}, 'foo');
-
-                const fState2 = map.getFeatureState({source: 'geojson', id: 2});
-                t.equal(fState2.hover, undefined);
-
-                map.setFeatureState({source: 'geojson', id: 2}, {'hover': true, 'foo': true});
-                map.removeFeatureState({source: 'geojson'});
-                map.removeFeatureState({source: 'geojson', id: 2}, 'foo');
-
-                const fState3 = map.getFeatureState({source: 'geojson', id: 2});
-                t.equal(fState3.hover, undefined);
-
-                t.end();
-            });
-        });
-        t.test('add/remove and remove/add state', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.setFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-
-                map.removeFeatureState({source: 'geojson', id: 12345});
-                map.setFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-
-                const fState1 = map.getFeatureState({source: 'geojson', id: 12345});
-                t.equal(fState1.hover, true);
-
-                map.removeFeatureState({source: 'geojson', id: 12345});
-
-                const fState2 = map.getFeatureState({source: 'geojson', id: 12345});
-                t.equal(fState2.hover, undefined);
-
-                t.end();
-            });
-        });
-        t.test('throw before loaded', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            t.throws(() => {
-                map.removeFeatureState({source: 'geojson', id: 12345}, {'hover': true});
-            }, Error, /load/i);
-
-            t.end();
-        });
-        t.test('fires an error if source not found', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "geojson": createStyleSource()
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /source/);
-                    t.end();
-                });
-                map.removeFeatureState({source: 'vector', id: 12345}, {'hover': true});
-            });
-        });
-        t.test('fires an error if sourceLayer not provided for a vector source', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "vector": {
-                            "type": "vector",
-                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
-                        }
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /sourceLayer/);
-                    t.end();
-                });
-                map.removeFeatureState({source: 'vector', sourceLayer: 0, id: 12345}, {'hover': true});
-            });
-        });
-        t.test('fires an error if state property is provided without a feature id', (t) => {
-            const map = createMap(t, {
-                style: {
-                    "version": 8,
-                    "sources": {
-                        "vector": {
-                            "type": "vector",
-                            "tiles": ["http://example.com/{z}/{x}/{y}.png"]
-                        }
-                    },
-                    "layers": []
-                }
-            });
-            map.on('load', () => {
-                map.on('error', ({error}) => {
-                    t.match(error.message, /id/);
-                    t.end();
-                });
-                map.removeFeatureState({source: 'vector', sourceLayer: "1"}, {'hover': true});
-            });
-        });
-        t.end();
-    });
-
-    t.test('error event', (t) => {
-        t.test('logs errors to console when it has NO listeners', (t) => {
-            const map = createMap(t);
-            const stub = t.stub(console, 'error');
+    describe('error event', () => {
+        test('logs errors to console when it has NO listeners', () => {
+            const map = createMap();
+            const stub = vi.spyOn(console, 'error').mockImplementation(() => {});
             const error = new Error('test');
             map.fire(new ErrorEvent(error));
-            t.ok(stub.calledOnce);
-            t.equal(stub.getCall(0).args[0], error);
-            t.end();
+            expect(stub).toHaveBeenCalledTimes(1);
+            expect(stub.mock.calls[0][0]).toEqual(error);
         });
 
-        t.test('calls listeners', (t) => {
-            const map = createMap(t);
+        test('calls listeners', async () => {
+            const map = createMap();
             const error = new Error('test');
-            map.on('error', (event) => {
-                t.equal(event.error, error);
-                t.end();
+            await new Promise(resolve => {
+                map.on("error", (event) => {
+                    expect(event.error).toEqual(error);
+                    resolve();
+                });
+                map.fire(new ErrorEvent(error));
             });
-            map.fire(new ErrorEvent(error));
         });
-
-        t.end();
     });
 
-    t.test('render stabilizes', (t) => {
+    test('render stabilizes', async () => {
         const style = createStyle();
         style.sources.mapbox = {
             type: 'vector',
             minzoom: 1,
             maxzoom: 10,
-            tiles: ['http://example.com/{z}/{x}/{y}.png']
+            tiles: ['/test/util/fixtures/{z}/{x}/{y}.pbf']
         };
         style.layers.push({
             id: 'layerId',
@@ -2908,44 +868,37 @@ test('Map', (t) => {
         });
 
         let timer;
-        const map = createMap(t, {style});
-        map.on('render', () => {
-            if (timer) clearTimeout(timer);
+        const map = createMap({style});
+        await waitFor(map, "render");
+        if (timer) clearTimeout(timer);
+        await new Promise(resolve => {
             timer = setTimeout(() => {
-                map.off('render');
-                map.on('render', t.fail);
-                t.notOk(map._frameId, 'no rerender scheduled');
-                t.end();
+                expect(map._frameId).toBeFalsy();
+                resolve();
             }, 100);
         });
     });
 
-    t.test('no render after idle event', (t) => {
+    test('no render after idle event', async () => {
         const style = createStyle();
-        const map = createMap(t, {style});
-        map.on('idle', () => {
-            map.on('render', t.fail);
-            setTimeout(() => {
-                t.end();
-            }, 100);
-        });
+        const map = createMap({style});
+        await waitFor(map, "idle");
+        map.on('render', expect.unreachable);
+        setTimeout(() => {}, 100);
     });
 
-    t.test('no idle event during move', (t) => {
+    test('no idle event during move', async () => {
         const style = createStyle();
-        const map = createMap(t, {style, fadeDuration: 0});
-        map.once('idle', () => {
-            map.zoomTo(0.5, {duration: 100});
-            t.ok(map.isMoving(), "map starts moving immediately after zoomTo");
-            map.once('idle', () => {
-                t.ok(!map.isMoving(), "map stops moving before firing idle event");
-                t.end();
-            });
-        });
+        const map = createMap({style, fadeDuration: 0});
+        await waitFor(map, "idle");
+        map.zoomTo(0.5, {duration: 100});
+        expect(map.isMoving()).toBeTruthy();
+        await waitFor(map, "idle");
+        expect(!map.isMoving()).toBeTruthy();
     });
 
-    t.test('#removeLayer restores Map#loaded() to true', (t) => {
-        const map = createMap(t, {
+    test('#removeLayer restores Map#loaded() to true', async () => {
+        const map = createMap({
             style: extend(createStyle(), {
                 sources: {
                     mapbox: {
@@ -2964,100 +917,112 @@ test('Map', (t) => {
             })
         });
 
-        map.once('render', () => {
-            map.removeLayer('layerId');
-            map.on('render', () => {
-                if (map.loaded()) {
-                    map.remove();
-                    t.end();
-                }
-            });
-        });
+        await waitFor(map, "render");
+        map.removeLayer('layerId');
+        await waitFor(map, "render");
+        if (map.loaded()) {
+            map.remove();
+        }
     });
 
-    t.test('stops camera animation on mousedown when interactive', (t) => {
-        const map = createMap(t, {interactive: true});
+    test('stops camera animation on mousedown when interactive', () => {
+        const map = createMap({interactive: true});
         map.flyTo({center: [200, 0], duration: 100});
 
         simulate.mousedown(map.getCanvasContainer());
-        t.equal(map.isEasing(), false);
+        expect(map.isEasing()).toEqual(false);
 
         map.remove();
-        t.end();
     });
 
-    t.test('continues camera animation on mousedown when non-interactive', (t) => {
-        const map = createMap(t, {interactive: false});
+    test('continues camera animation on mousedown when non-interactive', () => {
+        const map = createMap({interactive: false});
         map.flyTo({center: [200, 0], duration: 100});
 
         simulate.mousedown(map.getCanvasContainer());
-        t.equal(map.isEasing(), true);
+        expect(map.isEasing()).toEqual(true);
 
         map.remove();
-        t.end();
     });
 
-    t.test('stops camera animation on touchstart when interactive', (t) => {
-        const map = createMap(t, {interactive: true});
+    test('stops camera animation on touchstart when interactive', () => {
+        const map = createMap({interactive: true});
         map.flyTo({center: [200, 0], duration: 100});
 
-        simulate.touchstart(map.getCanvasContainer(), {touches: [{target: map.getCanvas(), clientX: 0, clientY: 0}]});
-        t.equal(map.isEasing(), false);
+        simulate.touchstart(map.getCanvasContainer(), {touches: [constructTouch(map.getCanvasContainer(), {target: map.getCanvas(), clientX: 0, clientY: 0})]});
+        expect(map.isEasing()).toEqual(false);
 
         map.remove();
-        t.end();
     });
 
-    t.test('continues camera animation on touchstart when non-interactive', (t) => {
-        const map = createMap(t, {interactive: false});
+    test('continues camera animation on touchstart when non-interactive', () => {
+        const map = createMap({interactive: false});
         map.flyTo({center: [200, 0], duration: 100});
 
         simulate.touchstart(map.getCanvasContainer());
-        t.equal(map.isEasing(), true);
+        expect(map.isEasing()).toEqual(true);
 
         map.remove();
-        t.end();
     });
 
-    t.test('should calculate correct canvas size when transform css property is applied', (t) => {
-        const map = createMap(t);
-        Object.defineProperty(window, 'getComputedStyle',
-            {value: () => ({transform: 'matrix(0.5, 0, 0, 0.5, 0, 0)'})});
+    test('should not have tabindex attribute when non-interactive', () => {
+        const map = createMap({interactive: false});
+
+        expect(map.getCanvas().getAttribute('tabindex')).toBeFalsy();
+
+        map.remove();
+    });
+
+    test('should calculate correct canvas size when transform css property is applied', () => {
+        const map = createMap();
+        vi.stubGlobal(
+            'getComputedStyle',
+            () => ({transform: 'matrix(0.5, 0, 0, 0.5, 0, 0)'})
+        );
 
         map.resize();
 
-        t.equal(map._containerWidth, 400);
-        t.equal(map._containerHeight, 400);
-
-        map.remove();
-        t.end();
+        expect(map._containerWidth).toEqual(400);
+        expect(map._containerHeight).toEqual(400);
     });
 
-    t.test('should not warn when CSS is present', (t) => {
-        const stub = t.stub(console, 'warn');
+    describe('CSS warning', () => {
+        let container;
+        beforeEach(() => {
+            container = window.document.createElement('div');
+            window.document.body.appendChild(container);
+            window.document.styleSheets[0].insertRule('.mapboxgl-canary { background-color: rgb(250, 128, 114); }', 0);
+        });
 
-        const styleSheet = new window.CSSStyleSheet();
-        styleSheet.insertRule('.mapboxgl-canary { background-color: rgb(250, 128, 114); }', 0);
-        window.document.styleSheets[0] = styleSheet;
-        window.document.styleSheets.length = 1;
+        afterEach(() => {
+            const [index] = Object.entries(window.document.styleSheets[0].cssRules).find(([, rule]) => {
+                return rule.selectorText === '.mapboxgl-canary';
+            });
+            try { window.document.body.removeChild(container); } catch (err) { /* noop */ }
+            try { window.document.styleSheets[0].deleteRule(index); } catch (err) { /* noop */ }
+        });
 
-        new Map({container: window.document.createElement('div'), testMode: true});
+        test('should not warn when CSS is present', async () => {
+            const stub = vi.spyOn(console, 'warn');
+            await new Promise(resolve => {
+                setTimeout(() => {
+                    new Map({container, testMode: true});
+                    resolve();
+                }, 0);
+            });
+            expect(stub).not.toHaveBeenCalled();
+        });
 
-        t.notok(stub.calledOnce);
-        t.end();
+        test('should warn when CSS is missing', () => {
+            const stub = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            new Map({container: window.document.createElement('div'), testMode: true});
+
+            expect(stub).toHaveBeenCalledTimes(1);
+        });
     });
 
-    t.test('should warn when CSS is missing', (t) => {
-        const stub = t.stub(console, 'warn');
-        new Map({container: window.document.createElement('div'), testMode: true});
-
-        t.ok(stub.calledOnce);
-
-        t.end();
-    });
-
-    t.test('continues camera animation on resize', (t) => {
-        const map = createMap(t),
+    test('continues camera animation on resize', () => {
+        const map = createMap(),
             container = map.getContainer();
 
         map.flyTo({center: [200, 0], duration: 100});
@@ -3067,69 +1032,300 @@ test('Map', (t) => {
 
         map.resize();
 
-        t.ok(map.isMoving(), 'map is still moving after resize due to camera animation');
-
-        t.end();
+        expect(map.isMoving()).toBeTruthy();
     });
 
-    t.test('map fires `styleimagemissing` for missing icons', (t) => {
-        const map = createMap(t);
+    test('map fires `styleimagemissing` for missing icons', async () => {
+        const map = createMap();
 
         const id = "missing-image";
 
         let called;
-        map.on('styleimagemissing', e => {
-            map.addImage(e.id, {width: 1, height: 1, data: new Uint8Array(4)});
-            called = e.id;
-        });
 
-        t.notok(map.hasImage(id));
-
-        map.style.imageManager.getImages([id], () => {
-            t.equals(called, id);
-            t.ok(map.hasImage(id));
-            t.end();
+        await new Promise(resolve => {
+            map.on("styleimagemissing", e => {
+                map.addImage(e.id, {width: 1, height: 1, data: new Uint8Array(4)});
+                called = e.id;
+                resolve();
+            });
+            expect(map.hasImage(id)).toBeFalsy();
+            map.style.imageManager.getImages([id], '', () => {
+                expect(called).toEqual(id);
+                expect(map.hasImage(id)).toBeTruthy();
+            });
         });
     });
 
-    t.test('map does not fire `styleimagemissing` for empty icon values', (t) => {
-        const map = createMap(t);
+    test('map does not fire `styleimagemissing` for empty icon values', async () => {
+        const map = createMap();
 
-        map.on('load', () => {
-            map.on('idle', () => {
-                t.end();
+        await waitFor(map, "load");
+
+        map.addSource('foo', {
+            type: 'geojson',
+            data: {type: 'Point', coordinates: [0, 0]}
+        });
+        map.addLayer({
+            id: 'foo',
+            type: 'symbol',
+            source: 'foo',
+            layout: {
+                'icon-image': ['case', true, '', '']
+            }
+        });
+
+        await new Promise(resolve => {
+            map.on("styleimagemissing", ({id}) => {
+                expect.unreachable(`styleimagemissing fired for value ${id}`);
+                resolve();
             });
 
-            map.addSource('foo', {
-                type: 'geojson',
-                data: {type: 'Point', coordinates: [0, 0]}
-            });
-            map.addLayer({
-                id: 'foo',
-                type: 'symbol',
-                source: 'foo',
-                layout: {
-                    'icon-image': ['case', true, '', '']
+            map.on("idle", resolve);
+        });
+    });
+
+    test('map#setLights map#getLights', async () => {
+        const map = createMap();
+
+        await waitFor(map, "load");
+        const lights = [
+            {
+                id: "sun_light",
+                type: "directional",
+                properties: {
+                    "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                    "intensity": 0.4,
+                    "direction": [200.0, 40.0],
+                    "cast-shadows": true,
+                    "shadow-intensity": 0.2
                 }
-            });
+            },
+            {
+                "id": "environment",
+                "type": "ambient",
+                "properties": {
+                    "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                    "intensity": 0.4
+                }
+            }
+        ];
 
-            map.on('styleimagemissing', ({id}) => {
-                t.fail(`styleimagemissing fired for value ${id}`);
-            });
+        map.setLights(lights);
+        expect(map.getLights()).toEqual(lights);
+        map.setLights(null);
+        expect(map.getLights()).toEqual([
+            {
+                "id": "flat",
+                "properties": {},
+                "type": "flat"
+            }
+        ]);
+    });
+
+    test('map#setLights with missing id and light type throws error', async () => {
+        const map = createMap();
+
+        await waitFor(map, "load");
+        const lights = [{
+            properties: {
+                "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                "intensity": 0.4,
+                "direction": [200.0, 40.0],
+                "cast-shadows": true,
+                "shadow-intensity": 0.2
+            }
+        }];
+
+        const stub = vi.spyOn(console, 'error').mockImplementation(() => {});
+        map.setLights(lights);
+
+        expect(stub).toHaveBeenCalledTimes(1);
+    });
+
+    describe('map.version', () => {
+        let map;
+        let version;
+
+        beforeEach(() => {
+            map = createMap();
+            version = map.version;
+        });
+
+        test('returns version string', () => {
+            expect(version).toBeTruthy();
+            expect(version).toMatch(/^3\.[0-9]+\.[0-9]+(-(dev|alpha|beta|rc)\.[1-9])?$/);
+        });
+        test('cannot be set', () => {
+            expect(() => {
+                map.version = "2.0.0-beta.9";
+            }).toThrowError(TypeError);
+            expect(map.version).not.toBe("2.0.0-beta.9");
+            expect(map.version).toBe(version);
         });
     });
 
-    t.end();
+    describe('#queryTerrainElevation', () => {
+        test('no elevation set', () => {
+            const map = createMap();
+            let elevation = map.queryTerrainElevation([25, 60]);
+            expect(elevation).toBeFalsy();
+
+            elevation = map.queryTerrainElevation([0, 0]);
+            expect(elevation).toBeFalsy();
+        });
+
+        test('constant elevation', () => {
+            const map = createMap();
+            map.transform.elevation = createElevation(() => 100, 1.0);
+
+            let elevation = map.queryTerrainElevation([25, 60]);
+            expect(elevation).toEqual(100);
+
+            elevation = map.queryTerrainElevation([0, 0]);
+            expect(elevation).toEqual(100);
+        });
+
+        test('elevation with exaggeration', () => {
+            const map = createMap();
+            map.transform.elevation = createElevation((point) => point.x + point.y, 0.1);
+
+            let elevation = map.queryTerrainElevation([0, 0]);
+            expect(fixedNum(elevation, 7)).toEqual(0.1);
+
+            elevation = map.queryTerrainElevation([180, 0]);
+            expect(fixedNum(elevation, 7)).toEqual(0.15);
+
+            elevation = map.queryTerrainElevation([-180, 85.051129]);
+            expect(fixedNum(elevation, 7)).toEqual(-0.0);
+
+            elevation = map.queryTerrainElevation([180, -85.051129]);
+            expect(fixedNum(elevation, 6)).toEqual(0.2);
+        });
+    });
+
+    describe('#isPointOnSurface', () => {
+        test('Off the map', () => {
+            const map = createMap();
+
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+            expect(map.isPointOnSurface([0, 0])).toEqual(true);
+            expect(map.isPointOnSurface([200, 200])).toEqual(true);
+
+            expect(map.isPointOnSurface([-100, -100])).toEqual(false);
+            expect(map.isPointOnSurface([300, 300])).toEqual(false);
+        });
+
+        test('Mercator', () => {
+            const map = createMap({
+                zoom: 0,
+                projection: 'mercator'
+            });
+
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+
+            map.setPitch(90);
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+            expect(map.isPointOnSurface([100, 85])).toEqual(false);
+        });
+
+        test('Globe', async () => {
+            const map = createMap({
+                zoom: 0,
+                projection: 'globe'
+            });
+
+            await waitFor(map, "load");
+            // On the Globe
+            expect(map.isPointOnSurface([45, 45])).toEqual(true);
+            expect(map.isPointOnSurface([135, 45])).toEqual(true);
+            expect(map.isPointOnSurface([135, 135])).toEqual(true);
+            expect(map.isPointOnSurface([45, 135])).toEqual(true);
+
+            // Off the Globe
+            expect(map.isPointOnSurface([25, 25])).toEqual(false);
+            expect(map.isPointOnSurface([175, 25])).toEqual(false);
+            expect(map.isPointOnSurface([175, 175])).toEqual(false);
+            expect(map.isPointOnSurface([25, 175])).toEqual(false);
+
+            // North pole
+            map.setCenter([0, 90]);
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+
+            // North pole with pitch
+            map.setPitch(90);
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+            expect(map.isPointOnSurface([100, 85])).toEqual(false);
+
+            map.setZoom(5);
+            map.setCenter([0, 0]);
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+            expect(map.isPointOnSurface([100, 85])).toEqual(false);
+
+            map.setZoom(6);
+            expect(map.isPointOnSurface([100, 100])).toEqual(true);
+            expect(map.isPointOnSurface([100, 85])).toEqual(false);
+        });
+    });
 });
 
-function createStyle() {
-    return {
-        version: 8,
-        center: [-73.9749, 40.7736],
-        zoom: 12.5,
-        bearing: 29,
-        pitch: 50,
-        sources: {},
-        layers: []
-    };
-}
+test('Disallow usage of FQID separator in the public APIs', async () => {
+    const map = createMap();
+    const spy = vi.fn();
+    map.on('error', spy);
+
+    await waitFor(map, "style.load");
+
+    map.getLayer(null);
+    map.getSource(undefined);
+
+    map.getLayer(makeFQID('id', 'scope'));
+    map.addLayer({id: makeFQID('id', 'scope')});
+    map.moveLayer(makeFQID('id', 'scope'));
+    map.removeLayer(makeFQID('id', 'scope'));
+
+    map.getLayoutProperty(makeFQID('id', 'scope'));
+    map.setLayoutProperty(makeFQID('id', 'scope'));
+
+    map.getPaintProperty(makeFQID('id', 'scope'));
+    map.setPaintProperty(makeFQID('id', 'scope'));
+
+    map.setLayerZoomRange(makeFQID('id', 'scope'));
+
+    map.getFilter(makeFQID('id', 'scope'));
+    map.setFilter(makeFQID('id', 'scope'));
+
+    map.getSource(makeFQID('id', 'scope'));
+    map.addSource(makeFQID('id', 'scope'));
+    map.removeSource(makeFQID('id', 'scope'));
+    map.isSourceLoaded(makeFQID('id', 'scope'));
+
+    map.getFeatureState({source: makeFQID('id', 'scope')});
+    map.setFeatureState({source: makeFQID('id', 'scope')});
+    map.removeFeatureState({source: makeFQID('id', 'scope')});
+
+    map.querySourceFeatures(makeFQID('id', 'scope'));
+    map.queryRenderedFeatures([0, 0], {layers: [makeFQID('id', 'scope')]});
+
+    map.on('click', makeFQID('id', 'scope'), () => {});
+    map.once('click', makeFQID('id', 'scope'), () => {});
+    map.off('click', makeFQID('id', 'scope'));
+
+    const callCount = 24;
+    expect(spy.mock.calls.length).toEqual(callCount);
+
+    const event0 = spy.mock.calls[0][0];
+
+    expect(event0).toBeTruthy();
+    expect(event0.error.message).toMatch(/can't be empty/);
+
+    const event1 = spy.mock.calls[1][0];
+
+    expect(event1).toBeTruthy();
+    expect(event1.error.message).toMatch(/can't be empty/);
+
+    for (let i = 2; i <= callCount - 1; i++) {
+        const event = spy.mock.calls[i][0];
+        expect(event).toBeTruthy();
+        expect(event.error.message).toMatch(/can't contain special symbols/);
+    }
+});

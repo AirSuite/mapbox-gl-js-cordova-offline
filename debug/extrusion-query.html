@@ -15,12 +15,12 @@
 <body>
 <div id='map'></div>
 <div id='controls'>
-    <button id="animate">Animate</button><br />
     <label><input id='terrain-checkbox' type='checkbox'> terrain</label><br />
     <div>
         <label>Projection:</label>
         <select id="projName">
             <option value="mercator" selected>Mercator</option>
+            <option value="globe">Globe</option>
             <option value="albers">Albers USA</option>
             <option value="equalEarth">Equal Earth</option>
             <option value="equirectangular">Equirectangular</option>
@@ -37,6 +37,7 @@
 
 var map = window.map = new mapboxgl.Map({
     container: 'map',
+    devtools: true,
     zoom: 16.9,
     center: [-73.989816, 40.76263],
     pitch: 60,

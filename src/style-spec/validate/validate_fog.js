@@ -1,9 +1,12 @@
+// @flow
 
-import ValidationError from '../error/validation_error.js';
+import {default as ValidationError, ValidationWarning} from '../error/validation_error.js';
 import validate from './validate.js';
 import getType from '../util/get_type.js';
 
-export default function validateFog(options) {
+import type {ValidationOptions} from './validate.js';
+
+export default function validateFog(options: ValidationOptions): Array<ValidationError> {
     const fog = options.value;
     const style = options.style;
     const styleSpec = options.styleSpec;
@@ -38,7 +41,7 @@ export default function validateFog(options) {
                 styleSpec
             }));
         } else {
-            errors = errors.concat([new ValidationError(key, fog[key], `unknown property "${key}"`)]);
+            errors = errors.concat([new ValidationWarning(key, fog[key], `unknown property "${key}"`)]);
         }
     }
 

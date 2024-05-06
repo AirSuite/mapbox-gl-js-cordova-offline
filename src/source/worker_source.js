@@ -17,6 +17,7 @@ import type Projection from '../geo/projection/projection.js';
 
 export type TileParameters = {
     source: string,
+    scope: string;
     uid: number,
 };
 
@@ -36,18 +37,25 @@ export type WorkerTileParameters = RequestedTileParameters & {
     pixelRatio: number,
     showCollisionBoxes: boolean,
     collectResourceTiming?: boolean,
-    returnDependencies?: boolean,
-    enableTerrain?: boolean,
     projection: Projection,
+    brightness: number,
+    extraShadowCaster?: boolean,
     mbtiles: boolean
 };
+
+export type DEMSourceEncoding = "mapbox" | "terrarium";
 
 export type WorkerDEMTileParameters = TileParameters & {
     coord: { z: number, x: number, y: number, w: number },
     rawImageData: ImageData | ImageBitmap,
-    encoding: "mapbox" | "terrarium",
+    encoding: DEMSourceEncoding,
     padding: number,
-    buildQuadTree?: boolean
+    convertToFloat: boolean
+};
+
+export type WorkerRasterArrayTileParameters = {
+    buffer: ArrayBuffer,
+    task: any,
 };
 
 export type WorkerTileResult = {
@@ -59,6 +67,7 @@ export type WorkerTileResult = {
     collisionBoxArray: CollisionBoxArray,
     rawTileData?: ArrayBuffer,
     resourceTiming?: Array<PerformanceResourceTiming>,
+    brightness: number,
     // Only used for benchmarking:
     glyphMap?: {[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}} | null,
     iconMap?: {[_: string]: StyleImage} | null,
@@ -67,6 +76,7 @@ export type WorkerTileResult = {
 
 export type WorkerTileCallback = (error: ?Error, result: ?WorkerTileResult) => void;
 export type WorkerDEMTileCallback = (err: ?Error, result: ?DEMData) => void;
+export type WorkerRasterArrayTileCallback = (err: ?Error, result: ?any) => void;
 
 /**
  * May be implemented by custom source types to provide code that can be run on

@@ -2,13 +2,13 @@
 
 import Point from '@mapbox/point-geometry';
 
-function pointToLineDist(px, py, ax, ay, bx, by) {
+function pointToLineDist(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
     const dx = ax - bx;
     const dy = ay - by;
     return Math.abs((ay - py) * dx - (ax - px) * dy) / Math.hypot(dx, dy);
 }
 
-function addResampled(resampled, mx0, my0, mx2, my2, start, end, reproject, tolerance) {
+function addResampled(resampled: Array<Point>, mx0: number, my0: number, mx2: number, my2: number, start: Point, end: Point, reproject: ((Point) => void), tolerance: number) {
     const mx1 = (mx0 + mx2) / 2;
     const my1 = (my0 + my2) / 2;
     const mid = new Point(mx1, my1);
@@ -29,7 +29,7 @@ function addResampled(resampled, mx0, my0, mx2, my2, start, end, reproject, tole
 
 // reproject and resample a line, adding point where necessary for lines that become curves;
 // note that this operation is mutable (modifying original points) for performance
-export default function resample(line: Array<Point>, reproject: (Point) => Point, tolerance: number): Array<Point> {
+export default function resample(line: Array<Point>, reproject: (Point) => void, tolerance: number): Array<Point> {
     let prev = line[0];
     let mx0 = prev.x;
     let my0 = prev.y;
@@ -43,6 +43,33 @@ export default function resample(line: Array<Point>, reproject: (Point) => Point
         addResampled(resampled, mx0, my0, x, y, prev, point, reproject, tolerance);
         mx0 = x;
         my0 = y;
+        prev = point;
+    }
+
+    return resampled;
+}
+
+function addResampledPred(resampled: Point[], a: Point, b: Point, pred: ((Point, Point) => boolean)) {
+    const split = pred(a, b);
+
+    // if the predicate condition is met, recurse into two halves
+    if (split) {
+        const mid = a.add(b)._mult(0.5);
+        addResampledPred(resampled, a, mid, pred);
+        addResampledPred(resampled, mid, b, pred);
+
+    } else {
+        resampled.push(b);
+    }
+}
+
+export function resamplePred(line: Point[], predicate: (Point, Point) => boolean): Point[] {
+    let prev = line[0];
+    const resampled = [prev];
+
+    for (let i = 1; i < line.length; i++) {
+        const point = line[i];
+        addResampledPred(resampled, prev, point, predicate);
         prev = point;
     }
 

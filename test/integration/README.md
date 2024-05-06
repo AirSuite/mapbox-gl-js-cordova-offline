@@ -19,30 +19,30 @@ The contents of vector tile fixtures can be read using the [`vt2geojson`](https:
 
 To run the entire integration test suite (both render or query tests), from within the `mapbox-gl-js` directory run the command:
 ```
-yarn run test-suite
+npm run test-suite
 ```
 
 To run only the render/query tests:
 
 ```
-yarn run test-render
+npm run test-render
 ```
 or
 ```
-yarn run test-query
+npm run test-query
 ```
 
 To run only the expression tests:
 
 ```
-yarn run test-expressions
+npm run test-expressions
 ```
 
 ### Running specific tests
 
 To run a subset of tests or an individual test, you can pass a specific subdirectory to the `test-render` script. For example, to run all the tests for a given property, e.g. `circle-radius`:
 ```
-$ yarn run test-render tests=circle-radius
+$ npm run test-render tests=circle-radius
 ...
 * passed circle-radius/antimeridian
 * passed circle-radius/default
@@ -56,7 +56,7 @@ Done in 2.71s.
 ```
 Or to run a single test:
 ```
-$ yarn run test-render tests=circle-radius/literal
+$ npm run test-render tests=circle-radius/literal
 ...
 * passed circle-radius/literal
 1 passed (100.0%)
@@ -82,11 +82,11 @@ open ./test/integration/query-tests/index.html
 
 Render and query tests can be run in the browser. The server for serving up the test page and test fixtures starts when you run
 ```
-yarn run watch-query
+npm run watch-query
 ```
 or
 ```
-yarn run watch-render
+npm run watch-render
 ```
 
 Then open the following url in the browser of your choice to start running the tests.
@@ -106,6 +106,17 @@ You can run a specific test by as follows
 ```
 ?filter=circle-radius/antimeridian
 ```
+
+### Enable ANGLE configuration on render tests
+
+Some devices (e.g. M1 Macs) seem to run test with significantly less failures when forcing the ANGLE backend to use OpenGL.
+
+To configure the ANGLE backend, you can set the `--use-angle` input value to `USE_ANGLE` in CLI like so:
+```
+USE_ANGLE={INPUT} npm run test-render
+```
+
+Accepted inputs for `USE_ANGLE` are `metal`, `gl`, `vulkan`, `swiftshader`, and `gles`. See `chrome://flags/#use-angle` for more information on the `--use-angle` flag.
 
 ### Build Notifications
 
@@ -127,15 +138,33 @@ To add a new render test:
 
 3. Generate an `expected.png` image from the given style by running the new test with the `UPDATE` flag enabled:
    ```
-   $ UPDATE=1 yarn run test-render tests=<property-name>/<new-test-name>
+   $ UPDATE=1 npm run test-render tests=<property-name>/<new-test-name>
    ```
    The test will appear to fail, but you'll now see a new `expected.png` in the test directory.
 
-4. Manually inspect `expected.png` to verify it looks as expected, and optionally run the test again without the update flag (`yarn run test-render <property-name>/<new-test-name>`) to watch it pass (enjoy that dopamine kick!)
+4. Manually inspect `expected.png` to verify it looks as expected, and optionally run the test again without the update flag (`npm run test-render <property-name>/<new-test-name>`) to watch it pass (enjoy that dopamine kick!)
 
 5. Commit the new `style.json` and `expected.png` :rocket:
 
+## Tests on CircleCI
 
+Every pushed commit triggers test runs on the CircleCI server. These catch regressions and prevent platform-specific bugs.
+
+Render tests often fail due to minor antialiasing differences between platforms. In these cases, you can add an "allowed" property under "test" in the test's `style.json` to tell the test runner the degree of difference that is acceptable. This is the fraction of pixels that can differ between `expected.png` and `actual.png`, ignoring some antialiasing, that will still allow the test to pass.
+
+How much to adjust the "allowed" is acceptable depends on the test, but alloweds >= .01 are usually much too high. Especially with larger test images, alloweds should generally be negligable, since a too-high allowed will fail to catch regressions and significant rendering differences suggest a bug.
+
+Larger alloweds are acceptable for testing debug features that will not be directly used by customers.
+
+## Ignores
+
+If a test fails on a run with too large a difference to adjust the "allowed," it can be added to the corresponding [ignore file](../ignore) for the browser or operating system.
+
+Ignores include tests under `"todo"` and `"skip"`. `"todo"` tests show up in test results but do not trigger a failing run. Most tests failing on one pltaform should be marked as "ignore." This allows us to notice if the tests start passing.
+
+Tests under `"skip"` will not run at all. Tests should be skipped if they trigger crashes or if they are flaky (to prevent falsely concluding that the test is a non-issue).
+
+Ignored tests should link to an issue explaining the reason for ignoring the test.
 ## Reading Vector Tile Fixtures
 
 Install `vt2geojson`, a command line utility which turns vector tiles into geojson, and `harp`, a simple file server.

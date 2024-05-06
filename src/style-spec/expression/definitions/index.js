@@ -14,7 +14,7 @@ import {
     toString as typeToString
 } from '../types.js';
 
-import {typeOf, Color, validateRGBA, toString as valueToString} from '../values.js';
+import {typeOf, Color, validateRGBA, validateHSLA, toString as valueToString} from '../values.js';
 import CompoundExpression from '../compound_expression.js';
 import RuntimeError from '../runtime_error.js';
 import Let from './let.js';
@@ -45,9 +45,13 @@ import FormatExpression from './format.js';
 import ImageExpression from './image.js';
 import Length from './length.js';
 import Within from './within.js';
+import Config from './config.js';
+import Distance from './distance.js';
+import {mulberry32} from '../../util/random.js';
 
+import type EvaluationContext from '../evaluation_context.js';
 import type {Varargs} from '../compound_expression.js';
-import type {ExpressionRegistry} from '../expression.js';
+import type {Expression, ExpressionRegistry} from '../expression.js';
 
 const expressions: ExpressionRegistry = {
     // special forms
@@ -57,38 +61,62 @@ const expressions: ExpressionRegistry = {
     '<': LessThan,
     '>=': GreaterThanOrEqual,
     '<=': LessThanOrEqual,
+    // $FlowFixMe[method-unbinding]
     'array': Assertion,
+    // $FlowFixMe[method-unbinding]
     'at': At,
     'boolean': Assertion,
+    // $FlowFixMe[method-unbinding]
     'case': Case,
+    // $FlowFixMe[method-unbinding]
     'coalesce': Coalesce,
+    // $FlowFixMe[method-unbinding]
     'collator': CollatorExpression,
+    // $FlowFixMe[method-unbinding]
     'format': FormatExpression,
+    // $FlowFixMe[method-unbinding]
     'image': ImageExpression,
+    // $FlowFixMe[method-unbinding]
     'in': In,
+    // $FlowFixMe[method-unbinding]
     'index-of': IndexOf,
+    // $FlowFixMe[method-unbinding]
     'interpolate': Interpolate,
     'interpolate-hcl': Interpolate,
     'interpolate-lab': Interpolate,
+    // $FlowFixMe[method-unbinding]
     'length': Length,
+    // $FlowFixMe[method-unbinding]
     'let': Let,
+    // $FlowFixMe[method-unbinding]
     'literal': Literal,
+    // $FlowFixMe[method-unbinding]
     'match': Match,
     'number': Assertion,
+    // $FlowFixMe[method-unbinding]
     'number-format': NumberFormat,
     'object': Assertion,
+    // $FlowFixMe[method-unbinding]
     'slice': Slice,
+    // $FlowFixMe[method-unbinding]
     'step': Step,
     'string': Assertion,
+    // $FlowFixMe[method-unbinding]
     'to-boolean': Coercion,
     'to-color': Coercion,
     'to-number': Coercion,
     'to-string': Coercion,
+    // $FlowFixMe[method-unbinding]
     'var': Var,
-    'within': Within
+    // $FlowFixMe[method-unbinding]
+    'within': Within,
+    // $FlowFixMe[method-unbinding]
+    'distance': Distance,
+    // $FlowFixMe[method-unbinding]
+    'config': Config
 };
 
-function rgba(ctx, [r, g, b, a]) {
+function rgba(ctx: EvaluationContext, [r, g, b, a]: Array<Expression>) {
     r = r.evaluate(ctx);
     g = g.evaluate(ctx);
     b = b.evaluate(ctx);
@@ -98,16 +126,29 @@ function rgba(ctx, [r, g, b, a]) {
     return new Color(r / 255 * alpha, g / 255 * alpha, b / 255 * alpha, alpha);
 }
 
-function has(key, obj) {
+function hsla(ctx: EvaluationContext, [h, s, l, a]: Array<Expression>) {
+    h = h.evaluate(ctx);
+    s = s.evaluate(ctx);
+    l = l.evaluate(ctx);
+    const alpha = a ? a.evaluate(ctx) : 1;
+    const error = validateHSLA(h, s, l, alpha);
+    if (error) throw new RuntimeError(error);
+    const colorFunction = `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+    const color = Color.parse(colorFunction);
+    if (!color) throw new RuntimeError(`Failed to parse HSLA color: ${colorFunction}`);
+    return color;
+}
+
+function has(key: string, obj: {[string]: any}): boolean {
     return key in obj;
 }
 
-function get(key, obj) {
+function get(key: string, obj: {[string]: any}) {
     const v = obj[key];
     return typeof v === 'undefined' ? null : v;
 }
 
-function binarySearch(v, a, i, j) {
+function binarySearch(v: any, a: {[number]: any}, i: number, j: number) {
     while (i <= j) {
         const m = (i + j) >> 1;
         if (a[m] === v)
@@ -122,6 +163,19 @@ function binarySearch(v, a, i, j) {
 
 function varargs(type: Type): Varargs {
     return {type};
+}
+
+function hashString(str: string) {
+    let hash = 0;
+    if (str.length === 0) {
+        return hash;
+    }
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash;
 }
 
 CompoundExpression.register(expressions, {
@@ -151,6 +205,16 @@ CompoundExpression.register(expressions, {
         ColorType,
         [NumberType, NumberType, NumberType, NumberType],
         rgba
+    ],
+    'hsl': [
+        ColorType,
+        [NumberType, NumberType, NumberType],
+        hsla
+    ],
+    'hsla': [
+        ColorType,
+        [NumberType, NumberType, NumberType, NumberType],
+        hsla
     ],
     'has': {
         type: BooleanType,
@@ -211,6 +275,11 @@ CompoundExpression.register(expressions, {
         [],
         (ctx) => ctx.distanceFromCenter()
     ],
+    'measure-light': [
+        NumberType,
+        [StringType],
+        (ctx, [s]) => ctx.measureLight(s.evaluate(ctx))
+    ],
     'heatmap-density': [
         NumberType,
         [],
@@ -220,6 +289,16 @@ CompoundExpression.register(expressions, {
         NumberType,
         [],
         (ctx) => ctx.globals.lineProgress || 0
+    ],
+    'raster-value': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterValue || 0
+    ],
+    'raster-particle-speed': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterParticleSpeed || 0
     ],
     'sky-radial-progress': [
         NumberType,
@@ -574,7 +653,30 @@ CompoundExpression.register(expressions, {
         StringType,
         [CollatorType],
         (ctx, [collator]) => collator.evaluate(ctx).resolvedLocale()
-    ]
+    ],
+    'random': [
+        NumberType,
+        [NumberType, NumberType, ValueType],
+        (ctx, args) => {
+            const [min, max, seed] = args.map(arg => arg.evaluate(ctx));
+            if (min > max) {
+                return min;
+            }
+            if (min === max) {
+                return min;
+            }
+            let seedVal;
+            if (typeof seed === 'string') {
+                seedVal = hashString(seed);
+            } else if (typeof seed === 'number') {
+                seedVal = seed;
+            } else {
+                throw new RuntimeError(`Invalid seed input: ${seed}`);
+            }
+            const random = mulberry32(seedVal)();
+            return min + random * (max - min);
+        }
+    ],
 });
 
 export default expressions;

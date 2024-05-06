@@ -4,6 +4,10 @@ import StyleLayer from '../style_layer.js';
 import properties from './sky_style_layer_properties.js';
 import {Transitionable, Transitioning, PossiblyEvaluated} from '../properties.js';
 import {renderColorRamp} from '../../util/color_ramp.js';
+import {warnOnce, degToRad} from '../../util/util.js';
+import {vec3, quat} from 'gl-matrix';
+import assert from 'assert';
+
 import type {PaintProps} from './sky_style_layer_properties.js';
 import type Texture from '../../render/texture.js';
 import type Painter from '../../render/painter.js';
@@ -11,10 +15,8 @@ import type {LayerSpecification} from '../../style-spec/types.js';
 import type Framebuffer from '../../gl/framebuffer.js';
 import type {RGBAImage} from '../../util/image.js';
 import type SkyboxGeometry from '../../render/skybox_geometry.js';
-import type {LightPosition} from '../light.js';
-import {warnOnce, degToRad} from '../../util/util.js';
-import {vec3, quat} from 'gl-matrix';
-import assert from 'assert';
+import type {Position} from '../../util/util.js';
+import type {ConfigOptions} from '../properties.js';
 
 function getCelestialDirection(azimuth: number, altitude: number, leftHanded: boolean) {
     const up = [0, 0, 1];
@@ -31,7 +33,7 @@ class SkyLayer extends StyleLayer {
     _transitionablePaint: Transitionable<PaintProps>;
     _transitioningPaint: Transitioning<PaintProps>;
     paint: PossiblyEvaluated<PaintProps>;
-    _lightPosition: LightPosition;
+    _lightPosition: Position;
 
     skyboxFbo: ?Framebuffer;
     skyboxTexture: ?WebGLTexture;
@@ -42,8 +44,8 @@ class SkyLayer extends StyleLayer {
 
     skyboxGeometry: SkyboxGeometry;
 
-    constructor(layer: LayerSpecification) {
-        super(layer, properties);
+    constructor(layer: LayerSpecification, scope: string, options?: ?ConfigOptions) {
+        super(layer, properties, scope, options);
         this._updateColorRamp();
     }
 
@@ -101,10 +103,6 @@ class SkyLayer extends StyleLayer {
         assert(type === 'gradient');
         const direction = this.paint.get('sky-gradient-center');
         return getCelestialDirection(direction[0], -direction[1] + 90, leftHanded);
-    }
-
-    is3D(): boolean {
-        return false;
     }
 
     isSky(): boolean {

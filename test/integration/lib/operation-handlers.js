@@ -2,8 +2,7 @@
 /* global mapboxgl:readonly */
 import customLayerImplementations from '../custom_layer_implementations.js';
 
-function handleOperation(map, options, opIndex, doneCb) {
-    const operations = options.operations;
+function handleOperation(map, operations, opIndex, doneCb) {
     const operation = operations[opIndex];
     const opName = operation[0];
     //Delegate to special handler if one is available
@@ -28,9 +27,6 @@ export const operationHandlers = {
 
         waitForRender(map, () => map.loaded(), doneCb);
     },
-    idle(map, params, doneCb) {
-        waitForRender(map, () => !map.isMoving(), doneCb);
-    },
     sleep(map, params, doneCb) {
         setTimeout(doneCb, params[0]);
     },
@@ -46,8 +42,59 @@ export const operationHandlers = {
             throw new Error(`addImage opertation failed with src ${image.src}`);
         };
     },
+    addModel(map, params, doneCb) {
+        map.addModel(params[0], params[1]);
+        doneCb();
+    },
+    removeModel(map, params, doneCb) {
+        map.removeModel(params[0]);
+        doneCb();
+    },
+    addLayer(map, params, doneCb) {
+        map.addLayer(params[0], params[1]);
+        waitForRender(map, () => true, doneCb);
+    },
+    setLights(map, params, doneCb) {
+        map.setLights(params[0]);
+        waitForRender(map, () => true, doneCb);
+    },
+    setLight(map, params, doneCb) {
+        // Backward compatibility
+        map.setLights([
+            {
+                "id": "flat",
+                "type": "flat",
+                "properties": params[0]
+            }
+        ]);
+        waitForRender(map, () => true, doneCb);
+    },
     addCustomLayer(map, params, doneCb) {
         map.addLayer(new customLayerImplementations[params[0]](), params[1]);
+        waitForRender(map, () => true, doneCb);
+    },
+    addCustomSource(map, params, doneCb) {
+        map.addSource(params[0], {
+            type: 'custom',
+            maxzoom: 17,
+            tileSize: 256,
+            async loadTile({z, x, y}, {signal}) {
+                const url = params[1]
+                    .replace('local://', '/')
+                    .replace('{z}', String(z))
+                    .replace('{x}', String(x))
+                    .replace('{y}', String(y));
+
+                const response = await window.fetch(url, {signal});
+                if (!response.ok) return null;
+
+                const data = await response.arrayBuffer();
+                const blob = new window.Blob([new Uint8Array(data)], {type: 'image/png'});
+                const imageBitmap = await window.createImageBitmap(blob);
+                return imageBitmap;
+            }
+        });
+
         waitForRender(map, () => true, doneCb);
     },
     updateFakeCanvas(map, params, doneCb) {
@@ -69,7 +116,7 @@ export const operationHandlers = {
         doneCb();
     },
     pauseSource(map, params, doneCb) {
-        for (const sourceCache of map.style._getSourceCaches(params[0])) {
+        for (const sourceCache of map.style.getOwnSourceCaches(params[0])) {
             sourceCache.pause();
         }
         doneCb();
@@ -89,6 +136,14 @@ export const operationHandlers = {
         map.setFreeCameraOptions(options);
         doneCb();
     },
+    setPitchBearing(map, params, doneCb) {
+        const options = map.getFreeCameraOptions();
+        const pitch = params[0][0];
+        const bearing = params[0][1];
+        options.setPitchBearing(pitch, bearing);
+        map.setFreeCameraOptions(options);
+        doneCb();
+    },
     updateImage(map, params, doneCb) {
         map.loadImage(params[1], (error, image) => {
             if (error) throw error;
@@ -100,17 +155,50 @@ export const operationHandlers = {
     forceRenderCached(map, params, doneCb) {
         // No-op in gl-js
         doneCb();
+    },
+    setRuntimeSettingBool(map, params, doneCb) {
+        // No-op in gl-js
+        doneCb();
+    },
+    setCustomTexture(map, params, doneCb) {
+        map.loadImage(params[1], (error, image) => {
+            if (error) throw error;
+
+            const gl = map.painter.context.gl;
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+
+            map.getSource(params[0]).setTexture({
+                "handle": texture,
+                "dimensions": [image.width, image.height]
+            });
+
+            doneCb();
+        });
+
+    },
+    check(map, params, doneCb) {
+        // We still don't handle params[0] === "shadowPassVerticesCount" as lazy shadow map rendering is not implemented
+        if (params[0] === "renderedVerticesCount") {
+            const layer = map.getLayer(params[1]);
+            const layerStats = layer.getLayerRenderingStats();
+            const renderedVertices = params[0] === "renderedVerticesCount" ? layerStats.numRenderedVerticesInTransparentPass : layerStats.numRenderedVerticesInShadowPass;
+            if (renderedVertices !== params[2]) {
+                throw new Error(params[3]);
+            }
+        }
+        doneCb();
     }
 };
 
-export function applyOperations(map, options) {
+export async function applyOperations(map, {operations}) {
+    if (!operations) return Promise.resolve();
+
     return new Promise((resolve, reject) => {
-        const operations = options.operations;
-        // No operations specified, end immediately and invoke doneCb.
-        if (!operations || operations.length === 0) {
-            resolve();
-            return;
-        }
         let currentOperation = null;
         // Start recursive chain
         const scheduleNextOperation = (lastOpIndex) => {
@@ -119,8 +207,8 @@ export function applyOperations(map, options) {
                 resolve();
                 return;
             }
-            currentOperation = options.operations[lastOpIndex + 1];
-            handleOperation(map, options, ++lastOpIndex, scheduleNextOperation);
+            currentOperation = operations[lastOpIndex + 1];
+            handleOperation(map, operations, ++lastOpIndex, scheduleNextOperation);
         };
         map.once('error', (e) => {
             reject(new Error(`Error occured during ${JSON.stringify(currentOperation)}. ${e.error.stack}`));
@@ -132,7 +220,7 @@ export function applyOperations(map, options) {
 function updateCanvas(imagePath) {
     return new Promise((resolve) => {
         const canvas = window.document.getElementById('fake-canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', {willReadFrequently: true});
         const image = new Image();
         image.src = imagePath.replace('./', '');
         image.onload = () => {

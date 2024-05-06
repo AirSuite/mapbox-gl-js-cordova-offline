@@ -4,6 +4,7 @@
     "test": {
       "width": 512,
       "height": 512,
+      "allowed": 0.0009,
       "operations": [
         ["setStyle", {
           "version": 8,
@@ -69,13 +70,14 @@
                 "circle-pitch-scale": "map"
               }
             }
-          ]
+          ],
+          "fog": {}
         }],
         ["wait"]
       ]
     }
   },
-  "zoom": 2.0,
+  "zoom": 1.5,
   "sources": {},
   "layers": []
 }

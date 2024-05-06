@@ -19,15 +19,16 @@ declare module "gl-matrix" {
         fromValues(number, number, number): Float32Array,
         length(Vec3): number,
         len(Vec3): number,
+        distance(Vec3, Vec3): number,
         squaredLength(Vec3): number,
         dot(Vec3, Vec3): number,
         equals(Vec3, Vec3): boolean,
         exactEquals(Vec3, Vec3): boolean,
-
         clone<T: Vec3>(T): T,
         normalize<T: Vec3>(T, Vec3): T,
         add<T: Vec3>(T, Vec3, Vec3): T,
         sub<T: Vec3>(T, Vec3, Vec3): T,
+        set<T: Vec3>(T, number, number, number): T,
         subtract<T: Vec3>(T, Vec3, Vec3): T,
         cross<T: Vec3>(T, Vec3, Vec3): T,
         negate<T: Vec3>(T, Vec3): T,
@@ -38,15 +39,24 @@ declare module "gl-matrix" {
         div<T: Vec3>(T, Vec3, Vec3): T,
         min<T: Vec3>(T, Vec3, Vec3): T,
         max<T: Vec3>(T, Vec3, Vec3): T,
+        lerp<T: Vec3>(T, Vec3, Vec3, number): T,
         transformQuat<T: Vec3>(T, Vec3, Quat): T,
         transformMat3<T: Vec3>(T, Vec3, Mat3): T,
-        transformMat4<T: Vec3>(T, Vec3, Mat4): T
+        transformMat4<T: Vec3>(T, Vec3, Mat4): T,
+        angle(Vec3, Vec3): number;
+        rotateX<T: Vec3>(T, Vec3, Vec3, number): T,
+        rotateY<T: Vec3>(T, Vec3, Vec3, number): T,
+        rotateZ<T: Vec3>(T, Vec3, Vec3, number): T,
     };
 
     declare var vec4: {
         scale<T: Vec4>(T, Vec4, number): T,
         mul<T: Vec4>(T, Vec4, Vec4): T,
-        transformMat4<T: Vec4>(T, Vec4, Mat4): T
+        transformMat4<T: Vec4>(T, Vec4, Mat4): T,
+        normalize<T: Vec4>(T, Vec4): T,
+        dot(Vec4, Vec4): number,
+        min<T: Vec4>(T, Vec4, Vec4): T,
+        max<T: Vec4>(T, Vec4, Vec4): T,
     };
 
     declare var mat2: {
@@ -64,6 +74,7 @@ declare module "gl-matrix" {
         mul<T: Mat3>(T, Mat3, Mat3): T,
         multiply<T: Mat3>(T, Mat3, Mat3): T,
         adjoint<T: Mat3>(T, Mat3): T,
+        invert<T: Mat3>(T, Mat3): T,
         transpose<T: Mat3>(T, Mat3): T
     };
 
@@ -71,7 +82,9 @@ declare module "gl-matrix" {
         create(): Float32Array,
 
         fromScaling<T: Mat4>(T, Vec3): T,
+        fromTranslation<T: Mat4>(T, Vec3): T,
         fromQuat<T: Mat4>(T, Quat): T,
+        fromRotationTranslationScale<T: Mat4>(T, Quat, Vec3, Vec3): T,
         ortho<T: Mat4>(T, number, number, number, number, number, number): T,
         perspective<T: Mat4>(T, number, number, number, number): T,
         identity<T: Mat4>(T): T,
@@ -81,8 +94,11 @@ declare module "gl-matrix" {
         rotateX<T: Mat4>(T, Mat4, number): T,
         rotateY<T: Mat4>(T, Mat4, number): T,
         rotateZ<T: Mat4>(T, Mat4, number): T,
+        rotate<T: Mat4>(T, Mat4, number, Vec3): T,
+        fromRotation<T: Mat4>(T, number, Vec3): T,
         translate<T: Mat4>(T, Mat4, Vec3): T,
         invert<T: Mat4>(T, Mat4): T,
+        transpose<T: Mat4>(T, Mat4): T,
         copy<T: Mat4>(T, Mat4): T,
         clone<T: Mat4>(T): T
     };
@@ -97,6 +113,7 @@ declare module "gl-matrix" {
         identity<T: Quat>(T): T,
         rotateX<T: Quat>(T, Quat, number): T,
         rotateY<T: Quat>(T, Quat, number): T,
-        rotateZ<T: Quat>(T, Quat, number): T
+        rotateZ<T: Quat>(T, Quat, number): T,
+        rotationTo<T:Quat>(T, Quat, Quat): T 
     }
 }

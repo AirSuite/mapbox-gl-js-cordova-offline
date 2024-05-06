@@ -1,7 +1,5 @@
 // @flow
 
-import assert from 'assert';
-
 import type Program from './program.js';
 import type VertexBuffer from '../gl/vertex_buffer.js';
 import type IndexBuffer from '../gl/index_buffer.js';
@@ -14,8 +12,7 @@ class VertexArrayObject {
     boundPaintVertexBuffers: Array<VertexBuffer>;
     boundIndexBuffer: ?IndexBuffer;
     boundVertexOffset: ?number;
-    boundDynamicVertexBuffer: ?VertexBuffer;
-    boundDynamicVertexBuffer2: ?VertexBuffer;
+    boundDynamicVertexBuffers: Array<?VertexBuffer>;
     vao: any;
 
     constructor() {
@@ -24,7 +21,7 @@ class VertexArrayObject {
         this.boundPaintVertexBuffers = [];
         this.boundIndexBuffer = null;
         this.boundVertexOffset = null;
-        this.boundDynamicVertexBuffer = null;
+        this.boundDynamicVertexBuffers = [];
         this.vao = null;
     }
 
@@ -34,8 +31,8 @@ class VertexArrayObject {
          paintVertexBuffers: Array<VertexBuffer>,
          indexBuffer: ?IndexBuffer,
          vertexOffset: ?number,
-         dynamicVertexBuffer: ?VertexBuffer,
-         dynamicVertexBuffer2: ?VertexBuffer) {
+         dynamicVertexBuffers: Array<?VertexBuffer>,
+         vertexAttribDivisorValue: ?number) {
 
         this.context = context;
 
@@ -45,34 +42,37 @@ class VertexArrayObject {
                 paintBuffersDiffer = true;
             }
         }
+        let dynamicBuffersDiffer = this.boundDynamicVertexBuffers.length !== dynamicVertexBuffers.length;
+        for (let i = 0; !dynamicBuffersDiffer && i < dynamicVertexBuffers.length; i++) {
+            if (this.boundDynamicVertexBuffers[i] !== dynamicVertexBuffers[i]) {
+                dynamicBuffersDiffer = true;
+            }
+        }
 
         const isFreshBindRequired = (
             !this.vao ||
             this.boundProgram !== program ||
             this.boundLayoutVertexBuffer !== layoutVertexBuffer ||
             paintBuffersDiffer ||
+            dynamicBuffersDiffer ||
             this.boundIndexBuffer !== indexBuffer ||
-            this.boundVertexOffset !== vertexOffset ||
-            this.boundDynamicVertexBuffer !== dynamicVertexBuffer ||
-            this.boundDynamicVertexBuffer2 !== dynamicVertexBuffer2
+            this.boundVertexOffset !== vertexOffset
         );
 
-        if (!context.extVertexArrayObject || isFreshBindRequired) {
-            this.freshBind(program, layoutVertexBuffer, paintVertexBuffers, indexBuffer, vertexOffset, dynamicVertexBuffer, dynamicVertexBuffer2);
+        if (isFreshBindRequired) {
+            this.freshBind(program, layoutVertexBuffer, paintVertexBuffers, indexBuffer, vertexOffset, dynamicVertexBuffers, vertexAttribDivisorValue);
         } else {
             context.bindVertexArrayOES.set(this.vao);
-
-            if (dynamicVertexBuffer) {
-                // The buffer may have been updated. Rebind to upload data.
-                dynamicVertexBuffer.bind();
+            for (const dynamicBuffer of dynamicVertexBuffers) {
+                if (dynamicBuffer) {
+                    dynamicBuffer.bind();
+                    if (vertexAttribDivisorValue && dynamicBuffer.instanceCount) {
+                        dynamicBuffer.setVertexAttribDivisor(context.gl, program, vertexAttribDivisorValue);
+                    }
+                }
             }
-
             if (indexBuffer && indexBuffer.dynamicDraw) {
                 indexBuffer.bind();
-            }
-
-            if (dynamicVertexBuffer2) {
-                dynamicVertexBuffer2.bind();
             }
         }
     }
@@ -82,71 +82,48 @@ class VertexArrayObject {
               paintVertexBuffers: Array<VertexBuffer>,
               indexBuffer: ?IndexBuffer,
               vertexOffset: ?number,
-              dynamicVertexBuffer: ?VertexBuffer,
-              dynamicVertexBuffer2: ?VertexBuffer) {
-        let numPrevAttributes;
+              dynamicVertexBuffers: Array<?VertexBuffer>,
+              vertexAttribDivisorValue: ?number) {
         const numNextAttributes = program.numAttributes;
 
         const context = this.context;
         const gl = context.gl;
 
-        if (context.extVertexArrayObject) {
-            if (this.vao) this.destroy();
-            this.vao = context.extVertexArrayObject.createVertexArrayOES();
-            context.bindVertexArrayOES.set(this.vao);
-            numPrevAttributes = 0;
+        if (this.vao) this.destroy();
+        this.vao = context.gl.createVertexArray();
+        context.bindVertexArrayOES.set(this.vao);
 
-            // store the arguments so that we can verify them when the vao is bound again
-            this.boundProgram = program;
-            this.boundLayoutVertexBuffer = layoutVertexBuffer;
-            this.boundPaintVertexBuffers = paintVertexBuffers;
-            this.boundIndexBuffer = indexBuffer;
-            this.boundVertexOffset = vertexOffset;
-            this.boundDynamicVertexBuffer = dynamicVertexBuffer;
-            this.boundDynamicVertexBuffer2 = dynamicVertexBuffer2;
-
-        } else {
-            numPrevAttributes = context.currentNumAttributes || 0;
-
-            // Disable all attributes from the previous program that aren't used in
-            // the new program. Note: attribute indices are *not* program specific!
-            for (let i = numNextAttributes; i < numPrevAttributes; i++) {
-                // WebGL breaks if you disable attribute 0.
-                // http://stackoverflow.com/questions/20305231
-                assert(i !== 0);
-                gl.disableVertexAttribArray(i);
-            }
-        }
+        // store the arguments so that we can verify them when the vao is bound again
+        this.boundProgram = program;
+        this.boundLayoutVertexBuffer = layoutVertexBuffer;
+        this.boundPaintVertexBuffers = paintVertexBuffers;
+        this.boundIndexBuffer = indexBuffer;
+        this.boundVertexOffset = vertexOffset;
+        this.boundDynamicVertexBuffers = dynamicVertexBuffers;
 
         layoutVertexBuffer.enableAttributes(gl, program);
-        for (const vertexBuffer of paintVertexBuffers) {
-            vertexBuffer.enableAttributes(gl, program);
-        }
-
-        if (dynamicVertexBuffer) {
-            dynamicVertexBuffer.enableAttributes(gl, program);
-        }
-        if (dynamicVertexBuffer2) {
-            dynamicVertexBuffer2.enableAttributes(gl, program);
-        }
-
         layoutVertexBuffer.bind();
         layoutVertexBuffer.setVertexAttribPointers(gl, program, vertexOffset);
+
         for (const vertexBuffer of paintVertexBuffers) {
+            vertexBuffer.enableAttributes(gl, program);
             vertexBuffer.bind();
             vertexBuffer.setVertexAttribPointers(gl, program, vertexOffset);
         }
 
-        if (dynamicVertexBuffer) {
-            dynamicVertexBuffer.bind();
-            dynamicVertexBuffer.setVertexAttribPointers(gl, program, vertexOffset);
+        for (const dynamicBuffer of dynamicVertexBuffers) {
+            if (dynamicBuffer) {
+                dynamicBuffer.enableAttributes(gl, program);
+                dynamicBuffer.bind();
+                dynamicBuffer.setVertexAttribPointers(gl, program, vertexOffset);
+                if (vertexAttribDivisorValue && dynamicBuffer.instanceCount) {
+                    dynamicBuffer.setVertexAttribDivisor(gl, program, vertexAttribDivisorValue);
+                }
+            }
         }
+
         if (indexBuffer) {
             indexBuffer.bind();
-        }
-        if (dynamicVertexBuffer2) {
-            dynamicVertexBuffer2.bind();
-            dynamicVertexBuffer2.setVertexAttribPointers(gl, program, vertexOffset);
         }
 
         context.currentNumAttributes = numNextAttributes;
@@ -154,7 +131,7 @@ class VertexArrayObject {
 
     destroy() {
         if (this.vao) {
-            this.context.extVertexArrayObject.deleteVertexArrayOES(this.vao);
+            this.context.gl.deleteVertexArray(this.vao);
             this.vao = null;
         }
     }

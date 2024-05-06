@@ -1,4 +1,4 @@
-// This file is generated. Edit build/generate-style-code.js, then run `yarn run codegen`.
+// This file is generated. Edit build/generate-style-code.js, then run `npm run codegen`.
 // @flow
 /* eslint-disable */
 
@@ -8,8 +8,6 @@ import {
     Properties,
     DataConstantProperty,
     DataDrivenProperty,
-    CrossFadedDataDrivenProperty,
-    CrossFadedProperty,
     ColorRampProperty
 } from '../properties.js';
 
@@ -25,6 +23,7 @@ export type LayoutProps = {|
     "line-miter-limit": DataConstantProperty<number>,
     "line-round-limit": DataConstantProperty<number>,
     "line-sort-key": DataDrivenProperty<number>,
+    "visibility": DataConstantProperty<"visible" | "none">,
 |};
 
 const layout: Properties<LayoutProps> = new Properties({
@@ -33,6 +32,7 @@ const layout: Properties<LayoutProps> = new Properties({
     "line-miter-limit": new DataConstantProperty(styleSpec["layout_line"]["line-miter-limit"]),
     "line-round-limit": new DataConstantProperty(styleSpec["layout_line"]["line-round-limit"]),
     "line-sort-key": new DataDrivenProperty(styleSpec["layout_line"]["line-sort-key"]),
+    "visibility": new DataConstantProperty(styleSpec["layout_line"]["visibility"]),
 });
 
 export type PaintProps = {|
@@ -44,9 +44,13 @@ export type PaintProps = {|
     "line-gap-width": DataDrivenProperty<number>,
     "line-offset": DataDrivenProperty<number>,
     "line-blur": DataDrivenProperty<number>,
-    "line-dasharray": CrossFadedDataDrivenProperty<Array<number>>,
-    "line-pattern": CrossFadedDataDrivenProperty<ResolvedImage>,
+    "line-dasharray": DataDrivenProperty<?Array<number>>,
+    "line-pattern": DataDrivenProperty<?ResolvedImage>,
     "line-gradient": ColorRampProperty,
+    "line-trim-offset": DataConstantProperty<[number, number]>,
+    "line-emissive-strength": DataConstantProperty<number>,
+    "line-border-width": DataDrivenProperty<number>,
+    "line-border-color": DataDrivenProperty<Color>,
 |};
 
 const paint: Properties<PaintProps> = new Properties({
@@ -58,9 +62,13 @@ const paint: Properties<PaintProps> = new Properties({
     "line-gap-width": new DataDrivenProperty(styleSpec["paint_line"]["line-gap-width"]),
     "line-offset": new DataDrivenProperty(styleSpec["paint_line"]["line-offset"]),
     "line-blur": new DataDrivenProperty(styleSpec["paint_line"]["line-blur"]),
-    "line-dasharray": new CrossFadedDataDrivenProperty(styleSpec["paint_line"]["line-dasharray"]),
-    "line-pattern": new CrossFadedDataDrivenProperty(styleSpec["paint_line"]["line-pattern"]),
+    "line-dasharray": new DataDrivenProperty(styleSpec["paint_line"]["line-dasharray"]),
+    "line-pattern": new DataDrivenProperty(styleSpec["paint_line"]["line-pattern"]),
     "line-gradient": new ColorRampProperty(styleSpec["paint_line"]["line-gradient"]),
+    "line-trim-offset": new DataConstantProperty(styleSpec["paint_line"]["line-trim-offset"]),
+    "line-emissive-strength": new DataConstantProperty(styleSpec["paint_line"]["line-emissive-strength"]),
+    "line-border-width": new DataDrivenProperty(styleSpec["paint_line"]["line-border-width"]),
+    "line-border-color": new DataDrivenProperty(styleSpec["paint_line"]["line-border-color"]),
 });
 
 // Note: without adding the explicit type annotation, Flow infers weaker types

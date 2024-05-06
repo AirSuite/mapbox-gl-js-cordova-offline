@@ -16,6 +16,7 @@
 <div id='map'></div>
 <div id='controls'>
     <label><input id='terrain-checkbox' type='checkbox'> terrain</label><br />
+    <label><input id='globe-checkbox' type='checkbox'> globe</label><br />
 </div>
 
 <script src='../dist/mapbox-gl-dev.js'></script>
@@ -24,6 +25,7 @@
 
 var map = new mapboxgl.Map({
     container: 'map',
+    devtools: true,
     zoom: 12.5,
     center: [-77.01866, 38.888],
     hash: true,
@@ -110,6 +112,10 @@ document.getElementById('terrain-checkbox').onclick = function() {
         });
     }
     map.setTerrain(this.checked ? {"source": "mapbox-dem", "exaggeration": 1.5} : null);
+};
+
+document.getElementById('globe-checkbox').onclick = function() {
+    map.setProjection(this.checked ? "globe" : "mercator");
 };
 
 </script>

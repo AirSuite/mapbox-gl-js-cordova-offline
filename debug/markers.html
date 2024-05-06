@@ -21,6 +21,7 @@
         <label>Projection:</label>
         <select id="projName">
             <option value="mercator" selected>Mercator</option>
+            <option value="globe">Globe</option>
             <option value="albers">Albers USA</option>
             <option value="equalEarth">Equal Earth</option>
             <option value="equirectangular">Equirectangular</option>
@@ -36,6 +37,7 @@
 
 var map = window.map = new mapboxgl.Map({
     container: 'map',
+    devtools: true,
     zoom: 12.5,
     center: [-77.01866, 38.888],
     style: 'mapbox://styles/mapbox/streets-v9',
@@ -43,7 +45,7 @@ var map = window.map = new mapboxgl.Map({
 });
 
 const spinningMarkers = [];
-['auto', 'map', 'viewport'].forEach((rotationAlignment, i) => {
+['auto', 'map', 'viewport', 'horizon'].forEach((rotationAlignment, i) => {
     ['auto', 'map', 'viewport'].forEach((pitchAlignment, j) => {
         var bounds = map.getBounds();
         var s = bounds.getSouth();
@@ -51,8 +53,8 @@ const spinningMarkers = [];
         var w = bounds.getWest();
         var e = bounds.getEast();
 
-        var lng = w + (e - w) * (i / 3);
-        var lat = s + (n - s) * (j / 3);
+        var lng = w + (e - w) * ((i + .5) / 4);
+        var lat = s + (n - s) * ((j + .5) / 3);
 
         var popup = new mapboxgl.Popup().setHTML(`Pitch Alignment: ${pitchAlignment}<br>Rotation Alignment: ${rotationAlignment}`);
 
@@ -104,10 +106,12 @@ map.addControl(new mapboxgl.NavigationControl());
 map.on('load', function() {
     map.addSource('mapbox-dem', {
         "type": "raster-dem",
-        "url": "mapbox://mapbox.terrain-rgb",
+        "url": "mapbox://mapbox.mapbox-terrain-dem-v1",
         "tileSize": 512,
         "maxzoom": 14
     });
+
+    map.setFog({});
 });
 
 document.getElementById('terrain-checkbox').onclick = function() {

@@ -1,4 +1,4 @@
-// This file is generated. Edit build/generate-style-code.js, then run `yarn run codegen`.
+// This file is generated. Edit build/generate-style-code.js, then run `npm run codegen`.
 // @flow
 /* eslint-disable */
 
@@ -8,8 +8,6 @@ import {
     Properties,
     DataConstantProperty,
     DataDrivenProperty,
-    CrossFadedDataDrivenProperty,
-    CrossFadedProperty,
     ColorRampProperty
 } from '../properties.js';
 
@@ -21,10 +19,12 @@ import type ResolvedImage from '../../style-spec/expression/types/resolved_image
 
 export type LayoutProps = {|
     "circle-sort-key": DataDrivenProperty<number>,
+    "visibility": DataConstantProperty<"visible" | "none">,
 |};
 
 const layout: Properties<LayoutProps> = new Properties({
     "circle-sort-key": new DataDrivenProperty(styleSpec["layout_circle"]["circle-sort-key"]),
+    "visibility": new DataConstantProperty(styleSpec["layout_circle"]["visibility"]),
 });
 
 export type PaintProps = {|
@@ -39,6 +39,7 @@ export type PaintProps = {|
     "circle-stroke-width": DataDrivenProperty<number>,
     "circle-stroke-color": DataDrivenProperty<Color>,
     "circle-stroke-opacity": DataDrivenProperty<number>,
+    "circle-emissive-strength": DataConstantProperty<number>,
 |};
 
 const paint: Properties<PaintProps> = new Properties({
@@ -53,6 +54,7 @@ const paint: Properties<PaintProps> = new Properties({
     "circle-stroke-width": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-width"]),
     "circle-stroke-color": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-color"]),
     "circle-stroke-opacity": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-opacity"]),
+    "circle-emissive-strength": new DataConstantProperty(styleSpec["paint_circle"]["circle-emissive-strength"]),
 });
 
 // Note: without adding the explicit type annotation, Flow infers weaker types

@@ -4,6 +4,7 @@
     "test": {
       "width": 512,
       "height": 512,
+      "allowed": 0.0007,
       "operations": [
         ["setProjection", "globe"],
         ["setPadding", {
@@ -18,9 +19,12 @@
   },
   "center": [
     20.5,
-    12.57    
+    12.57
   ],
-  "zoom": 0.88,
+  "fog": {
+    "star-intensity": 0
+  },
+  "zoom": 0.4,
   "pitch": 85.0,
   "bearing": 123.69,
   "sources": {

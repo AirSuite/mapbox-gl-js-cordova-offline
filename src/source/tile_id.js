@@ -31,9 +31,9 @@ export class CanonicalTileID {
 
         return urls[(this.x + this.y) % urls.length]
             .replace('{prefix}', (this.x % 16).toString(16) + (this.y % 16).toString(16))
-            .replace('{z}', String(this.z))
-            .replace('{x}', String(this.x))
-            .replace('{y}', String(scheme === 'tms' ? (Math.pow(2, this.z) - this.y - 1) : this.y))
+            .replace(/{z}/g, String(this.z))
+            .replace(/{x}/g, String(this.x))
+            .replace(/{y}/g, String(scheme === 'tms' ? (Math.pow(2, this.z) - this.y - 1) : this.y))
             .replace('{quadkey}', quadkey)
             .replace('{bbox-epsg-3857}', bbox);
     }
@@ -61,6 +61,7 @@ export class OverscaledTileID {
     canonical: CanonicalTileID;
     key: number;
     projMatrix: Float32Array;
+    expandedProjMatrix: Float32Array;
 
     constructor(overscaledZ: number, wrap: number, z: number, x: number, y: number) {
         assert(overscaledZ >= z);
@@ -108,6 +109,7 @@ export class OverscaledTileID {
         // We're first testing for z == 0, to avoid a 32 bit shift, which is undefined.
         return parent.overscaledZ === 0 || (
             parent.overscaledZ < this.overscaledZ &&
+                parent.canonical.z < this.canonical.z &&
                 parent.canonical.x === (this.canonical.x >> zDifference) &&
                 parent.canonical.y === (this.canonical.y >> zDifference));
     }
@@ -182,7 +184,7 @@ function calculateKey(wrap: number, overscaledZ: number, z: number, x: number, y
     return key;
 }
 
-function getQuadkey(z, x, y) {
+function getQuadkey(z: number, x: number, y: number) {
     let quadkey = '', mask;
     for (let i = z; i > 0; i--) {
         mask = 1 << (i - 1);
@@ -191,5 +193,31 @@ function getQuadkey(z, x, y) {
     return quadkey;
 }
 
-register(CanonicalTileID);
-register(OverscaledTileID, {omit: ['projMatrix']});
+// For all four borders: 0 - left, 1, right, 2 - top, 3 - bottom
+export const neighborCoord = [
+    (coord: OverscaledTileID): OverscaledTileID => {
+        let x = coord.canonical.x - 1;
+        let w = coord.wrap;
+        if (x < 0) {
+            x = (1 << coord.canonical.z) - 1;
+            w--;
+        }
+        return new OverscaledTileID(coord.overscaledZ, w, coord.canonical.z, x, coord.canonical.y);
+    },
+    (coord: OverscaledTileID): OverscaledTileID => {
+        let x = coord.canonical.x + 1;
+        let w = coord.wrap;
+        if (x === 1 << coord.canonical.z) {
+            x = 0;
+            w++;
+        }
+        return new OverscaledTileID(coord.overscaledZ, w, coord.canonical.z, x, coord.canonical.y);
+    },
+    (coord: OverscaledTileID): OverscaledTileID => new OverscaledTileID(coord.overscaledZ, coord.wrap, coord.canonical.z, coord.canonical.x,
+        (coord.canonical.y === 0 ? 1 << coord.canonical.z : coord.canonical.y) - 1),
+    (coord: OverscaledTileID): OverscaledTileID => new OverscaledTileID(coord.overscaledZ, coord.wrap, coord.canonical.z, coord.canonical.x,
+        coord.canonical.y === (1 << coord.canonical.z) - 1 ? 0 : coord.canonical.y + 1)
+];
+
+register(CanonicalTileID, 'CanonicalTileID');
+register(OverscaledTileID, 'OverscaledTileID', {omit: ['projMatrix', 'expandedProjMatrix']});

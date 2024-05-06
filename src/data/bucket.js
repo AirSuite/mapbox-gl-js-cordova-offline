@@ -1,5 +1,9 @@
 // @flow
 
+// Import FeatureIndex as a module with side effects to ensure
+// it's registered as a serializable class on the main thread
+import './feature_index.js';
+
 import type {CollisionBoxArray} from './array_types.js';
 import type Style from '../style/style.js';
 import type {TypedStyleLayer} from '../style/style_layer/typed_style_layer.js';
@@ -11,18 +15,20 @@ import type LineAtlas from '../render/line_atlas.js';
 import type {CanonicalTileID} from '../source/tile_id.js';
 import type {TileTransform} from '../geo/projection/tile_transform.js';
 import type Point from '@mapbox/point-geometry';
+import type {ProjectionSpecification} from '../style-spec/types.js';
+import type {IVectorTileFeature, IVectorTileLayer} from '@mapbox/vector-tile';
 
 export type BucketParameters<Layer: TypedStyleLayer> = {
     index: number,
     layers: Array<Layer>,
     zoom: number,
+    canonical: CanonicalTileID,
     pixelRatio: number,
     overscaling: number,
     collisionBoxArray: CollisionBoxArray,
     sourceLayerIndex: number,
     sourceID: string,
-    enableTerrain: boolean,
-    projection: string
+    projection: ProjectionSpecification
 }
 
 export type PopulateParameters = {
@@ -31,12 +37,13 @@ export type PopulateParameters = {
     patternDependencies: {},
     glyphDependencies: {},
     availableImages: Array<string>,
-    lineAtlas: LineAtlas
+    lineAtlas: LineAtlas,
+    brightness: ?number,
 }
 
 export type IndexedFeature = {
-    feature: VectorTileFeature,
-    id: number | string,
+    feature: IVectorTileFeature,
+    id: number | string | void,
     index: number,
     sourceLayerIndex: number,
 }
@@ -48,7 +55,7 @@ export type BucketFeature = {|
     properties: Object,
     type: 1 | 2 | 3,
     id?: any,
-    +patterns: {[_: string]: {"min": string, "mid": string, "max": string}},
+    +patterns: {[_: string]: string},
     sortKey?: number
 |};
 
@@ -82,7 +89,7 @@ export interface Bucket {
     +stateDependentLayers: Array<any>;
     +stateDependentLayerIds: Array<string>;
     populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform): void;
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions): void;
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number): void;
     isEmpty(): boolean;
 
     upload(context: Context): void;
@@ -117,11 +124,11 @@ export function deserialize(input: Array<Bucket>, style: Style): {[_: string]: B
         // look up StyleLayer objects from layer ids (since we don't
         // want to waste time serializing/copying them from the worker)
         (bucket: any).layers = layers;
-        if ((bucket: any).stateDependentLayerIds) {
-            (bucket: any).stateDependentLayers = (bucket: any).stateDependentLayerIds.map((lId) => layers.filter((l) => l.id === lId)[0]);
+        if (bucket.stateDependentLayerIds) {
+            (bucket: any).stateDependentLayers = bucket.stateDependentLayerIds.map((lId) => layers.filter((l) => l.id === lId)[0]);
         }
         for (const layer of layers) {
-            output[layer.id] = bucket;
+            output[layer.fqid] = bucket;
         }
     }
 

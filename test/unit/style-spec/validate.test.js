@@ -1,32 +1,25 @@
-import {test} from '../../util/test.js';
-import glob from 'glob';
-import fs from 'fs';
-import path from 'path';
+import {describe, test, expect} from '../../util/vitest.js';
 import validate from '../../../src/style-spec/validate_style.js';
+import reference from '../../../src/style-spec/reference/latest.js';
 
-import {fileURLToPath} from 'url';
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
+// eslint-disable-next-line import/no-unresolved
+import {fixtures} from 'virtual:style-spec/fixtures';
+import badColorStyleSpecFixture from './fixture/bad-color.input.json';
 
-const UPDATE = !!process.env.UPDATE;
-
-glob.sync(`${__dirname}/fixture/*.input.json`).forEach((file) => {
-    test(path.basename(file), (t) => {
-        const outputfile = file.replace('.input', '.output');
-        const style = fs.readFileSync(file);
-        const result = validate(style);
-        if (UPDATE) fs.writeFileSync(outputfile, JSON.stringify(result, null, 2));
-        const expect = JSON.parse(fs.readFileSync(outputfile));
-        t.deepEqual(result, expect);
-        t.end();
+describe('Validate style', () => {
+    Object.keys(fixtures).forEach(fixtureName => {
+        test(fixtureName, () => {
+            const result = validate(fixtures[fixtureName]);
+            for (const error of result) {
+                if (error.error) error.error = {};
+            }
+            expect(JSON.stringify(result, null, 2)).toMatchFileSnapshot(`./fixture/${fixtureName}.output.json`);
+        });
     });
 });
 
-const fixtures = glob.sync(`${__dirname}/fixture/*.input.json`);
-const style = JSON.parse(fs.readFileSync(fixtures[0]));
-import reference from '../../../src/style-spec/reference/latest.js';
-
-test('errors from validate do not contain line numbers', (t) => {
+test('errors from validate do not contain line numbers', () => {
+    const style = badColorStyleSpecFixture;
     const result = validate(style, reference);
-    t.equal(result[0].line, undefined);
-    t.end();
+    expect(result[0].line).toEqual(undefined);
 });

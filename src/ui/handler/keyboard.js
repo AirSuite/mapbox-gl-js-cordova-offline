@@ -1,7 +1,7 @@
 // @flow
 
 import type Map from '../map.js';
-import type {HandlerResult} from '../handler_manager.js';
+import type {Handler, HandlerResult} from '../handler.js';
 
 const defaultOptions = {
     panStep: 100,
@@ -27,7 +27,7 @@ const defaultOptions = {
  * @see [Example: Navigate the map with game-like controls](https://docs.mapbox.com/mapbox-gl-js/example/game-controls/)
  * @see [Example: Display map navigation controls](https://docs.mapbox.com/mapbox-gl-js/example/navigation/)
  */
-class KeyboardHandler {
+class KeyboardHandler implements Handler {
     _enabled: boolean;
     _active: boolean;
     _panStep: number;
@@ -54,6 +54,7 @@ class KeyboardHandler {
         this._active = false;
     }
 
+    // $FlowFixMe[method-unbinding]
     keydown(e: KeyboardEvent): ?HandlerResult {
         if (e.altKey || e.ctrlKey || e.metaKey) return;
 
@@ -125,11 +126,11 @@ class KeyboardHandler {
         return {
             cameraAnimation: (map: Map) => {
                 const zoom = map.getZoom();
+
                 map.easeTo({
                     duration: 300,
                     easeId: 'keyboardHandler',
                     easing: easeOut,
-
                     zoom: zoomDir ? Math.round(zoom) + zoomDir * (e.shiftKey ? 2 : 1) : zoom,
                     bearing: map.getBearing() + bearingDir * this._bearingStep,
                     pitch: map.getPitch() + pitchDir * this._pitchStep,
@@ -166,7 +167,7 @@ class KeyboardHandler {
      * interaction is enabled.
      *
      * @returns {boolean} `true` if the "keyboard rotate and zoom"
-     * interaction is enabled.
+     *     interaction is enabled.
      * @example
      * const isKeyboardEnabled = map.keyboard.isEnabled();
      */
@@ -179,7 +180,7 @@ class KeyboardHandler {
      * zoom/rotate gesture.
      *
      * @returns {boolean} `true` if the handler is enabled and has detected the
-     * start of a zoom/rotate gesture.
+     *     start of a zoom/rotate gesture.
      * @example
      * const isKeyboardActive = map.keyboard.isActive();
      */

@@ -1,7 +1,7 @@
 // @flow
 import Point from '@mapbox/point-geometry';
 import MercatorCoordinate, {altitudeFromMercatorZ, lngFromMercatorX, latFromMercatorY} from '../mercator_coordinate.js';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import {vec3} from 'gl-matrix';
 import {Aabb} from '../../util/primitives.js';
 import {aabbForTileOnGlobe} from './globe_util.js';
@@ -10,6 +10,7 @@ import {CanonicalTileID} from '../../source/tile_id.js';
 
 import type {Vec3} from 'gl-matrix';
 import type Projection from './projection.js';
+import type {ProjectedPoint} from './projection.js';
 import type Transform from '../transform.js';
 
 export type TileTransform = {
@@ -51,7 +52,7 @@ export default function tileTransform(id: Object, projection: Projection): TileT
     // we pick an error threshold for calculating the bbox that balances between performance and precision
     const maxErr = s / 16;
 
-    function processSegment(pa, pb, ax, ay, bx, by) {
+    function processSegment(pa: ProjectedPoint, pb: ProjectedPoint, ax: number, ay: number, bx: number, by: number) {
         const mx = (ax + bx) / 2;
         const my = (ay + by) / 2;
 
@@ -96,7 +97,7 @@ export default function tileTransform(id: Object, projection: Projection): TileT
 export function tileAABB(tr: Transform, numTiles: number, z: number, x: number, y: number, wrap: number, min: number, max: number, projection: Projection): Aabb {
     if (projection.name === 'globe') {
         const tileId = new CanonicalTileID(z, x, y);
-        return aabbForTileOnGlobe(tr, numTiles, tileId);
+        return aabbForTileOnGlobe(tr, numTiles, tileId, false);
     }
 
     const tt = tileTransform({z, x, y}, projection);
@@ -114,7 +115,7 @@ export function tileAABB(tr: Transform, numTiles: number, z: number, x: number, 
         [(wrap  + tx2) * numTiles, numTiles * ty2, max]);
 }
 
-export function getTilePoint(tileTransform: TileTransform, {x, y}: {x: number, y: number}, wrap: number = 0): Point {
+export function getTilePoint(tileTransform: TileTransform, {x, y}: interface { x: number, y: number }, wrap: number = 0): Point {
     return new Point(
         ((x - wrap) * tileTransform.scale - tileTransform.x) * EXTENT,
         (y * tileTransform.scale - tileTransform.y) * EXTENT);

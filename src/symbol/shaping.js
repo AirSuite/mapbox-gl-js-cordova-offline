@@ -14,7 +14,6 @@ import {warnOnce} from '../util/util.js';
 import type {StyleGlyph, GlyphMetrics} from '../style/style_glyph.js';
 import {GLYPH_PBF_BORDER} from '../style/parse_glyph_pbf.js';
 import type {ImagePosition} from '../render/image_atlas.js';
-import {IMAGE_PADDING} from '../render/image_atlas.js';
 import type {GlyphRect, GlyphPositions} from '../render/glyph_atlas.js';
 import Formatted, {FormattedSection} from '../style-spec/expression/types/formatted.js';
 
@@ -96,14 +95,14 @@ class SectionOptions {
         this.imageName = null;
     }
 
-    static forText(scale: number | null, fontStack: string) {
+    static forText(scale: ?number, fontStack: string): SectionOptions {
         const textOptions = new SectionOptions();
         textOptions.scale = scale || 1;
         textOptions.fontStack = fontStack;
         return textOptions;
     }
 
-    static forImage(imageName: string) {
+    static forImage(imageName: string): SectionOptions {
         const imageOptions = new SectionOptions();
         imageOptions.imageName = imageName;
         return imageOptions;
@@ -124,7 +123,7 @@ class TaggedString {
         this.imageSectionID = null;
     }
 
-    static fromFeature(text: Formatted, defaultFontStack: string) {
+    static fromFeature(text: Formatted, defaultFontStack: string): TaggedString {
         const result = new TaggedString();
         for (let i = 0; i < text.sections.length; i++) {
             const section = text.sections[i];
@@ -153,8 +152,8 @@ class TaggedString {
         return this.sectionIndex[index];
     }
 
-    getCharCode(index: number): number {
-        return this.text.charCodeAt(index);
+    getCodePoint(index: number): number {
+        return this.text.codePointAt(index);
     }
 
     verticalizePunctuation(skipContextChecking: boolean) {
@@ -190,7 +189,7 @@ class TaggedString {
         return this.text;
     }
 
-    getMaxScale() {
+    getMaxScale(): number {
         return this.sectionIndex.reduce((max, index) => Math.max(max, this.sections[index].scale), 0);
     }
 
@@ -204,7 +203,7 @@ class TaggedString {
     }
 
     addImageSection(section: FormattedSection) {
-        const imageName = section.image ? section.image.name : '';
+        const imageName = section.image ? section.image.namePrimary : '';
         if (imageName.length === 0) {
             warnOnce(`Can't add FormattedSection with an empty image.`);
             return;
@@ -216,7 +215,7 @@ class TaggedString {
             return;
         }
 
-        this.text += String.fromCharCode(nextImageSectionCharCode);
+        this.text += String.fromCodePoint(nextImageSectionCharCode);
         this.sections.push(SectionOptions.forImage(imageName));
         this.sectionIndex.push(this.sections.length - 1);
     }
@@ -260,7 +259,6 @@ function shapeText(text: Formatted,
                    translate: [number, number],
                    writingMode: 1 | 2,
                    allowVerticalPlacement: boolean,
-                   symbolPlacement: string,
                    layoutTextSize: number,
                    layoutTextSizeThisZoom: number): Shaping | false {
     const logicalInput = TaggedString.fromFeature(text, defaultFontStack);
@@ -269,15 +267,14 @@ function shapeText(text: Formatted,
         logicalInput.verticalizePunctuation(allowVerticalPlacement);
     }
 
-    let lines: Array<TaggedString>;
+    let lines: Array<TaggedString> = [];
+
+    const lineBreaks = determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, layoutTextSize);
 
     const {processBidirectionalText, processStyledBidirectionalText} = rtlTextPlugin;
     if (processBidirectionalText && logicalInput.sections.length === 1) {
         // Bidi doesn't have to be style-aware
-        lines = [];
-        const untaggedLines =
-            processBidirectionalText(logicalInput.toString(),
-                                     determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        const untaggedLines = processBidirectionalText(logicalInput.toString(), lineBreaks);
         for (const line of untaggedLines) {
             const taggedLine = new TaggedString();
             taggedLine.text = line;
@@ -288,13 +285,8 @@ function shapeText(text: Formatted,
             lines.push(taggedLine);
         }
     } else if (processStyledBidirectionalText) {
-        // Need version of mapbox-gl-rtl-text with style support for combining RTL text
-        // with formatting
-        lines = [];
-        const processedLines =
-            processStyledBidirectionalText(logicalInput.text,
-                                           logicalInput.sectionIndex,
-                                           determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        // Need version of mapbox-gl-rtl-text with style support for combining RTL text with formatting
+        const processedLines = processStyledBidirectionalText(logicalInput.text, logicalInput.sectionIndex, lineBreaks);
         for (const line of processedLines) {
             const taggedLine = new TaggedString();
             taggedLine.text = line[0];
@@ -303,7 +295,7 @@ function shapeText(text: Formatted,
             lines.push(taggedLine);
         }
     } else {
-        lines = breakLines(logicalInput, determineLineBreaks(logicalInput, spacing, maxWidth, glyphMap, imagePositions, symbolPlacement, layoutTextSize));
+        lines = breakLines(logicalInput, lineBreaks);
     }
 
     const positionedLines = [];
@@ -386,7 +378,7 @@ function determineAverageLineWidth(logicalInput: TaggedString,
 
     for (let index = 0; index < logicalInput.length(); index++) {
         const section = logicalInput.getSection(index);
-        totalWidth += getGlyphAdvance(logicalInput.getCharCode(index), section, glyphMap, imagePositions, spacing, layoutTextSize);
+        totalWidth += getGlyphAdvance(logicalInput.getCodePoint(index), section, glyphMap, imagePositions, spacing, layoutTextSize);
     }
 
     const lineCount = Math.max(1, Math.ceil(totalWidth / maxWidth));
@@ -485,11 +477,7 @@ function determineLineBreaks(logicalInput: TaggedString,
                              maxWidth: number,
                              glyphMap: {[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}},
                              imagePositions: {[_: string]: ImagePosition},
-                             symbolPlacement: string,
                              layoutTextSize: number): Array<number> {
-    if (symbolPlacement !== 'point')
-        return [];
-
     if (!logicalInput)
         return [];
 
@@ -502,7 +490,7 @@ function determineLineBreaks(logicalInput: TaggedString,
 
     for (let i = 0; i < logicalInput.length(); i++) {
         const section = logicalInput.getSection(i);
-        const codePoint = logicalInput.getCharCode(i);
+        const codePoint = logicalInput.getCodePoint(i);
         if (!whitespace[codePoint]) currentX += getGlyphAdvance(codePoint, section, glyphMap, imagePositions, spacing, layoutTextSize);
 
         // Ideographic characters, spaces, and word-breaking punctuation that often appear without
@@ -517,7 +505,7 @@ function determineLineBreaks(logicalInput: TaggedString,
                         currentX,
                         targetWidth,
                         potentialLineBreaks,
-                        calculatePenalty(codePoint, logicalInput.getCharCode(i + 1), ideographicBreak && hasServerSuggestedBreakpoints),
+                        calculatePenalty(codePoint, logicalInput.getCodePoint(i + 1), ideographicBreak && hasServerSuggestedBreakpoints),
                         false));
             }
         }
@@ -625,7 +613,7 @@ function shapeLines(shaping: Shaping,
         for (let i = 0; i < line.length(); i++) {
             const section = line.getSection(i);
             const sectionIndex = line.getSectionIndex(i);
-            const codePoint = line.getCharCode(i);
+            const codePoint = line.getCodePoint(i);
 
             let sectionScale = section.scale;
             let metrics = null;
@@ -694,7 +682,7 @@ function shapeLines(shaping: Shaping,
 
                 metrics = {width: size[0],
                     height: size[1],
-                    left: IMAGE_PADDING,
+                    left: 0,
                     top: -GLYPH_PBF_BORDER,
                     advance: vertical ? size[1] : size[0],
                     localGlyph: false};
@@ -800,7 +788,8 @@ function align(positionedLines: Array<PositionedLine>,
 }
 
 export type PositionedIcon = {
-    image: ImagePosition,
+    imagePrimary: ImagePosition,
+    imageSecondary: ?ImagePosition,
     top: number,
     bottom: number,
     left: number,
@@ -808,15 +797,15 @@ export type PositionedIcon = {
     collisionPadding?: [number, number, number, number]
 };
 
-function shapeIcon(image: ImagePosition, iconOffset: [number, number], iconAnchor: SymbolAnchor): PositionedIcon {
+function shapeIcon(imagePrimary: ImagePosition, imageSecondary: ?ImagePosition, iconOffset: [number, number], iconAnchor: SymbolAnchor): PositionedIcon {
     const {horizontalAlign, verticalAlign} = getAnchorAlignment(iconAnchor);
     const dx = iconOffset[0];
     const dy = iconOffset[1];
-    const x1 = dx - image.displaySize[0] * horizontalAlign;
-    const x2 = x1 + image.displaySize[0];
-    const y1 = dy - image.displaySize[1] * verticalAlign;
-    const y2 = y1 + image.displaySize[1];
-    return {image, top: y1, bottom: y2, left: x1, right: x2};
+    const x1 = dx - imagePrimary.displaySize[0] * horizontalAlign;
+    const x2 = x1 + imagePrimary.displaySize[0];
+    const y1 = dy - imagePrimary.displaySize[1] * verticalAlign;
+    const y2 = y1 + imagePrimary.displaySize[1];
+    return {imagePrimary, imageSecondary, top: y1, bottom: y2, left: x1, right: x2};
 }
 
 function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
@@ -827,7 +816,7 @@ function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
     assert(Array.isArray(padding) && padding.length === 4);
     assert(Array.isArray(iconOffset) && iconOffset.length === 2);
 
-    const image = shapedIcon.image;
+    const image = shapedIcon.imagePrimary;
 
     let collisionPadding;
     if (image.content) {
@@ -871,5 +860,5 @@ function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
         bottom = top + image.displaySize[1];
     }
 
-    return {image, top, right, bottom, left, collisionPadding};
+    return {imagePrimary: image, imageSecondary: undefined, top, right, bottom, left, collisionPadding};
 }

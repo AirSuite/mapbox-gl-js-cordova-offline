@@ -4,7 +4,7 @@ import {mercatorZfromAltitude} from '../mercator_coordinate.js';
 import Point from '@mapbox/point-geometry';
 import {farthestPixelDistanceOnPlane} from './far_z.js';
 import {mat4} from 'gl-matrix';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import tileTransform from './tile_transform.js';
 
 import type Transform from '../../geo/transform.js';
@@ -22,11 +22,7 @@ export type ProjectedPoint = {
 export type ElevationScale = {
     // `metersToTile` converts meters to units used to describe elevation in tile space.
     // Default units in mercator space are x & y: [0, 8192] and z: meters
-    metersToTile: number,
-
-    // `metersToLabelSpace` converts meters to units used for elevation for map aligned
-    // labels. Default unit in mercator space is meter.
-    metersToLabelSpace: number
+    metersToTile: number
 }
 
 const identity = mat4.identity(new Float32Array(16));
@@ -46,8 +42,10 @@ export default class Projection {
     range: ?[number, number];
     parallels: ?[number, number];
     unsupportedLayers: Array<string>;
+    spec: ProjectionSpecification;
 
     constructor(options: ProjectionSpecification) {
+        this.spec = options;
         this.name = options.name;
         this.wrap = false;
         this.requiresDraping = false;
@@ -74,12 +72,23 @@ export default class Projection {
         return {x, y, z: 0};
     }
 
-    locationPoint(tr: Transform, lngLat: LngLat): Point {
-        return tr._coordinatePoint(tr.locationCoordinate(lngLat), false);
+    locationPoint(tr: Transform, lngLat: LngLat, terrain: boolean = true): Point {
+        return tr._coordinatePoint(tr.locationCoordinate(lngLat), terrain);
     }
 
     pixelsPerMeter(lat: number, worldSize: number): number {
         return mercatorZfromAltitude(1, lat) * worldSize;
+    }
+
+    // pixels-per-meter is used to describe relation between real world and pixel distances.
+    // `pixelSpaceConversion` can be used to convert the ratio from mercator projection to
+    // the currently active projection.
+    //
+    // `pixelSpaceConversion` is useful for converting between pixel spaces where some logic
+    // expects mercator pixels, such as raycasting where the scale is expected to be in
+    // mercator pixels.
+    pixelSpaceConversion(lat: number, worldSize: number, interpolationT: number): number { // eslint-disable-line
+        return 1.0;
     }
 
     farthestPixelDistance(tr: Transform): number {
@@ -90,6 +99,25 @@ export default class Projection {
         const horizonOffset = tr.horizonLineFromTop(false);
         const clamped = new Point(x, Math.max(horizonOffset, y));
         return tr.rayIntersectionCoordinate(tr.pointRayIntersection(clamped, z));
+    }
+
+    pointCoordinate3D(tr: Transform, x: number, y: number): ?Vec3 {
+        const p = new Point(x, y);
+        if (tr.elevation) {
+            return tr.elevation.pointCoordinate(p);
+        } else {
+            const mc = this.pointCoordinate(tr, p.x, p.y, 0);
+            return [mc.x, mc.y, mc.z];
+        }
+    }
+
+    isPointAboveHorizon(tr: Transform, p: Point): boolean {
+        if (tr.elevation) {
+            const raycastOnTerrain = this.pointCoordinate3D(tr, p.x, p.y);
+            return !raycastOnTerrain;
+        }
+        const horizon = tr.horizonLineFromTop();
+        return p.y < horizon;
     }
 
     createInversionMatrix(tr: Transform, id: CanonicalTileID): Float32Array { // eslint-disable-line
@@ -125,6 +153,6 @@ export default class Projection {
     }
 
     upVectorScale(id: CanonicalTileID, latitude: number, worldSize: number): ElevationScale { // eslint-disable-line
-        return {metersToTile: 1, metersToLabelSpace: 1};
+        return {metersToTile: 1};
     }
 }

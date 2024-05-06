@@ -1,6 +1,6 @@
 // @flow
 
-import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordinate.js';
+import MercatorCoordinate, {mercatorZfromAltitude, latFromMercatorY} from '../geo/mercator_coordinate.js';
 import {degToRad, wrap, getColumn, setColumn} from '../util/util.js';
 import {vec3, quat, mat4} from 'gl-matrix';
 
@@ -144,8 +144,8 @@ class FreeCameraOptions {
             return;
         }
 
-        const altitude = this._elevation ? this._elevation.getAtPointOrZero(MercatorCoordinate.fromLngLat(location)) : 0;
         const pos: MercatorCoordinate = this.position;
+        const altitude = this._elevation ? this._elevation.getAtPointOrZero(MercatorCoordinate.fromLngLat(location)) : 0;
         const target = MercatorCoordinate.fromLngLat(location, altitude);
         const forward = [target.x - pos.x, target.y - pos.y, target.z - pos.z];
         if (!up)
@@ -261,6 +261,10 @@ class FreeCamera {
         return cameraToWorld;
     }
 
+    getCameraToWorldMercator(): Mat4 {
+        return this._transform;
+    }
+
     getWorldToCameraPosition(worldSize: number, pixelsPerMeter: number, uniformScale: number): Float64Array {
         const invPosition = this.position;
 
@@ -317,8 +321,17 @@ class FreeCamera {
         return matrix;
     }
 
-    getDistanceToElevation(elevationMeters: number): number {
-        const z0 = elevationMeters === 0 ? 0 : mercatorZfromAltitude(elevationMeters, this.position[1]);
+    getCameraToClipOrthographic(left: number, right: number, bottom: number, top: number, nearZ: number, farZ: number): Float64Array {
+        const matrix = new Float64Array(16);
+        mat4.ortho(matrix, left, right, bottom, top, nearZ, farZ);
+        return matrix;
+    }
+
+    // The additional parameter needs to be removed. This was introduced because originally
+    // the value returned by this function was incorrect. Fixing it would break the fog visuals and needs to be
+    // communicated carefully first. Also see transform.cameraWorldSizeForFog.
+    getDistanceToElevation(elevationMeters: number, convert: boolean = false): number {
+        const z0 = elevationMeters === 0 ? 0 : mercatorZfromAltitude(elevationMeters, convert ? latFromMercatorY(this.position[1]) : this.position[1]);
         const f = this.forward();
         return (z0 - this.position[2]) / f[2];
     }

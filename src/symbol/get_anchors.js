@@ -110,7 +110,7 @@ function getAnchors(line: Array<Point>,
     return resample(line, offset, spacing, angleWindowSize, maxAngle, labelLength, isLineContinued, false, tileExtent);
 }
 
-function resample(line, offset, spacing, angleWindowSize, maxAngle, labelLength, isLineContinued, placeAtMiddle, tileExtent) {
+function resample(line: Array<Point>, offset: number, spacing: number, angleWindowSize: number, maxAngle: number, labelLength: number, isLineContinued: boolean, placeAtMiddle: boolean, tileExtent: number) {
 
     const halfLabelLength = labelLength / 2;
     const lineLength = getLineLength(line);
@@ -142,7 +142,6 @@ function resample(line, offset, spacing, angleWindowSize, maxAngle, labelLength,
                     markedDistance - halfLabelLength >= 0 &&
                     markedDistance + halfLabelLength <= lineLength) {
                 const anchor = new Anchor(x, y, 0, angle, i);
-                anchor._round();
 
                 if (!angleWindowSize || checkMaxAngle(line, anchor, labelLength, angleWindowSize, maxAngle)) {
                     anchors.push(anchor);

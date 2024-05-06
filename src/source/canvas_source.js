@@ -2,8 +2,7 @@
 
 import ImageSource from './image_source.js';
 
-import window from '../util/window.js';
-import Texture from '../render/texture.js';
+import Texture, {UserManagedTexture} from '../render/texture.js';
 import {ErrorEvent} from '../util/evented.js';
 import ValidationError from '../style-spec/error/validation_error.js';
 
@@ -85,7 +84,7 @@ class CanvasSource extends ImageSource {
 
         if (!options.canvas) {
             this.fire(new ErrorEvent(new ValidationError(`sources.${id}`, null, 'missing required property "canvas"')));
-        } else if (typeof options.canvas !== 'string' && !(options.canvas instanceof window.HTMLCanvasElement)) {
+        } else if (typeof options.canvas !== 'string' && !(options.canvas instanceof HTMLCanvasElement)) {
             this.fire(new ErrorEvent(new ValidationError(`sources.${id}`, null, '"canvas" must be either a string representing the ID of the canvas element from which to read, or an HTMLCanvasElement instance')));
         }
 
@@ -112,9 +111,9 @@ class CanvasSource extends ImageSource {
     load() {
         this._loaded = true;
         if (!this.canvas) {
-            this.canvas = (this.options.canvas instanceof window.HTMLCanvasElement) ?
+            this.canvas = (this.options.canvas instanceof HTMLCanvasElement) ?
                 this.options.canvas :
-                window.document.getElementById(this.options.canvas);
+                ((document.getElementById(this.options.canvas): any): HTMLCanvasElement);
         }
         this.width = this.canvas.width;
         this.height = this.canvas.height;
@@ -124,11 +123,13 @@ class CanvasSource extends ImageSource {
             return;
         }
 
+        // $FlowFixMe[missing-this-annot]
         this.play = function() {
             this._playing = true;
             this.map.triggerRepaint();
         };
 
+        // $FlowFixMe[missing-this-annot]
         this.pause = function() {
             if (this._playing) {
                 this.prepare();
@@ -162,6 +163,7 @@ class CanvasSource extends ImageSource {
         return this.canvas;
     }
 
+    // $FlowFixMe[method-unbinding]
     onAdd(map: Map) {
         this.map = map;
         this.load();
@@ -170,6 +172,7 @@ class CanvasSource extends ImageSource {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     onRemove() {
         this.pause();
     }
@@ -181,14 +184,15 @@ class CanvasSource extends ImageSource {
      * @instance
      * @memberof CanvasSource
      * @param {Array<Array<number>>} coordinates Four geographical coordinates,
-     *   represented as arrays of longitude and latitude numbers, which define the corners of the canvas.
-     *   The coordinates start at the top left corner of the canvas and proceed in clockwise order.
-     *   They do not have to represent a rectangle.
+     *     represented as arrays of longitude and latitude numbers, which define the corners of the canvas.
+     *     The coordinates start at the top left corner of the canvas and proceed in clockwise order.
+     *     They do not have to represent a rectangle.
      * @returns {CanvasSource} Returns itself to allow for method chaining.
      */
 
     // setCoordinates inherited from ImageSource
 
+    // $FlowFixMe[method-unbinding]
     prepare() {
         let resize = false;
         if (this.canvas.width !== this.width) {
@@ -208,7 +212,7 @@ class CanvasSource extends ImageSource {
 
         if (!this.texture) {
             this.texture = new Texture(context, this.canvas, context.gl.RGBA, {premultiply: true});
-        } else if (resize || this._playing) {
+        } else if ((resize || this._playing) && !(this.texture instanceof UserManagedTexture)) {
             this.texture.update(this.canvas, {premultiply: true});
         }
 

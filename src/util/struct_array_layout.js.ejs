@@ -20,7 +20,7 @@ for (const member of members) {
  *
  * @private
  */
-class <%=StructArrayLayoutClass%> extends StructArray {
+class <%=StructArrayLayoutClass%> extends StructArray implements IStructArrayLayout {
 <%
 for (const type of usedTypes) {
 -%>
@@ -95,4 +95,4 @@ for (const member of members) {
 }
 
 <%=StructArrayLayoutClass%>.prototype.bytesPerElement = <%= size %>;
-register(<%=StructArrayLayoutClass%>);
+register(<%=StructArrayLayoutClass%>, '<%=StructArrayLayoutClass%>');

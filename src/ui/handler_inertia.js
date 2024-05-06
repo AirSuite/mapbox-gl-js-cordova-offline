@@ -4,7 +4,9 @@ import browser from '../util/browser.js';
 import type Map from './map.js';
 import {bezier, clamp, extend} from '../util/util.js';
 import Point from '@mapbox/point-geometry';
+
 import type {DragPanOptions} from './handler/shim/drag_pan.js';
+import type {EasingOptions} from '../ui/camera.js';
 
 const defaultInertiaOptions = {
     linearity: 0.3,
@@ -67,7 +69,11 @@ export default class HandlerInertia {
             inertia.shift();
     }
 
-    _onMoveEnd(panInertiaOptions?: DragPanOptions) {
+    _onMoveEnd(panInertiaOptions?: DragPanOptions): ?(EasingOptions & {easeId?: string}) {
+        if (this._map._prefersReducedMotion()) {
+            return;
+        }
+
         this._drainInertiaBuffer();
         if (this._inertiaBuffer.length < 2) {
             return;
@@ -127,23 +133,21 @@ export default class HandlerInertia {
         }
 
         this.clear();
-        return extend(easeOptions, {
-            noMoveStart: true
-        });
-
+        easeOptions.noMoveStart = true;
+        return easeOptions;
     }
 }
 
 // Unfortunately zoom, bearing, etc can't have different durations and easings so
 // we need to choose one. We use the longest duration and it's corresponding easing.
-function extendDuration(easeOptions, result) {
+function extendDuration(easeOptions: EasingOptions, result: {| amount: number, duration: number, easing: (t: number) => number |}) {
     if (!easeOptions.duration || easeOptions.duration < result.duration) {
         easeOptions.duration = result.duration;
         easeOptions.easing = result.easing;
     }
 }
 
-function calculateEasing(amount, inertiaDuration: number, inertiaOptions) {
+function calculateEasing(amount: number, inertiaDuration: number, inertiaOptions: InertiaOptions) {
     const {maxSpeed, linearity, deceleration} = inertiaOptions;
     const speed = clamp(
         amount * linearity / (inertiaDuration / 1000),

@@ -21,7 +21,7 @@ import type {
 import type Actor from '../util/actor.js';
 import type StyleLayerIndex from '../style/style_layer_index.js';
 
-import type {LoadVectorDataCallback} from './vector_tile_worker_source.js';
+import type {LoadVectorDataCallback} from './load_vector_tile.js';
 import type {RequestParameters, ResponseCallback} from '../util/ajax.js';
 import type {Callback} from '../types/callback.js';
 import type {GeoJSONFeature} from '@mapbox/geojson-types';
@@ -51,6 +51,7 @@ export interface GeoJSONIndex {
     getLeaves(clusterId: number, limit: number, offset: number): Array<GeoJSONFeature>;
 }
 
+// $FlowFixMe[missing-this-annot]
 function loadGeoJSONTile(params: RequestedTileParameters, callback: LoadVectorDataCallback) {
     const canonical = params.tileID.canonical;
 
@@ -100,8 +101,8 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      * See {@link GeoJSONWorkerSource#loadGeoJSON}.
      * @private
      */
-    constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, isSpriteLoaded: boolean, loadGeoJSON: ?LoadGeoJSON) {
-        super(actor, layerIndex, availableImages, isSpriteLoaded, loadGeoJSONTile);
+    constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, isSpriteLoaded: boolean, loadGeoJSON: ?LoadGeoJSON, brightness: ?number) {
+        super(actor, layerIndex, availableImages, isSpriteLoaded, loadGeoJSONTile, brightness);
         if (loadGeoJSON) {
             this.loadGeoJSON = loadGeoJSON;
         }
@@ -203,6 +204,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      * @param [params.data] Literal GeoJSON data. Must be provided if `params.url` is not.
      * @private
      */
+    // $FlowFixMe[duplicate-class-member]
     loadGeoJSON(params: LoadGeoJSONParameters, callback: ResponseCallback<Object>): void {
         // Because of same origin issues, urls must either include an explicit
         // origin or absolute path.
@@ -246,7 +248,7 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
     }
 }
 
-function getSuperclusterOptions({superclusterOptions, clusterProperties}) {
+function getSuperclusterOptions({superclusterOptions, clusterProperties}: LoadGeoJSONParameters) {
     if (!clusterProperties || !superclusterOptions) return superclusterOptions;
 
     const mapExpressions = {};

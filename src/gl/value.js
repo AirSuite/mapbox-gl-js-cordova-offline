@@ -29,7 +29,7 @@ export interface Value<T> {
 }
 
 class BaseValue<T> implements Value<T> {
-    gl: WebGLRenderingContext;
+    gl: WebGL2RenderingContext;
     current: T;
     default: T;
     dirty: boolean;
@@ -243,12 +243,12 @@ export class Blend extends BaseValue<boolean> {
 export class BlendFunc extends BaseValue<BlendFuncType> {
     getDefault(): BlendFuncType {
         const gl = this.gl;
-        return [gl.ONE, gl.ZERO];
+        return [gl.ONE, gl.ZERO, gl.ONE, gl.ZERO];
     }
     set(v: BlendFuncType) {
         const c = this.current;
-        if (v[0] === c[0] && v[1] === c[1] && !this.dirty) return;
-        this.gl.blendFunc(v[0], v[1]);
+        if (v[0] === c[0] && v[1] === c[1] && v[2] === c[2] && v[3] === c[3] && !this.dirty) return;
+        this.gl.blendFuncSeparate(v[0], v[1], v[2], v[3]);
         this.current = v;
         this.dirty = false;
     }
@@ -273,7 +273,7 @@ export class BlendEquation extends BaseValue<BlendEquationType> {
     }
     set(v: BlendEquationType) {
         if (v === this.current && !this.dirty) return;
-        this.gl.blendEquation(v);
+        this.gl.blendEquationSeparate(v, v);
         this.current = v;
         this.dirty = false;
     }
@@ -321,7 +321,7 @@ export class FrontFace extends BaseValue<FrontFaceType> {
 }
 
 export class Program extends BaseValue<?WebGLProgram> {
-    getDefault(): WebGLProgram {
+    getDefault(): WebGLProgram | null {
         return null;
     }
     set(v: ?WebGLProgram) {
@@ -359,7 +359,7 @@ export class Viewport extends BaseValue<ViewportType> {
 }
 
 export class BindFramebuffer extends BaseValue<?WebGLFramebuffer> {
-    getDefault(): WebGLFramebuffer {
+    getDefault(): WebGLFramebuffer | null {
         return null;
     }
     set(v: ?WebGLFramebuffer) {
@@ -372,7 +372,7 @@ export class BindFramebuffer extends BaseValue<?WebGLFramebuffer> {
 }
 
 export class BindRenderbuffer extends BaseValue<?WebGLRenderbuffer> {
-    getDefault(): WebGLRenderbuffer {
+    getDefault(): WebGLRenderbuffer | null {
         return null;
     }
     set(v: ?WebGLRenderbuffer) {
@@ -385,7 +385,7 @@ export class BindRenderbuffer extends BaseValue<?WebGLRenderbuffer> {
 }
 
 export class BindTexture extends BaseValue<?WebGLTexture> {
-    getDefault(): WebGLTexture {
+    getDefault(): WebGLTexture | null {
         return null;
     }
     set(v: ?WebGLTexture) {
@@ -398,7 +398,7 @@ export class BindTexture extends BaseValue<?WebGLTexture> {
 }
 
 export class BindVertexBuffer extends BaseValue<?WebGLBuffer> {
-    getDefault(): WebGLBuffer {
+    getDefault(): WebGLBuffer | null {
         return null;
     }
     set(v: ?WebGLBuffer) {
@@ -411,7 +411,7 @@ export class BindVertexBuffer extends BaseValue<?WebGLBuffer> {
 }
 
 export class BindElementBuffer extends BaseValue<?WebGLBuffer> {
-    getDefault(): WebGLBuffer {
+    getDefault(): WebGLBuffer | null {
         return null;
     }
     set(v: ?WebGLBuffer) {
@@ -424,18 +424,12 @@ export class BindElementBuffer extends BaseValue<?WebGLBuffer> {
 }
 
 export class BindVertexArrayOES extends BaseValue<any> {
-    vao: any;
-
-    constructor(context: Context) {
-        super(context);
-        this.vao = context.extVertexArrayObject;
-    }
     getDefault(): any {
         return null;
     }
     set(v: any) {
-        if (!this.vao || (v === this.current && !this.dirty)) return;
-        this.vao.bindVertexArrayOES(v);
+        if (!this.gl || (v === this.current && !this.dirty)) return;
+        this.gl.bindVertexArray(v);
         this.current = v;
         this.dirty = false;
     }
@@ -510,13 +504,11 @@ export class ColorAttachment extends FramebufferAttachment<WebGLTexture> {
     }
 }
 
-export class DepthAttachment extends FramebufferAttachment<WebGLRenderbuffer> {
+export class DepthRenderbufferAttachment extends FramebufferAttachment<WebGLRenderbuffer> {
     attachment(): number { return this.gl.DEPTH_ATTACHMENT; }
-    set(v: ?WebGLRenderbuffer): void {
+    set(v: ?WebGLRenderbuffer | ?WebGLTexture): void {
         if (v === this.current && !this.dirty) return;
         this.context.bindFramebuffer.set(this.parent);
-        // note: it's possible to attach a texture to the depth attachment
-        // point, but thus far MBGL only uses renderbuffers for depth
         const gl = this.gl;
         gl.framebufferRenderbuffer(gl.FRAMEBUFFER, this.attachment(), gl.RENDERBUFFER, v);
         this.current = v;
@@ -524,6 +516,18 @@ export class DepthAttachment extends FramebufferAttachment<WebGLRenderbuffer> {
     }
 }
 
-export class DepthStencilAttachment extends DepthAttachment {
+export class DepthTextureAttachment extends FramebufferAttachment<WebGLTexture> {
+    attachment(): number { return this.gl.DEPTH_ATTACHMENT; }
+    set(v: ?WebGLTexture): void {
+        if (v === this.current && !this.dirty) return;
+        this.context.bindFramebuffer.set(this.parent);
+        const gl = this.gl;
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, this.attachment(), gl.TEXTURE_2D, v, 0);
+        this.current = v;
+        this.dirty = false;
+    }
+}
+
+export class DepthStencilAttachment extends DepthRenderbufferAttachment {
     attachment(): number { return this.gl.DEPTH_STENCIL_ATTACHMENT; }
 }

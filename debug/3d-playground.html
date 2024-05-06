@@ -4,8 +4,7 @@
     <title>Mapbox GL JS debug page</title>
     <meta charset='utf-8'>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <link rel='stylesheet' href='mapbox-gl.css' />
-    <link href='main.css' rel='stylesheet' type="text/css"/>
+    <link rel='stylesheet' href='../dist/mapbox-gl.css' />
     <style>
         body { margin: 0; padding: 0 }
         html, body, #map { height: 100%; }
@@ -21,108 +20,417 @@
         }
 
         #elevationDebug {
-            background-color: azure;
             position: absolute;
             top:30px;
             right:30px;
             padding:5px;
             z-index: 99;
         }
-    </style>
+
+        #config {
+            position: absolute;
+            top:15px;
+            left:15px;
+            max-height: 95%;
+            overflow-y:auto;
+            z-index: 100;
+        }
+        #config::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        #config::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+        #config::-webkit-scrollbar-thumb {
+            background: rgba(110, 110, 110);
+            border-radius: 10px;
+        }
+        #config::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(90, 90, 90);
+        }
+</style>
 </head>
 
 <body>
-<div id='map'><div id='elevationDebug'></div></div>
+<div id='map'></div>
+<div id='elevationDebug'></div>
+<div id='config'></div>
 
-<script type='text/javascript' src='https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js'></script>
+<!-- TODO: USE MODULE BUNDLER HERE -->
+<script type='text/javascript' src="https://cdn.jsdelivr.net/npm/tweakpane@3.1.9/dist/tweakpane.min.js"></script>
+<script type='text/javascript' src="https://unpkg.com/csscolorparser@1.0.3/csscolorparser.js"></script>
+<script src='/debug/dynamic.js'></script>
 <script src='../dist/mapbox-gl-dev.js'></script>
 <script src='../debug/access_token_generated.js'></script>
 <script>
 
-var Demo3D = function() {
-    this.enableTerrain = true;
-    this.terrainExaggeration = 1.5;
+const Demo3D = function() {
+    this.enableTerrain = false;
+    this.enable3dLights = true;
+    this.terrainExaggeration = 1.;
     this.animateCamera = false;
-    this.style = 'streets-v11';
+    this.style = 'dynamic';
     this.sunAltitude = 2;
     this.sunAzimuth = 90;
     this.sunHaloIntensity = 1.0;
     this.sunAtmosphereIntensity = 1.0;
     this.animateSky = false;
-    this.sunHaloColor = [ 255, 255, 255 ];
-    this.skyColor = [ 255, 255, 255 ];
+    this.sunHaloColor = {r:255, g:255, b:255};
+    this.skyColor = {r:255, g:255, b:255};
+    this.starIntensity = 0.35;
+    this.fogColor = {r:255, g:255, b:255};
+    this.fogRangeMin = 3.0;
+    this.fogRangeMax = 10.0;
+    this.fogVerticalRangeMin = 100.0;
+    this.fogVerticalRangeMax = 200.0;
     this.sunIntensity = 30.0;
+    this.verticalGradient = false;
+    this.lightIntensity = 0.26;
+    this.aoIntensity = 0.3;
+    this.aoWallRadius = 3.0;
+    this.aoGroundRadius = 3.0;
+    this.aoGroundAttenuation = 0.69;
+    this.floodLightColor = {r:255, g:255, b:146};
+    this.floodLightIntensity = 0.0;
+    this.floodLightGroundAttenuation = 0.69;
+    this.floodLightGroundRadius = 0.0;
+    this.buildingColor = {r:255, g:255, b:255};
+    this.buildingAlpha = 1.0;
+    this.buildingOpacity = 1;
+    this.cutoffFadeRange = 0.0;
+    this.ambientLightColor = {r:255, g:255, b:255};
+    this.ambientLightIntensity = 0.5;
+    this.directionalLightColor = {r:255, g:255, b:255};
+    this.directionalLightIntensity = 0.5;
+    this.directionalLightAzimuth = 160;
+    this.directionalLightPolar = 50;
+    this.directionalLightCastShadows = true;
+    this.directionalLightShadowIntensity = 1.0;
+    this.edgeRadius = 0.3;
+    this.roundedRoof = true;
+    this.fps = 0;
+    this.continuousRedraw = true;
+
+    this.fpsTimer = 0;
+    this.frameCounter = 0;
+
+    this.mapProjection = 'globe';
+    this.orthographicProjectionAtLowPitch = false;
+    this.buildingExtrusion = "extrusion";
+    this.enableBuildings = true;
+
+    this.debug = {
+        showTiles: false,
+        showCollisions: false,
+        showOverdraw: false,
+        wireframe: {
+            terrain: false,
+            layers2D: false,
+            layers3D: false,
+        },
+        tileAABBDebug: false,
+        freezeTileCoverage: false
+    };
+
+    // Terrain debug widget
+    this.terrainElevationDebugWidget = new Tweakpane.Pane({  // eslint-disable-line
+        container: document.querySelector('#elevationDebug'),
+        title: 'Terrain elevation debug'});
+    this.terrainElevationDebugWidget.hidden = true;
+
+    this.debug.exaggerated = 0;
+    this.debug.unexaggerated = 0;
+    this.terrainElevationDebugWidget.addMonitor(this.debug, 'exaggerated');
+    this.terrainElevationDebugWidget.addMonitor(this.debug, 'unexaggerated');
+
+    this.debug.numShadowCascadesRendered = 2; // Default value until view is moved
 };
 
-var demo3d = new Demo3D();
+const demo3d = new Demo3D();
+
+function updateLights(enable, loadFromStyleIfPresent) {
+    const currentLights = map.getLights();
+    if (currentLights && currentLights[0].type !== 'flat' && loadFromStyleIfPresent) {
+        demo3d.enable3dLights = true;
+        const cDirectional = parseCSSColor(currentLights[0].properties.color); // eslint-disable-line
+        demo3d.directionalLightColor = {r: cDirectional[0], g: cDirectional[1], b: cDirectional[2]};
+        const cAmbient = parseCSSColor(currentLights[1].properties.color); // eslint-disable-line
+        demo3d.ambientLightColor = {r: cAmbient[0], g: cAmbient[1], b: cAmbient[2]};
+        demo3d.directionalLightCastShadows = currentLights[0].properties['cast-shadows'];
+        demo3d.directionalLightShadowIntensity = currentLights[0].properties['shadow-intensity'];
+        demo3d.directionalLightIntensity = currentLights[0].properties.intensity;
+        demo3d.ambientLightIntensity = currentLights[1].properties.intensity;
+        demo3d.directionalLightAzimuth = currentLights[0].properties.direction[0];
+        demo3d.directionalLightPolar = currentLights[0].properties.direction[1];
+        return;
+    }
+    map.setLights(enable ?
+        [
+            {
+                'type': 'ambient',
+                'id': 'ambient_light',
+                'properties': {
+                    'color': 'rgba(' + demo3d.ambientLightColor.r + ', ' + demo3d.ambientLightColor.g + ', ' + demo3d.ambientLightColor.b + ', 255)',
+                    'intensity': demo3d.ambientLightIntensity
+                }
+            },
+            {
+                'type': 'directional',
+                'id': 'directional_light',
+                'properties': {
+                    'color': 'rgba(' + demo3d.directionalLightColor.r + ', ' + demo3d.directionalLightColor.g + ', ' + demo3d.directionalLightColor.b + ', 255)',
+                    'intensity': demo3d.directionalLightIntensity,
+                    'direction': [
+                        demo3d.directionalLightAzimuth,
+                        demo3d.directionalLightPolar
+                    ],
+                    'cast-shadows': demo3d.directionalLightCastShadows,
+                    'shadow-intensity': demo3d.directionalLightShadowIntensity
+                }
+            }
+        ] : null
+    );
+}
 
 window.onload = function() {
-    var gui = new dat.GUI(); // eslint-disable-line
+    // Create a pane
+    const gui = new Tweakpane.Pane({  // eslint-disable-line
+        container: document.querySelector('#config'),
+        title: 'Parameters',
+    });
 
-    var style = gui.add(demo3d, 'style', [
-        'mapbox/streets-v11',
-        'mapbox/satellite-streets-v11',
-        'mapbox/light-v10',
-        'mapbox/dark-v10',
-        'mapbox/outdoors-v11',
-        'mapbox/satellite-v9',
-        'mapbox/cjerxnqt3cgvp2rmyuxbeqme7',
-        'mapbox-map-design/ckhqrdj3q0q1y19ko8t70qtqu',
-        'mapbox-map-design/ckhqrf2tz0dt119ny6azh975y',
-        'mapbox-map-design/ckhqrbxlc1awj19svtb92m0bd'
-    ]);
-    style.onFinishChange((value) => {
+    // General style
+    const fillOptions = (styles) => {
+        const options = {};
+
+        for (const style of styles) {
+            options[style] = style;
+        }
+
+        return options;
+    };
+
+    const style = gui.addInput(demo3d, 'style',
+        {options: fillOptions([
+            'mapbox/streets-v12',
+            'mapbox/standard',
+            'mapbox/standard-beta',
+            'dynamic',
+            'mapbox/streets-v11',
+            'mapbox/satellite-streets-v11',
+            'mapbox/light-v10',
+            'mapbox/dark-v10',
+            'mapbox/outdoors-v11',
+            'mapbox/satellite-v9',
+            'mapbox/cjerxnqt3cgvp2rmyuxbeqme7',
+            'mapbox-map-design/ckhqrdj3q0q1y19ko8t70qtqu',
+            'mapbox-map-design/ckhqrf2tz0dt119ny6azh975y',
+            'mapbox-map-design/ckhqrbxlc1awj19svtb92m0bd'
+        ])}
+    );
+    style.on('change', (ev) => {
+        const value = ev.value;
+        if (value === 'dynamic') {
+            return map.setStyle(window.dynamic);
+        }
         map.setStyle('mapbox://styles/' + value);
     });
 
-    var terrain = gui.addFolder('Terrain');
-    var enableTerrain = terrain.add(demo3d, 'enableTerrain');
-    enableTerrain.onFinishChange((value) => {
-        map.setTerrain(value ? {"source": "mapbox-dem", "exaggeration": 1.5} : null);
+    // FPS
+
+    // Update FPS every second
+    demo3d.fpsTimer = window.setInterval(() => {
+        demo3d.fps = map.painter.frameCounter - demo3d.frameCounter;
+        demo3d.frameCounter = map.painter.frameCounter;
+    }, 1000);
+
+    map.repaint = demo3d.continuousRedraw;
+    const fps = gui.addFolder({title:'FPS', expanded: true});
+    const continuousRedraw = fps.addInput(demo3d, 'continuousRedraw');
+    continuousRedraw.on('change', (ev) => {
+        map.repaint = demo3d.continuousRedraw;
     });
-    var terrainExaggeration = terrain.add(demo3d, 'terrainExaggeration', 0.5, 2);
-    terrainExaggeration.onFinishChange((value) => {
-        if (demo3d.enableTerrain) {
-            map.setTerrain({"source": "mapbox-dem", "exaggeration": value});
+
+    fps.addMonitor(demo3d, 'fps');
+    fps.addMonitor(demo3d, 'fps', {
+        label:'graph',
+        view: 'graph',
+        min: 0,
+        max: 140,
+    });
+
+    {
+        const debug = gui.addFolder({title:'Debug', expanded: false});
+
+        debug.addInput(demo3d.debug, 'showTiles').on('change', (ev) => {
+            map.showTileBoundaries = demo3d.debug.showTiles;
+        });
+        debug.addInput(demo3d.debug, 'showCollisions').on('change', (ev) => {
+            map.showCollisionBoxes = demo3d.debug.showCollisions;
+        });
+        debug.addInput(demo3d.debug, 'showOverdraw').on('change', (ev) => {
+            map.showOverdrawInspector = demo3d.debug.showOverdraw;
+        });
+
+        const wireframePane = debug.addFolder({title:'Wireframe', expanded: true});
+        wireframePane.addInput(demo3d.debug.wireframe, 'terrain');
+        wireframePane.addInput(demo3d.debug.wireframe, 'layers2D');
+        wireframePane.addInput(demo3d.debug.wireframe, 'layers3D');
+        wireframePane.on('change', (ev) => {
+            map.showTerrainWireframe = demo3d.debug.wireframe.terrain;
+            map.showLayers2DWireframe = demo3d.debug.wireframe.layers2D;
+            map.showLayers3DWireframe = demo3d.debug.wireframe.layers3D;
+        });
+
+        debug.addInput(demo3d.debug, 'tileAABBDebug').on('change', (ev) => {
+            map.showTileAABBs = demo3d.debug.tileAABBDebug;
+        });
+        debug.addInput(demo3d.debug, 'freezeTileCoverage').on('change', (ev) => {
+            map.transform.freezeTileCoverage = demo3d.debug.freezeTileCoverage;
+            map._update();
+        });
+
+        debug.addMonitor(demo3d.debug, 'numShadowCascadesRendered');
+    }
+
+    // Lights
+    const lights = gui.addFolder({title:'Lighting', expanded: true});
+    const enable3dLights = lights.addInput(demo3d, 'enable3dLights');
+    const directionalLightPolar = lights.addInput(demo3d, 'directionalLightPolar', {min:0.0, max:90.0});
+    const directionalLightAzimuth = lights.addInput(demo3d, 'directionalLightAzimuth', {min:0.0, max:360.0});
+    const directionalLightIntensity = lights.addInput(demo3d, 'directionalLightIntensity', {min: 0.0, max: 1.0});
+    const directionalLightColor = lights.addInput(demo3d, 'directionalLightColor');
+    const ambientLightIntensity = lights.addInput(demo3d, 'ambientLightIntensity', {min:0.0, max:1.0});
+    const ambientLightColor = lights.addInput(demo3d, 'ambientLightColor');
+    const directionalLightCastShadows = lights.addInput(demo3d, 'directionalLightCastShadows');
+    const directionalLightShadowIntensity = lights.addInput(demo3d, 'directionalLightShadowIntensity', {min:0.0, max:1.0});
+    lights.on('change', (ev) => {
+        updateLights(demo3d.enable3dLights);
+    });
+
+    // Terrain
+    const terrain = gui.addFolder({title:'Terrain', expanded: true});
+    const enableTerrain = terrain.addInput(demo3d, 'enableTerrain');
+    const terrainExaggeration = terrain.addInput(demo3d, 'terrainExaggeration', {min:0, max:100});
+    terrain.on('change', (ev) => {
+        map.setTerrain(demo3d.enableTerrain ? {"source": "mapbox-dem", "exaggeration": demo3d.terrainExaggeration} : null);
+        demo3d.terrainElevationDebugWidget.hidden = !demo3d.enableTerrain;
+    });
+
+    // Camera
+    const camera = gui.addFolder({title:'Camera', expanded:true});
+    camera.addInput(demo3d, 'animateCamera');
+
+    const mapProjection = camera.addInput(demo3d, 'mapProjection',
+        {options: fillOptions([
+            'mercator',
+            'globe',
+        ])}
+    );
+    mapProjection.on('change', (ev) => {
+        map.setProjection(ev.value);
+    });
+
+    camera.addInput(demo3d, 'orthographicProjectionAtLowPitch').on('change', (ev) => {
+        map.setCamera({'camera-projection': ev.value ? 'orthographic' : 'perspective'});
+    });
+
+    // Sky
+    const sky = gui.addFolder({title:'Sky', expanded:false});
+    sky.addInput(demo3d, 'animateSky');
+    const sunAltitude = sky.addInput(demo3d, 'sunAltitude', {min:0.0, max:90.0});
+    const sunAzimuth = sky.addInput(demo3d, 'sunAzimuth', {min:0.0, max:360.0});
+    const sunIntensity = sky.addInput(demo3d, 'sunIntensity', {min:0.0, max:100.0});
+    const sunHaloIntensity = sky.addInput(demo3d, 'sunHaloIntensity', {min:0.0, max:1.0});
+    const sunHaloColor = sky.addInput(demo3d, 'sunHaloColor');
+    const sunAtmosphereIntensity = sky.addInput(demo3d, 'sunAtmosphereIntensity', {min:0.0, max:1.0});
+    const skyColor = sky.addInput(demo3d, 'skyColor');
+    const starIntensity = sky.addInput(demo3d, 'starIntensity', {min:0.0, max:1.0});
+
+    const fogColor = sky.addInput(demo3d, 'fogColor');
+    const fogRangeMin = sky.addInput(demo3d, 'fogRangeMin', {min:-20.0, max:20.0});
+    const fogRangeMax = sky.addInput(demo3d, 'fogRangeMax', {min:-20.0, max:20.0});
+    const fogVerticalRangeMin = sky.addInput(demo3d, 'fogVerticalRangeMin', {min:0.0, max:200.0});
+    const fogVerticalRangeMax = sky.addInput(demo3d, 'fogVerticalRangeMax', {min:0.0, max:200.0});
+    sky.on('change', (ev) => {
+        map.setLights([
+            {
+                'type': 'flat',
+                'id': 'flat',
+                'properties': {'position': [1, demo3d.sunAzimuth, demo3d.sunAltitude], 'anchor': 'map', intensity: demo3d.lightIntensity}
+            }
+        ]);
+        map.setPaintProperty('sky', 'sky-atmosphere-sun-intensity', demo3d.sunIntensity);
+
+        map.setPaintProperty('sky', 'sky-atmosphere-halo-color',
+            'rgba(' + demo3d.sunHaloColor.r + ', ' + demo3d.sunHaloColor.g + ', ' + demo3d.sunHaloColor.b + ', ' + demo3d.sunHaloIntensity + ')');
+        map.setPaintProperty('sky', 'sky-atmosphere-color',
+            'rgba(' + demo3d.skyColor.r + ', ' + demo3d.skyColor.g + ', ' + demo3d.skyColor.b + ', ' + demo3d.sunAtmosphereIntensity + ')');
+        map.setFog({
+            "color":
+            'rgba(' + demo3d.fogColor.r + ', ' + demo3d.fogColor.g + ', ' + demo3d.fogColor.b + ', 1.0)',
+            'star-intensity': demo3d.starIntensity,
+            "range": [demo3d.fogRangeMin, demo3d.fogRangeMax],
+            'vertical-range': [demo3d.fogVerticalRangeMin, demo3d.fogVerticalRangeMax]
+        });
+    });
+
+    // Buildings
+    const buildings = gui.addFolder({title:'Buildings', expanded:false});
+    buildings.addInput(demo3d, 'enableBuildings').on('change', (ev) => {
+        const buildingsLayerId = map.style._order.find((id) => map.style.getLayer(id).type === 'fill-extrusion');
+        if (buildingsLayerId !== -1) {
+            map.setLayoutProperty(buildingsLayerId, 'visibility', demo3d.enableBuildings ? 'visible' : 'none');
+        }
+    });
+    const verticalGradient = buildings.addInput(demo3d, 'verticalGradient');
+    const buildingColor = buildings.addInput(demo3d, 'buildingColor');
+    const buildingAlpha = buildings.addInput(demo3d, 'buildingAlpha', {min:0.0, max:1.0});
+    const buildingOpacity = buildings.addInput(demo3d, 'buildingOpacity', {min:0.0, max:1.0});
+    const cutoffFadeRange = buildings.addInput(demo3d, 'cutoffFadeRange', {min:0.0, max:1.0});
+    const edgeRadius = buildings.addInput(demo3d, 'edgeRadius');
+    const roundedRoof = buildings.addInput(demo3d, 'roundedRoof');
+    const lightIntensity = buildings.addInput(demo3d, 'lightIntensity', {min:0.0, max:1.0});
+    buildings.on('change', (ev) => {
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-vertical-gradient', demo3d.verticalGradient);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-color',
+            'rgba(' + demo3d.buildingColor.r + ', ' + demo3d.buildingColor.g + ', ' + demo3d.buildingColor.b + ', ' + demo3d.buildingAlpha + ')');
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-opacity', demo3d.buildingOpacity);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-cutoff-fade-range', demo3d.cutoffFadeRange);
+        map.setLayoutProperty(demo3d.buildingExtrusion, 'fill-extrusion-edge-radius', demo3d.edgeRadius);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-rounded-roof', demo3d.roundedRoof);
+
+        const lights = map.getLights();
+        if (lights && lights.length > 0 && lights[0].type === "flat") {
+            const light = lights[0];
+            light['intensity'] = demo3d.lightIntensity;
+            map.setLights([light]);
         }
     });
 
-    var camera = gui.addFolder('Camera');
-    camera.add(demo3d, 'animateCamera');
-
-    var sky = gui.addFolder('Sky');
-    sky.add(demo3d, 'animateSky');
-    var sunAltitude = sky.add(demo3d, 'sunAltitude', 0.0, 90.0);
-    sunAltitude.onFinishChange((value) => {
-        map.setLight({'position': [1, demo3d.sunAzimuth, value], 'anchor': 'map'});
-    });
-    var sunAzimuth = sky.add(demo3d, 'sunAzimuth', 0.0, 360.0);
-    sunAzimuth.onFinishChange((value) => {
-        map.setLight({'position': [1, value, demo3d.sunAltitude], 'anchor': 'map'});
-    });
-    var sunIntensity = sky.add(demo3d, 'sunIntensity', 0.0, 100.0);
-    sunIntensity.onFinishChange((value) => {
-        map.setPaintProperty('sky', 'sky-atmosphere-sun-intensity', value);
-    });
-    var sunHaloIntensity = sky.add(demo3d, 'sunHaloIntensity', 0.0, 1.0);
-    sunHaloIntensity.onFinishChange((value) => {
-        map.setPaintProperty('sky', 'sky-atmosphere-halo-color',
-            'rgba(' + demo3d.sunHaloColor[0] + ', ' + demo3d.sunHaloColor[1] + ', ' + demo3d.sunHaloColor[2] + ', ' + value + ')');
-    });
-    var sunHaloColor = sky.addColor(demo3d, 'sunHaloColor');
-    sunHaloColor.onFinishChange((value) => {
-        map.setPaintProperty('sky', 'sky-atmosphere-halo-color',
-            'rgba(' + value[0] + ', ' + value[1] + ', ' + value[2] + ', ' + demo3d.sunHaloIntensity + ')');
-    });
-    var sunAtmosphereIntensity = sky.add(demo3d, 'sunAtmosphereIntensity', 0.0, 1.0);
-    sunAtmosphereIntensity.onFinishChange((value) => {
-        map.setPaintProperty('sky', 'sky-atmosphere-color',
-            'rgba(' + demo3d.skyColor[0] + ', ' + demo3d.skyColor[1] + ', ' + demo3d.skyColor[2] + ', ' + value + ')');
-    });
-    var skyColor = sky.addColor(demo3d, 'skyColor');
-    skyColor.onFinishChange((value) => {
-        map.setPaintProperty('sky', 'sky-atmosphere-color',
-            'rgba(' + value[0] + ', ' + value[1] + ', ' + value[2] + ', ' + demo3d.sunAtmosphereIntensity + ')');
+    // Flood lights
+    const groundEffects = buildings.addFolder({title:'Flood light and AO', expanded:true});
+    const buildingsAO = groundEffects.addInput(demo3d, 'aoIntensity', {min:0.0, max:1.0});
+    const aoWallRadius = groundEffects.addInput(demo3d, 'aoWallRadius', {min:0.0, max:50.0});
+    const aoGroundRadius = groundEffects.addInput(demo3d, 'aoGroundRadius', {min:0.0, max:50.0});
+    const aoGroundAttenuation = groundEffects.addInput(demo3d, 'aoGroundAttenuation', {min:0.0, max:1.0});
+    const floodLightColor = groundEffects.addInput(demo3d, 'floodLightColor');
+    const floodLightIntensity = groundEffects.addInput(demo3d, 'floodLightIntensity', {min:0.0, max:1.0});
+    const floodLightGroundAttenuation = groundEffects.addInput(demo3d, 'floodLightGroundAttenuation', {min:0.0, max:1.0});
+    const floodLightGroundRadius = groundEffects.addInput(demo3d, 'floodLightGroundRadius', {min:-50.0, max:50.0});
+    groundEffects.on('change', (ev) => {
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-ambient-occlusion-intensity', demo3d.aoIntensity);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-ambient-occlusion-radius', demo3d.aoWallRadius);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-ambient-occlusion-wall-radius', demo3d.aoWallRadius);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-ambient-occlusion-ground-radius', demo3d.aoGroundRadius);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-ambient-occlusion-ground-attenuation', demo3d.aoGroundAttenuation);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-flood-light-color',
+            'rgb(' + demo3d.floodLightColor.r + ', ' + demo3d.floodLightColor.g + ', ' + demo3d.floodLightColor.b + ')');
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-flood-light-intensity', demo3d.floodLightIntensity);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-flood-light-ground-attenuation', demo3d.floodLightGroundAttenuation);
+        map.setPaintProperty(demo3d.buildingExtrusion, 'fill-extrusion-flood-light-ground-radius', demo3d.floodLightGroundRadius);
     });
 };
 
@@ -132,9 +440,10 @@ var map = window.map = new mapboxgl.Map({
     center: [-122.45814, 37.76159],
     pitch: 85,
     bearing: 60,
-    style: 'mapbox://styles/mapbox/streets-v11',
+    style: window.dynamic,
     hash: true,
-    projection: 'globe'
+    projection: 'globe',
+    devtools: true
 });
 
 const r = 255 * 0.75;
@@ -145,27 +454,76 @@ let skyAnimationTime = 0.0;
 let first = true;
 
 map.on('style.load', function() {
-    map.addSource('mapbox-dem', {
-        "type": "raster-dem",
-        "url": "mapbox://mapbox.terrain-rgb",
-        "tileSize": 512,
-        "maxzoom": 14
-    });
-    map.setTerrain(demo3d.enableTerrain ? {"source": "mapbox-dem", "exaggeration": 1.5} : null);
-
-    map.addLayer({
-        'id': "extrusion",
-        'source': 'composite',
-        'source-layer': 'building',
-        'filter': ['==', 'extrude', 'true'],
-        'type': 'fill-extrusion',
-        'minzoom': 15,
-        'paint': {
-            'fill-extrusion-color': ['rgb', ['number', ['feature-state', 'hover-r'], r], ['number', ['feature-state', 'hover-g'], r], ['number', ['feature-state', 'hover-b'], r]],
-            'fill-extrusion-height': ["get", "height"],
-            'fill-extrusion-opacity': 0.7
-        }
-    }, 'waterway-label');
+    // map.showOverdrawInspector =  true;
+    updateLights(demo3d.enable3dLights, true);
+    if (!map.getSource('mapbox-dem')) {
+        map.addSource('mapbox-dem', {
+            "type": "raster-dem",
+            "url": "mapbox://mapbox.mapbox-terrain-dem-v1",
+            "tileSize": 514,
+            "maxzoom": 11
+        });
+    }
+    map.style.setPaintProperty("trees", "model-cutoff-fade-range", demo3d.cutoffFadeRange);
+    map.style.setPaintProperty("3d-building", "fill-extrusion-cutoff-fade-range", demo3d.cutoffFadeRange);
+    if (demo3d.enableTerrain && map.getTerrain() === null) {
+        map.setTerrain({"source": "mapbox-dem", "exaggeration": 1.});
+    }
+    demo3d.buildingExtrusion = map.style._order.find((id) => map.style.getLayer(id).type === 'fill-extrusion' && map.style.getLayer(id).sourceLayer === 'building');
+    if (!demo3d.buildingExtrusion) {
+        demo3d.buildingExtrusion = 'extrusion';
+        map.addLayer({
+            'id': demo3d.buildingExtrusion,
+            'source': 'composite',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'layout': {
+                'fill-extrusion-edge-radius': demo3d.edgeRadius
+            },
+            'paint': {
+                'fill-extrusion-color': 'rgb(' + demo3d.buildingColor.r + ', ' + demo3d.buildingColor.g + ', ' + demo3d.buildingColor.b + ')',
+                'fill-extrusion-height': ["get", "height"],
+                'fill-extrusion-base': ["get", "min_height"],
+                'fill-extrusion-opacity': demo3d.buildingOpacity,
+                'fill-extrusion-cutoff-fade-range': demo3d.cutoffFadeRange,
+                'fill-extrusion-vertical-gradient': demo3d.verticalGradient,
+                'fill-extrusion-ambient-occlusion-radius': demo3d.aoWallRadius,
+                'fill-extrusion-ambient-occlusion-intensity': demo3d.aoIntensity,
+                'fill-extrusion-ambient-occlusion-wall-radius': demo3d.aoWallRadius,
+                'fill-extrusion-ambient-occlusion-ground-radius': demo3d.aoGroundRadius,
+                'fill-extrusion-ambient-occlusion-ground-attenuation': demo3d.aoGroundAttenuation,
+                'fill-extrusion-flood-light-wall-radius': [
+                    "case",
+                    ["<=", ["get", "height"], 50], 0,
+                    [">",  ["get", "height"], 50], ["get", "height"],
+                    0
+                ],
+                'fill-extrusion-flood-light-ground-radius': [
+                    "case",
+                    ["<=", ["get", "height"], 50], 0,
+                    [">",  ["get", "height"], 50], [
+                        "/",
+                        ["get", "height"],
+                        10
+                    ],
+                    0
+                ],
+                'fill-extrusion-flood-light-color': ["rgb", demo3d.floodLightColor.r, demo3d.floodLightColor.g, demo3d.floodLightColor.b],
+                'fill-extrusion-flood-light-intensity':  demo3d.floodLightIntensity,
+                'fill-extrusion-vertical-scale': [
+                    "interpolate",
+                    ["linear"],
+                    ["zoom"],
+                    1,     0,
+                    15, 0,
+                    16, 1,
+                ],
+                'fill-extrusion-flood-light-ground-attenuation': demo3d.floodLightGroundAttenuation
+            }
+        }, 'waterway-label');
+    }
 
     map.addLayer({
         'id': 'sky',
@@ -183,11 +541,31 @@ map.on('style.load', function() {
             ]
         }
     });
-    var elevationDebug = document.getElementById('elevationDebug');
+    map.setFog({
+        "color": 'rgba(' + demo3d.fogColor.r + ', ' + demo3d.fogColor.g + ', ' + demo3d.fogColor.b + ', 1.0)',
+        'star-intensity': demo3d.starIntensity,
+        "range": [demo3d.fogRangeMin, demo3d.fogRangeMax],
+        "vertical-range": [demo3d.fogVerticalRangeMin, demo3d.fogVerticalRangeMax]
+    });
+    map.setLights([
+        {
+            'type': 'flat',
+            'id': 'flat',
+            'properties': {intensity: demo3d.lightIntensity}
+        }
+    ]);
     map.on('mousemove', (e) => {
-        const elevation = map.queryTerrainElevation(map.unproject(e.point));
-        const elevation2 = map.queryTerrainElevation(map.unproject(e.point), {exaggerated: false});
-        elevationDebug.innerHTML = 'Exaggerated: ' + (elevation ? elevation.toFixed(3) + 'm ' : 'Unavailable') + 'Unexaggerated: ' + (elevation2 ? elevation2.toFixed(3) + 'm ' : 'Unavailable');
+        demo3d.debug.exaggerated = map.queryTerrainElevation(map.unproject(e.point));
+        demo3d.debug.unexaggerated = map.queryTerrainElevation(map.unproject(e.point), {exaggerated: false});
+
+        demo3d.terrainElevationDebugWidget.refresh();
+    });
+    map.on('move', (e) => {
+        demo3d.debug.numShadowCascadesRendered = 0;
+        const shadowRenderer = map.painter.shadowRenderer;
+        if (shadowRenderer) {
+            demo3d.debug.numShadowCascadesRendered = shadowRenderer._numCascadesToRender;
+        }
     });
 
     const lerp = (a, b, t) => {
@@ -278,7 +656,13 @@ map.on('style.load', function() {
         }
         if (demo3d.animateSky) {
             const altitude = Math.cos(skyAnimationTime + Math.PI) * 0.5 + 0.5;
-            map.setLight({'position': [1, demo3d.sunAzimuth, easeInCubic(altitude) * 90.0], 'anchor': 'map'});
+            map.setLights([
+                {
+                    'type': 'flat',
+                    'id': 'flat',
+                    'properties': {'position': [1, demo3d.sunAzimuth, easeInCubic(altitude) * 90.0], 'anchor': 'map'}
+                }
+            ]);
             skyAnimationTime += 1.0 / 60;
         }
     }, 1000.0 / 60.0);

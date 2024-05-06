@@ -1,0 +1,24 @@
+{
+  "version": 8,
+  "metadata": {
+    "test": {
+      "width": 128,
+      "height": 64,
+      "operations": [
+        ["setProjection", "globe"],
+        ["setStyle", "local://mapbox-gl-styles/styles/satellite-v9.json"],
+        ["wait"],
+        ["setFog", {}],
+        ["setZoom", 0],
+        ["wait"],
+        ["setSize", 128, 1024]
+      ]
+    }
+  },
+  "center": [
+    -179,
+    0
+  ],
+  "sources": {},
+  "layers": []
+}

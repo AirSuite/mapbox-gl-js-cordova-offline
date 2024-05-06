@@ -3,14 +3,14 @@
 import assert from 'assert';
 import * as DOM from '../../util/dom.js';
 
-import {ease as _ease, bindAll, bezier} from '../../util/util.js';
+import {ease as _ease, bindAll, bezier, isFullscreen} from '../../util/util.js';
 import browser from '../../util/browser.js';
-import window from '../../util/window.js';
 import {number as interpolate} from '../../style-spec/util/interpolate.js';
 import Point from '@mapbox/point-geometry';
 
 import type Map from '../map.js';
 import type HandlerManager from '../handler_manager.js';
+import type {Handler, HandlerResult} from '../handler.js';
 import MercatorCoordinate from '../../geo/mercator_coordinate.js';
 
 // deltaY value for mouse scroll wheel identification
@@ -31,7 +31,7 @@ const maxScalePerFrame = 2;
  * @see [Example: Toggle interactions](https://docs.mapbox.com/mapbox-gl-js/example/toggle-interaction-handlers/)
  * @see [Example: Disable scroll zoom](https://docs.mapbox.com/mapbox-gl-js/example/disable-scroll-zoom/)
  */
-class ScrollZoomHandler {
+class ScrollZoomHandler implements Handler {
     _map: Map;
     _el: HTMLElement;
     _enabled: boolean;
@@ -51,6 +51,7 @@ class ScrollZoomHandler {
     _startZoom: ?number;
     _targetZoom: ?number;
     _delta: number;
+    _lastDelta: number;
     _easing: ?((number) => number);
     _prevEase: ?{start: number, duration: number, easing: (_: number) => number};
 
@@ -72,11 +73,12 @@ class ScrollZoomHandler {
         this._handler = handler;
 
         this._delta = 0;
+        this._lastDelta = 0;
 
         this._defaultZoomRate = defaultZoomRate;
         this._wheelZoomRate = wheelZoomRate;
 
-        bindAll(['_onTimeout', '_addScrollZoomBlocker', '_showBlockerAlert', '_isFullscreen'], this);
+        bindAll(['_onTimeout', '_addScrollZoomBlocker', '_showBlockerAlert'], this);
 
     }
 
@@ -121,7 +123,7 @@ class ScrollZoomHandler {
     * progress.
     */
     isActive(): boolean {
-        return !!this._active || this._finishTimeout !== undefined;
+        return this._active || this._finishTimeout !== undefined;
     }
 
     isZooming(): boolean {
@@ -161,11 +163,12 @@ class ScrollZoomHandler {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     wheel(e: WheelEvent) {
         if (!this.isEnabled()) return;
 
         if (this._map._cooperativeGestures) {
-            if (!e.ctrlKey && !e.metaKey && !this.isZooming() && !this._isFullscreen()) {
+            if (!e.ctrlKey && !e.metaKey && !this.isZooming() && !isFullscreen()) {
                 this._showBlockerAlert();
                 return;
             } else if (this._alertContainer.style.visibility !== 'hidden') {
@@ -176,7 +179,7 @@ class ScrollZoomHandler {
         }
 
         // Remove `any` cast when https://github.com/facebook/flow/issues/4879 is fixed.
-        let value = e.deltaMode === (window.WheelEvent: any).DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY;
+        let value = e.deltaMode === (WheelEvent: any).DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY;
         const now = browser.now(),
             timeDelta = now - (this._lastWheelEventTime || 0);
 
@@ -196,6 +199,7 @@ class ScrollZoomHandler {
             this._lastValue = value;
 
             // Start a timeout in case this was a singular event, and delay it by up to 40ms.
+            // $FlowFixMe[method-unbinding]
             this._timeout = setTimeout(this._onTimeout, 40, e);
 
         } else if (!this._type) {
@@ -263,13 +267,22 @@ class ScrollZoomHandler {
         }
     }
 
-    renderFrame() {
+    // $FlowFixMe[method-unbinding]
+    renderFrame(): ?HandlerResult {
         if (!this._frameId) return;
         this._frameId = null;
 
         if (!this.isActive()) return;
 
         const tr = this._map.transform;
+
+        // If projection wraps and center crosses the antimeridian, reset previous mouse scroll easing settings to resolve https://github.com/mapbox/mapbox-gl-js/issues/11910
+        if (this._type === 'wheel' && tr.projection.wrap && (tr._center.lng >= 180 || tr._center.lng <= -180)) {
+            this._prevEase = null;
+            this._easing = null;
+            this._lastWheelEvent = null;
+            this._lastWheelEventTime = 0;
+        }
 
         const startingZoom = () => {
             return (tr._terrainEnabled() && this._aroundCoord) ? tr.computeZoomRelativeTo(this._aroundCoord) : tr.zoom;
@@ -297,10 +310,10 @@ class ScrollZoomHandler {
             // function we're using to smooth out the zooming between wheel
             // events
             if (this._type === 'wheel') {
-                this._startZoom = startingZoom();
+                this._startZoom = startZoom;
                 this._easing = this._smoothOutEasing(200);
             }
-
+            this._lastDelta = this._delta;
             this._delta = 0;
         }
         const targetZoom = typeof this._targetZoom === 'number' ?
@@ -340,17 +353,22 @@ class ScrollZoomHandler {
             }, 200);
         }
 
+        let zoomDelta = zoom - startingZoom();
+        if (zoomDelta * this._lastDelta < 0) {
+            // prevent recenter zoom in opposite direction from zoom
+            zoomDelta = 0;
+        }
         return {
             noInertia: true,
             needsRenderFrame: !finished,
-            zoomDelta: zoom - startingZoom(),
+            zoomDelta,
             around: this._aroundPoint,
             aroundCoord: this._aroundCoord,
             originalEvent: this._lastWheelEvent
         };
     }
 
-    _smoothOutEasing(duration: number) {
+    _smoothOutEasing(duration: number): (number) => number {
         let easing = _ease;
 
         if (this._prevEase) {
@@ -386,7 +404,7 @@ class ScrollZoomHandler {
         if (this._map && !this._alertContainer) {
             this._alertContainer = DOM.create('div', 'mapboxgl-scroll-zoom-blocker', this._map._container);
 
-            if (/(Mac|iPad)/i.test(window.navigator.userAgent)) {
+            if (/(Mac|iPad)/i.test(navigator.userAgent)) {
                 this._alertContainer.textContent = this._map._getUIString('ScrollZoomBlocker.CmdMessage');
             } else {
                 this._alertContainer.textContent = this._map._getUIString('ScrollZoomBlocker.CtrlMessage');
@@ -397,18 +415,16 @@ class ScrollZoomHandler {
         }
     }
 
-    _isFullscreen(): boolean {
-        return !!window.document.fullscreenElement;
-    }
-
     _showBlockerAlert() {
-        if (this._alertContainer.style.visibility === 'hidden') this._alertContainer.style.visibility = 'visible';
+        this._alertContainer.style.visibility = 'visible';
         this._alertContainer.classList.add('mapboxgl-scroll-zoom-blocker-show');
+        this._alertContainer.setAttribute("role", "alert");
 
         clearTimeout(this._alertTimer);
 
         this._alertTimer = setTimeout(() => {
             this._alertContainer.classList.remove('mapboxgl-scroll-zoom-blocker-show');
+            this._alertContainer.removeAttribute("role");
         }, 200);
     }
 

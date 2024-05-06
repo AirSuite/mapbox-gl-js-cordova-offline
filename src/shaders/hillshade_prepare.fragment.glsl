@@ -1,22 +1,12 @@
-#ifdef GL_ES
 precision highp float;
-#endif
 
 uniform sampler2D u_image;
-varying vec2 v_pos;
+in vec2 v_pos;
 uniform vec2 u_dimension;
 uniform float u_zoom;
-uniform vec4 u_unpack;
 
 float getElevation(vec2 coord) {
-#ifdef TERRAIN_DEM_FLOAT_FORMAT
-    return texture2D(u_image, coord).a / 4.0;
-#else
-    // Convert encoded elevation value to meters
-    vec4 data = texture2D(u_image, coord) * 255.0;
-    data.a = -1.0;
-    return dot(data, u_unpack) / 4.0;
-#endif
+    return texture(u_image, coord).r / 4.0;
 }
 
 void main() {
@@ -29,11 +19,11 @@ void main() {
     // |   |   |   |
     // +-----------+
     // |   |   |   |
-    // | d | e | f |
+    // | d |   | e |
     // |   |   |   |
     // +-----------+
     // |   |   |   |
-    // | g | h | i |
+    // | f | g | h |
     // |   |   |   |
     // +-----------+
 
@@ -41,11 +31,10 @@ void main() {
     float b = getElevation(v_pos + vec2(0, -epsilon.y));
     float c = getElevation(v_pos + vec2(epsilon.x, -epsilon.y));
     float d = getElevation(v_pos + vec2(-epsilon.x, 0));
-    float e = getElevation(v_pos);
-    float f = getElevation(v_pos + vec2(epsilon.x, 0));
-    float g = getElevation(v_pos + vec2(-epsilon.x, epsilon.y));
-    float h = getElevation(v_pos + vec2(0, epsilon.y));
-    float i = getElevation(v_pos + vec2(epsilon.x, epsilon.y));
+    float e = getElevation(v_pos + vec2(epsilon.x, 0));
+    float f = getElevation(v_pos + vec2(-epsilon.x, epsilon.y));
+    float g = getElevation(v_pos + vec2(0, epsilon.y));
+    float h = getElevation(v_pos + vec2(epsilon.x, epsilon.y));
 
     // Here we divide the x and y slopes by 8 * pixel size
     // where pixel size (aka meters/pixel) is:
@@ -63,17 +52,13 @@ void main() {
     float exaggeration = u_zoom < 15.0 ? (u_zoom - 15.0) * exaggerationFactor : 0.0;
 
     vec2 deriv = vec2(
-        (c + f + f + i) - (a + d + d + g),
-        (g + h + h + i) - (a + b + b + c)
+        (c + e + e + h) - (a + d + d + f),
+        (f + g + g + h) - (a + b + b + c)
     ) / pow(2.0, exaggeration + (19.2562 - u_zoom));
 
-    gl_FragColor = clamp(vec4(
+    glFragColor = clamp(vec4(
         deriv.x / 2.0 + 0.5,
         deriv.y / 2.0 + 0.5,
         1.0,
         1.0), 0.0, 1.0);
-
-#ifdef OVERDRAW_INSPECTOR
-    gl_FragColor = vec4(1.0);
-#endif
 }

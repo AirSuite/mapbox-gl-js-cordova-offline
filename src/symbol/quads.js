@@ -15,6 +15,15 @@ import {isVerticalClosePunctuation, isVerticalOpenPunctuation} from '../util/ver
 import ONE_EM from './one_em.js';
 import {warnOnce} from '../util/util.js';
 
+export type TextureCoordinate = {
+    x: number,
+    y: number,
+    w: number,
+    h: number
+};
+
+type Size = {| fixed: number, stretch: number |};
+
 /**
  * A textured quad for rendering a single icon or glyph.
  *
@@ -24,7 +33,8 @@ import {warnOnce} from '../util/util.js';
  * @param tr The offset of the top right corner from the anchor.
  * @param bl The offset of the bottom left corner from the anchor.
  * @param br The offset of the bottom right corner from the anchor.
- * @param tex The texture coordinates.
+ * @param texPrimary The texture coordinates of the primary image.
+ * @param texSecondary The texture coordinates of an optional secondary image.
  *
  * @private
  */
@@ -33,12 +43,8 @@ export type SymbolQuad = {
     tr: Point,
     bl: Point,
     br: Point,
-    tex: {
-        x: number,
-        y: number,
-        w: number,
-        h: number
-    },
+    texPrimary: TextureCoordinate,
+    texSecondary: ?TextureCoordinate,
     pixelOffsetTL: Point,
     pixelOffsetBR: Point,
     writingMode: any | void,
@@ -65,7 +71,7 @@ export function getIconQuads(
                       hasIconTextFit: boolean): Array<SymbolQuad> {
     const quads = [];
 
-    const image = shapedIcon.image;
+    const image = shapedIcon.imagePrimary;
     const pixelRatio = image.pixelRatio;
     const imageWidth = image.paddedRect.w - 2 * border;
     const imageHeight = image.paddedRect.h - 2 * border;
@@ -76,7 +82,7 @@ export function getIconQuads(
     const stretchX = image.stretchX || [[0, imageWidth]];
     const stretchY = image.stretchY || [[0, imageHeight]];
 
-    const reduceRanges = (sum, range) => sum + range[1] - range[0];
+    const reduceRanges = (sum: number, range: [number, number]) => sum + range[1] - range[0];
     const stretchWidth = stretchX.reduce(reduceRanges, 0);
     const stretchHeight = stretchY.reduce(reduceRanges, 0);
     const fixedWidth = imageWidth - stretchWidth;
@@ -103,7 +109,7 @@ export function getIconQuads(
         fixedContentHeight = content[3] - content[1] - stretchContentHeight;
     }
 
-    const makeBox = (left, top, right, bottom) => {
+    const makeBox = (left: Size, top: Size, right: Size, bottom: Size) => {
 
         const leftEm = getEmOffset(left.stretch - stretchOffsetX, stretchContentWidth, iconWidth, shapedIcon.left);
         const leftPx = getPxOffset(left.fixed - fixedOffsetX, fixedContentWidth, left.stretch, stretchWidth);
@@ -149,11 +155,19 @@ export function getIconQuads(
             h: y2 - y1
         };
 
+        const imageSecondary = shapedIcon.imageSecondary;
+        const subRectB = imageSecondary ? {
+            x: imageSecondary.paddedRect.x + border + x1,
+            y: imageSecondary.paddedRect.y + border + y1,
+            w: x2 - x1,
+            h: y2 - y1
+        } : undefined;
+
         const minFontScaleX = fixedContentWidth / pixelRatio / iconWidth;
         const minFontScaleY = fixedContentHeight / pixelRatio / iconHeight;
 
         // Icon quad is padded, so texture coordinates also need to be padded.
-        return {tl, tr, bl, br, tex: subRect, writingMode: undefined, glyphOffset: [0, 0], sectionIndex: 0, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY, isSDF: isSDFIcon};
+        return {tl, tr, bl, br, texPrimary: subRect, texSecondary: subRectB, writingMode: undefined, glyphOffset: [0, 0], sectionIndex: 0, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY, isSDF: isSDFIcon};
     };
 
     if (!hasIconTextFit || (!image.stretchX && !image.stretchY)) {
@@ -180,7 +194,7 @@ export function getIconQuads(
     return quads;
 }
 
-function sumWithinRange(ranges, min, max) {
+function sumWithinRange(ranges: Array<[number, number]>, min: number, max: number) {
     let sum = 0;
     for (const range of ranges) {
         sum += Math.max(min, Math.min(max, range[1])) - Math.max(min, Math.min(max, range[0]));
@@ -188,7 +202,7 @@ function sumWithinRange(ranges, min, max) {
     return sum;
 }
 
-function stretchZonesToCuts(stretchZones, fixedSize, stretchSize) {
+function stretchZonesToCuts(stretchZones: Array<[number, number]>, fixedSize: number, stretchSize: number) {
     const cuts = [{fixed: -border, stretch: 0}];
 
     for (const [c1, c2] of stretchZones) {
@@ -209,11 +223,11 @@ function stretchZonesToCuts(stretchZones, fixedSize, stretchSize) {
     return cuts;
 }
 
-function getEmOffset(stretchOffset, stretchSize, iconSize, iconOffset) {
+function getEmOffset(stretchOffset: number, stretchSize: number, iconSize: number, iconOffset: number) {
     return stretchOffset / stretchSize * iconSize + iconOffset;
 }
 
-function getPxOffset(fixedOffset, fixedSize, stretchOffset, stretchSize) {
+function getPxOffset(fixedOffset: number, fixedSize: number, stretchOffset: number, stretchSize: number) {
     return fixedOffset - fixedSize * stretchOffset / stretchSize;
 }
 
@@ -231,7 +245,7 @@ function getRotateOffset(textOffset: [number, number]) {
     }
 }
 
-function getMidlineOffset(shaping, lineHeight, previousOffset, lineIndex) {
+function getMidlineOffset(shaping: Shaping, lineHeight: number, previousOffset: number, lineIndex: number) {
     const currentLineHeight = (lineHeight + shaping.positionedLines[lineIndex].lineOffset);
     if (lineIndex === 0) {
         return previousOffset + currentLineHeight / 2.0;
@@ -382,7 +396,7 @@ export function getGlyphQuads(anchor: Anchor,
                 const verticalAdvance = positionedGlyph.imageName ? metrics.advance * positionedGlyph.scale :
                     ONE_EM * positionedGlyph.scale;
                 // Check wether the glyph is generated from server side or locally
-                const chr = String.fromCharCode(positionedGlyph.glyph);
+                const chr = String.fromCodePoint(positionedGlyph.glyph);
                 if (isVerticalClosePunctuation(chr)) {
                     // Place vertical punctuation in right place, pull down 1 pixel's space for close punctuations
                     tl.x += (-rectBuffer + 1) * positionedGlyph.scale;
@@ -429,7 +443,7 @@ export function getGlyphQuads(anchor: Anchor,
             const pixelOffsetBR = new Point(0, 0);
             const minFontScaleX = 0;
             const minFontScaleY = 0;
-            quads.push({tl, tr, bl, br, tex: textureRect, writingMode: shaping.writingMode, glyphOffset, sectionIndex: positionedGlyph.sectionIndex, isSDF, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY});
+            quads.push({tl, tr, bl, br, texPrimary: textureRect, texSecondary: undefined, writingMode: shaping.writingMode, glyphOffset, sectionIndex: positionedGlyph.sectionIndex, isSDF, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY});
         }
     }
 

@@ -1,21 +1,23 @@
 // @flow
 
+import DepthMode from '../gl/depth_mode.js';
+import StencilMode from '../gl/stencil_mode.js';
+import CullFaceMode from '../gl/cull_face_mode.js';
+import {collisionUniformValues, collisionCircleUniformValues} from './program/collision_program.js';
+import {QuadTriangleArray, CollisionCircleLayoutArray} from '../data/array_types.js';
+import {collisionCircleLayout} from '../data/bucket/symbol_attributes.js';
+import SegmentVector from '../data/segment.js';
+import {mat4} from 'gl-matrix';
+import {getCollisionDebugTileProjectionMatrix} from '../geo/projection/projection_util.js';
+import VertexBuffer from '../gl/vertex_buffer.js';
+import IndexBuffer from '../gl/index_buffer.js';
+
 import type Painter from './painter.js';
 import type SourceCache from '../source/source_cache.js';
 import type StyleLayer from '../style/style_layer.js';
 import type {OverscaledTileID} from '../source/tile_id.js';
 import type SymbolBucket from '../data/bucket/symbol_bucket.js';
-import DepthMode from '../gl/depth_mode.js';
-import StencilMode from '../gl/stencil_mode.js';
-import CullFaceMode from '../gl/cull_face_mode.js';
-import {collisionUniformValues, collisionCircleUniformValues} from './program/collision_program.js';
-
-import {QuadTriangleArray, CollisionCircleLayoutArray} from '../data/array_types.js';
-import {collisionCircleLayout} from '../data/bucket/symbol_attributes.js';
-import SegmentVector from '../data/segment.js';
-import {mat4} from 'gl-matrix';
-import VertexBuffer from '../gl/vertex_buffer.js';
-import IndexBuffer from '../gl/index_buffer.js';
+import type Projection from '../geo/projection/projection.js';
 
 export default drawCollisionDebug;
 
@@ -23,7 +25,8 @@ type TileBatch = {
     circleArray: Array<number>,
     circleOffset: number,
     transform: Float32Array,
-    invTransform: Float32Array
+    invTransform: Float32Array,
+    projection: Projection
 };
 
 let quadTriangles: ?QuadTriangleArray;
@@ -31,7 +34,8 @@ let quadTriangles: ?QuadTriangleArray;
 function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: StyleLayer, coords: Array<OverscaledTileID>, translate: [number, number], translateAnchor: 'map' | 'viewport', isText: boolean) {
     const context = painter.context;
     const gl = context.gl;
-    const program = painter.useProgram('collisionBox');
+    const tr = painter.transform;
+    const program = painter.getOrCreateProgram('collisionBox');
     const tileBatches: Array<TileBatch> = [];
     let circleCount = 0;
     let circleOffset = 0;
@@ -41,9 +45,12 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
         const tile = sourceCache.getTile(coord);
         const bucket: ?SymbolBucket = (tile.getBucket(layer): any);
         if (!bucket) continue;
-        let posMatrix = coord.projMatrix;
+
+        const tileMatrix = getCollisionDebugTileProjectionMatrix(coord, bucket, tr);
+
+        let posMatrix = tileMatrix;
         if (translate[0] !== 0 || translate[1] !== 0) {
-            posMatrix = painter.translatePosMatrix(coord.projMatrix, tile, translate, translateAnchor);
+            posMatrix = painter.translatePosMatrix(tileMatrix, tile, translate, translateAnchor);
         }
         const buffers = isText ? bucket.textCollisionBox : bucket.iconCollisionBox;
         // Get collision circle data of this bucket
@@ -55,14 +62,15 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
             const invTransform = mat4.create();
             const transform = posMatrix;
 
-            mat4.mul(invTransform, bucket.placementInvProjMatrix, painter.transform.glCoordMatrix);
+            mat4.mul(invTransform, bucket.placementInvProjMatrix, tr.glCoordMatrix);
             mat4.mul(invTransform, invTransform, bucket.placementViewportMatrix);
 
             tileBatches.push({
                 circleArray,
                 circleOffset,
                 transform,
-                invTransform
+                invTransform,
+                projection: bucket.getProjection()
             });
 
             circleCount += circleArray.length / 4;  // 4 values per circle
@@ -70,18 +78,14 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
         }
         if (!buffers) continue;
         if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
-        program.draw(context, gl.LINES,
+        program.draw(painter, gl.LINES,
             DepthMode.disabled, StencilMode.disabled,
             painter.colorModeForRenderPass(),
             CullFaceMode.disabled,
-            collisionUniformValues(
-                posMatrix,
-                painter.transform,
-                tile),
+            collisionUniformValues(posMatrix, tr, tile, bucket.getProjection()),
             layer.id, buffers.layoutVertexBuffer, buffers.indexBuffer,
-            buffers.segments, null, painter.transform.zoom, null,
-            buffers.collisionVertexBuffer,
-            buffers.collisionVertexBufferExt);
+            buffers.segments, null, tr.zoom, null,
+            [buffers.collisionVertexBuffer, buffers.collisionVertexBufferExt]);
     }
 
     if (!isText || !tileBatches.length) {
@@ -89,7 +93,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
     }
 
     // Render collision circles
-    const circleProgram = painter.useProgram('collisionCircle');
+    const circleProgram = painter.getOrCreateProgram('collisionCircle');
 
     // Construct vertex data
     const vertexData = new CollisionCircleLayoutArray();
@@ -122,14 +126,10 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
 
     // Render batches
     for (const batch of tileBatches) {
-        const uniforms = collisionCircleUniformValues(
-            batch.transform,
-            batch.invTransform,
-            painter.transform
-        );
+        const uniforms = collisionCircleUniformValues(batch.transform, batch.invTransform, tr, batch.projection);
 
         circleProgram.draw(
-            context,
+            painter,
             gl.TRIANGLES,
             DepthMode.disabled,
             StencilMode.disabled,
@@ -141,10 +141,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
             indexBuffer,
             SegmentVector.simpleSegment(0, batch.circleOffset * 2, batch.circleArray.length, batch.circleArray.length / 2),
             null,
-            painter.transform.zoom,
-            null,
-            null,
-            null);
+            tr.zoom);
     }
 
     vertexBuffer.destroy();

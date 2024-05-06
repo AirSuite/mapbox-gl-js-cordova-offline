@@ -1,11 +1,19 @@
-import {test} from '../../util/test.js';
+import {describe, test, expect} from "../../util/vitest.js";
 
 import FeatureMap from '../../../src/data/feature_position_map.js';
 import {serialize, deserialize} from '../../../src/util/web_worker_transfer.js';
 
-test('FeaturePositionMap', (t) => {
+function getPositions(posMap, id) {
+    const positions = [];
+    posMap.eachPosition(id, (index, start, end) => {
+        positions.push({index, start, end});
+    });
+    positions.sort((a, b) => a.index - b.index);
+    return positions;
+}
 
-    test('Can be queried after serialization/deserialization', (t) => {
+describe('FeaturePositionMap', () => {
+    test('Can be queried after serialization/deserialization', () => {
         const featureMap = new FeatureMap();
         featureMap.add(7, 1, 0, 1);
         featureMap.add(3, 2, 1, 2);
@@ -14,57 +22,49 @@ test('FeaturePositionMap', (t) => {
         featureMap.add(2, 5, 4, 5);
         featureMap.add(7, 6, 5, 7);
 
-        const featureMap2 = deserialize(serialize(featureMap, []));
+        const featureMap2 = deserialize(serialize(featureMap, new Set()));
 
-        const compareIndex = (a, b) => a.index - b.index;
-
-        t.same(featureMap2.getPositions(7).sort(compareIndex), [
+        expect(getPositions(featureMap2, 7)).toStrictEqual([
             {index: 1, start: 0, end: 1},
             {index: 3, start: 2, end: 3},
             {index: 6, start: 5, end: 7}
-        ].sort(compareIndex));
+        ]);
 
-        t.end();
+        expect(featureMap2.uniqueIds).toStrictEqual([2, 3, 4, 7]);
     });
 
-    test('Can not be queried before serialization/deserialization', (t) => {
+    test('Can not be queried before serialization/deserialization', () => {
         const featureMap = new FeatureMap();
         featureMap.add(0, 1, 2, 3);
 
-        t.throws(() => {
-            featureMap.getPositions(0);
-        });
-
-        t.end();
+        expect(() => {
+            featureMap.eachPosition(0, () => {});
+        }).toThrowError();
     });
 
-    test('Can be queried with stringified bigint ids', (t) => {
+    test('Can be queried with stringified bigint ids', () => {
         const featureMap = new FeatureMap();
         featureMap.add('-9223372036854775808', 0, 0, 0);
         featureMap.add('-9223372036854775807', 1, 1, 1);
         featureMap.add('9223372036854775806', 2, 2, 2);
         featureMap.add('9223372036854775807', 3, 3, 3);
 
-        const featureMap2 = deserialize(serialize(featureMap, []));
+        const featureMap2 = deserialize(serialize(featureMap, new Set()));
 
-        t.same(featureMap2.getPositions('-9223372036854775808'), [
+        expect(getPositions(featureMap2, '-9223372036854775808')).toStrictEqual([
             {index: 0, start: 0, end: 0},
         ]);
 
-        t.same(featureMap2.getPositions('-9223372036854775807'), [
+        expect(getPositions(featureMap2, '-9223372036854775807')).toStrictEqual([
             {index: 1, start: 1, end: 1},
         ]);
 
-        t.same(featureMap2.getPositions('9223372036854775806'), [
+        expect(getPositions(featureMap2, '9223372036854775806')).toStrictEqual([
             {index: 2, start: 2, end: 2},
         ]);
 
-        t.same(featureMap2.getPositions('9223372036854775807'), [
+        expect(getPositions(featureMap2, '9223372036854775807')).toStrictEqual([
             {index: 3, start: 3, end: 3},
         ]);
-
-        t.end();
     });
-
-    t.end();
 });

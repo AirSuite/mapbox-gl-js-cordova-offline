@@ -14,7 +14,7 @@ import fs from 'fs';
 import ejs from 'ejs';
 import {extend} from '../src/util/util.js';
 import {createLayout, viewTypes} from '../src/util/struct_array.js';
-import type {ViewType, StructArrayLayout} from '../src/util/struct_array.js';
+import type {ViewType, StructArrayLayout, StructArrayMember} from '../src/util/struct_array.js';
 
 const structArrayLayoutJs = ejs.compile(fs.readFileSync('src/util/struct_array_layout.js.ejs', 'utf8'), {strict: true});
 const structArrayJs = ejs.compile(fs.readFileSync('src/util/struct_array.js.ejs', 'utf8'), {strict: true});
@@ -33,7 +33,7 @@ const arraysWithStructAccessors = [];
 const arrayTypeEntries = new Set();
 const layoutCache = {};
 
-function normalizeMembers(members, usedTypes) {
+function normalizeMembers(members: Array<StructArrayMember>, usedTypes: Set<string | ViewType>) {
     return members.map((member) => {
         if (usedTypes && !usedTypes.has(member.type)) {
             usedTypes.add(member.type);
@@ -70,7 +70,7 @@ function createStructArrayType(name: string, layout: StructArrayLayout, includeS
     }
 }
 
-function createStructArrayLayoutType({members, size, alignment}) {
+function createStructArrayLayoutType({members, size, alignment}: StructArrayLayout) {
     const usedTypes = new Set(['Uint8']);
     members = normalizeMembers(members, usedTypes);
 
@@ -106,7 +106,7 @@ function sizeOf(type: ViewType): number {
     return viewTypes[type].BYTES_PER_ELEMENT;
 }
 
-function camelize (str) {
+function camelize (str: string) {
     return str.replace(/(?:^|[-_])(.)/g, (_, x) => {
         return /^[0-9]$/.test(x) ? _ : x.toUpperCase();
     });
@@ -114,8 +114,8 @@ function camelize (str) {
 
 global.camelize = camelize;
 
-import posAttributes from '../src/data/pos_attributes.js';
-import {posAttributesGlobeExt} from '../src/data/pos_attributes.js';
+import particleAttributes from '../src/data/particle_attributes.js';
+import posAttributes, {posAttributesGlobeExt} from '../src/data/pos_attributes.js';
 import boundsAttributes from '../src/data/bounds_attributes.js';
 
 createStructArrayType('pos', posAttributes);
@@ -129,14 +129,15 @@ import lineAttributesExt from '../src/data/bucket/line_attributes_ext.js';
 import patternAttributes from '../src/data/bucket/pattern_attributes.js';
 import dashAttributes from '../src/data/bucket/dash_attributes.js';
 import skyboxAttributes from '../src/render/skybox_attributes.js';
-import tileBoundsAttributes from '../src/data/bounds_attributes.js';
-import {fillExtrusionAttributes, fillExtrusionAttributesExt, centroidAttributes} from '../src/data/bucket/fill_extrusion_attributes.js';
+import {fillExtrusionGroundAttributes, fillExtrusionAttributes, fillExtrusionAttributesExt, centroidAttributes, hiddenByLandmarkAttributes} from '../src/data/bucket/fill_extrusion_attributes.js';
+import {modelAttributes, color3fAttributes, color4fAttributes, normalAttributes, texcoordAttributes, instanceAttributes, featureAttributes} from '../3d-style/data/model_attributes.js';
 
 // layout vertex arrays
 const layoutAttributes = {
     circle: circleAttributes,
     fill: fillAttributes,
     'fill-extrusion': fillExtrusionAttributes,
+    'fill-extrusion-ground': fillExtrusionGroundAttributes,
     heatmap: circleAttributes,
     line: lineAttributes,
     lineExt: lineAttributesExt,
@@ -148,13 +149,15 @@ for (const name in layoutAttributes) {
 }
 
 // Globe extension arrays
-createStructArrayType('fill_extrusion_ext', fillExtrusionAttributesExt, true);
+createStructArrayType('fill_extrusion_ext', fillExtrusionAttributesExt);
 
 // symbol layer specific arrays
 import {
     symbolLayoutAttributes,
+    symbolGlobeExtAttributes,
     dynamicLayoutAttributes,
     placementOpacityAttributes,
+    iconTransitioningAttributes,
     collisionBox,
     collisionBoxLayout,
     collisionCircleLayout,
@@ -164,12 +167,15 @@ import {
     placement,
     symbolInstance,
     glyphOffset,
-    lineVertex
+    lineVertex,
+    zOffsetAttributes
 } from '../src/data/bucket/symbol_attributes.js';
 
 createStructArrayType(`symbol_layout`, symbolLayoutAttributes);
+createStructArrayType(`symbol_globe_ext`, symbolGlobeExtAttributes);
 createStructArrayType(`symbol_dynamic_layout`, dynamicLayoutAttributes);
 createStructArrayType(`symbol_opacity`, placementOpacityAttributes);
+createStructArrayType(`symbol_icon_transitioning`, iconTransitioningAttributes);
 createStructArrayType('collision_box', collisionBox, true);
 createStructArrayType(`collision_box_layout`, collisionBoxLayout);
 createStructArrayType(`collision_circle_layout`, collisionCircleLayout);
@@ -180,43 +186,61 @@ createStructArrayType('placed_symbol', placement, true);
 createStructArrayType('symbol_instance', symbolInstance, true);
 createStructArrayType('glyph_offset', glyphOffset, true);
 createStructArrayType('symbol_line_vertex', lineVertex, true);
+createStructArrayType('z_offset_vertex', zOffsetAttributes);
 
-import globeAttributes, {atmosphereLayout} from '../src/terrain/globe_attributes.js';
+import globeAttributes from '../src/terrain/globe_attributes.js';
+import {atmosphereLayout} from '../src/render/atmosphere_attributes.js';
 createStructArrayType('globe_vertex', globeAttributes);
-createStructArrayType('globe_atmosphere_vertex', atmosphereLayout);
+createStructArrayType('atmosphere_vertex', atmosphereLayout);
+
+import {starsLayout} from '../src/render/stars_attributes.js';
+createStructArrayType('stars_vertex', starsLayout);
 
 // feature index array
 createStructArrayType('feature_index', createLayout([
     // the index of the feature in the original vectortile
-    { type: 'Uint32', name: 'featureIndex' },
+    {type: 'Uint32', name: 'featureIndex'},
     // the source layer the feature appears in
-    { type: 'Uint16', name: 'sourceLayerIndex' },
+    {type: 'Uint16', name: 'sourceLayerIndex'},
     // the bucket the feature appears in
-    { type: 'Uint16', name: 'bucketIndex' },
+    {type: 'Uint16', name: 'bucketIndex'},
     // Offset into bucket.layoutVertexArray
-    { type: 'Uint16', name: 'layoutVertexArrayOffset' },
+    {type: 'Uint16', name: 'layoutVertexArrayOffset'},
 ]), true);
 
 // triangle index array
 createStructArrayType('triangle_index', createLayout([
-    { type: 'Uint16', name: 'vertices', components: 3 }
+    {type: 'Uint16', name: 'vertices', components: 3}
 ]));
 
 // line index array
 createStructArrayType('line_index', createLayout([
-    { type: 'Uint16', name: 'vertices', components: 2 }
+    {type: 'Uint16', name: 'vertices', components: 2}
 ]));
 
 // line strip index array
 createStructArrayType('line_strip_index', createLayout([
-    { type: 'Uint16', name: 'vertices', components: 1 }
+    {type: 'Uint16', name: 'vertices', components: 1}
 ]));
 
 // skybox vertex array
 createStructArrayType(`skybox_vertex`, skyboxAttributes);
 
 // tile bounds vertex array
-createStructArrayType(`tile_bounds`, tileBoundsAttributes);
+createStructArrayType(`tile_bounds`, boundsAttributes);
+
+// model attributes
+createStructArrayType(`model_layout`, modelAttributes);
+createStructArrayType(`color3f_layout`, color3fAttributes);
+createStructArrayType(`color4f_layout`, color4fAttributes);
+createStructArrayType(`texcoord_layout`, texcoordAttributes);
+createStructArrayType(`normal_layout`, normalAttributes);
+createStructArrayType(`instance_vertex`, instanceAttributes);
+createStructArrayType(`feature_vertex`, featureAttributes);
+
+// particle vertex attribute
+
+createStructArrayType('particle_vertex_layout', particleAttributes);
 
 // paint vertex arrays
 
@@ -244,19 +268,23 @@ createStructArrayLayoutType(createLayout([{
 // Fill extrusion specific array
 createStructArrayType(`fill_extrusion_centroid`, centroidAttributes, true);
 
+// Fill extrusion ground effect specific array
+createStructArrayType('fill_extrusion_hidden_by_landmark', hiddenByLandmarkAttributes);
+
 // Globe extension arrays
-createStructArrayType('circle_globe_ext', circleGlobeAttributesExt, true);
+createStructArrayType('circle_globe_ext', circleGlobeAttributesExt);
 
 const layouts = Object.keys(layoutCache).map(k => layoutCache[k]);
 
 fs.writeFileSync('src/data/array_types.js',
-    `// This file is generated. Edit build/generate-struct-arrays.js, then run \`yarn run codegen\`.
+    `// This file is generated. Edit build/generate-struct-arrays.js, then run \`npm run codegen\`.
 /* eslint-disable camelcase */
 // @flow
 
 import assert from 'assert';
 import {Struct, StructArray} from '../util/struct_array.js';
 import {register} from '../util/web_worker_transfer.js';
+import type {IStructArrayLayout} from '../util/struct_array.js';
 
 ${layouts.map(structArrayLayoutJs).join('\n')}
 ${arraysWithStructAccessors.map(structArrayJs).join('\n')}

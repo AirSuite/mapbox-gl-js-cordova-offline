@@ -32,6 +32,7 @@ import type {
 } from '../source/worker_source.js';
 import type {PromoteIdSpecification} from '../style-spec/types.js';
 import type {TileTransform} from '../geo/projection/tile_transform.js';
+import type {IVectorTile} from '@mapbox/vector-tile';
 
 class WorkerTile {
     tileID: OverscaledTileID;
@@ -42,23 +43,24 @@ class WorkerTile {
     pixelRatio: number;
     tileSize: number;
     source: string;
+    scope: string;
     promoteId: ?PromoteIdSpecification;
     overscaling: number;
     showCollisionBoxes: boolean;
     collectResourceTiming: boolean;
-    returnDependencies: boolean;
-    enableTerrain: boolean;
     isSymbolTile: ?boolean;
+    extraShadowCaster: ?boolean;
     projection: Projection;
     tileTransform: TileTransform;
+    brightness: number;
 
     status: 'parsing' | 'done';
-    data: VectorTile;
+    data: IVectorTile;
     collisionBoxArray: CollisionBoxArray;
 
     abort: ?() => void;
     reloadCallback: ?WorkerTileCallback;
-    vectorTile: VectorTile;
+    vectorTile: IVectorTile;
 
     constructor(params: WorkerTileParameters) {
         this.tileID = new OverscaledTileID(params.tileID.overscaledZ, params.tileID.wrap, params.tileID.canonical.z, params.tileID.canonical.x, params.tileID.canonical.y);
@@ -69,19 +71,20 @@ class WorkerTile {
         this.pixelRatio = params.pixelRatio;
         this.tileSize = params.tileSize;
         this.source = params.source;
+        this.scope = params.scope;
         this.overscaling = this.tileID.overscaleFactor();
         this.showCollisionBoxes = params.showCollisionBoxes;
         this.mbtiles = params.mbtiles || false;
         this.collectResourceTiming = !!params.collectResourceTiming;
-        this.returnDependencies = !!params.returnDependencies;
         this.promoteId = params.promoteId;
-        this.enableTerrain = !!params.enableTerrain;
         this.isSymbolTile = params.isSymbolTile;
         this.tileTransform = tileTransform(params.tileID.canonical, params.projection);
         this.projection = params.projection;
+        this.brightness = params.brightness;
+        this.extraShadowCaster = !!params.extraShadowCaster;
     }
 
-    parse(data: VectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
+    parse(data: IVectorTile, layerIndex: StyleLayerIndex, availableImages: Array<string>, actor: Actor, callback: WorkerTileCallback) {
         const m = PerformanceUtils.beginMeasure('parseTile1');
         this.status = 'parsing';
         this.data = data;
@@ -103,7 +106,8 @@ class WorkerTile {
             patternDependencies: {},
             glyphDependencies: {},
             lineAtlas,
-            availableImages
+            availableImages,
+            brightness: this.brightness
         };
 
         const layerFamilies = layerIndex.familiesBySource[this.source];
@@ -115,12 +119,21 @@ class WorkerTile {
 
             let anySymbolLayers = false;
             let anyOtherLayers = false;
+            let any3DLayer = false;
+
             for (const family of layerFamilies[sourceLayerId]) {
                 if (family[0].type === 'symbol') {
                     anySymbolLayers = true;
                 } else {
                     anyOtherLayers = true;
                 }
+                if (family[0].is3D() && family[0].type !== 'model') {
+                    any3DLayer = true;
+                }
+            }
+
+            if (this.extraShadowCaster && !any3DLayer) {
+                continue;
             }
 
             if (this.isSymbolTile === true && !anySymbolLayers) {
@@ -144,17 +157,22 @@ class WorkerTile {
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
-                if (this.isSymbolTile !== undefined && (layer.type === 'symbol') !== this.isSymbolTile) continue;
 
+                if (this.extraShadowCaster && (!layer.is3D() || layer.type === 'model')) {
+                    // avoid to spend resources in 2D layers or 3D model layers (trees) for extra shadow casters
+                    continue;
+                }
+                if (this.isSymbolTile !== undefined && (layer.type === 'symbol') !== this.isSymbolTile) continue;
                 assert(layer.source === this.source);
                 if (layer.minzoom && this.zoom < Math.floor(layer.minzoom)) continue;
                 if (layer.maxzoom && this.zoom >= layer.maxzoom) continue;
                 if (layer.visibility === 'none') continue;
 
-                recalculateLayers(family, this.zoom, availableImages);
+                recalculateLayers(family, this.zoom, options.brightness, availableImages);
 
                 const bucket = buckets[layer.id] = layer.createBucket({
                     index: featureIndex.bucketLayerIDs.length,
+                    // $FlowFixMe[incompatible-call] - Flow can't infer proper `family` type from `layer` above
                     layers: family,
                     zoom: this.zoom,
                     canonical: this.canonical,
@@ -163,9 +181,7 @@ class WorkerTile {
                     collisionBoxArray: this.collisionBoxArray,
                     sourceLayerIndex,
                     sourceID: this.source,
-                    enableTerrain: this.enableTerrain,
-                    projection: this.projection.name,
-                    availableImages
+                    projection: this.projection.spec
                 });
 
                 assert(this.tileTransform.projection.name === this.projection.name);
@@ -177,57 +193,37 @@ class WorkerTile {
         lineAtlas.trim();
 
         let error: ?Error;
-        let glyphMap: ?{[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}};
-        let iconMap: ?{[_: string]: StyleImage};
-        let patternMap: ?{[_: string]: StyleImage};
+        let glyphMap: {[_: string]: {glyphs: {[_: number]: ?StyleGlyph}, ascender?: number, descender?: number}};
+        let iconMap: {[_: string]: StyleImage};
+        let patternMap: {[_: string]: StyleImage};
         const taskMetadata = {type: 'maybePrepare', isSymbolTile: this.isSymbolTile, zoom: this.zoom};
 
-        const stacks = mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
-        if (Object.keys(stacks).length) {
-            actor.send('getGlyphs', {uid: this.uid, stacks}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    glyphMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            glyphMap = {};
-        }
-
-        const icons = Object.keys(options.iconDependencies);
-        if (icons.length) {
-            actor.send('getImages', {icons, source: this.source, tileID: this.tileID, type: 'icons'}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    iconMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            iconMap = {};
-        }
-
-        const patterns = Object.keys(options.patternDependencies);
-        if (patterns.length) {
-            actor.send('getImages', {icons: patterns, source: this.source, tileID: this.tileID, type: 'patterns'}, (err, result) => {
-                if (!error) {
-                    error = err;
-                    patternMap = result;
-                    maybePrepare.call(this);
-                }
-            }, undefined, false, taskMetadata);
-        } else {
-            patternMap = {};
-        }
-
-        PerformanceUtils.endMeasure(m);
-
-        maybePrepare.call(this);
-
-        function maybePrepare() {
+        const maybePrepare = () => {
             if (error) {
+                this.status = 'done';
                 return callback(error);
+            } else if (this.extraShadowCaster) {
+                const m = PerformanceUtils.beginMeasure('parseTile2');
+                this.status = 'done';
+                // $FlowIgnore[incompatible-call]
+                callback(null, {
+                    buckets: values(buckets).filter(b => !b.isEmpty()),
+                    featureIndex,
+                    // $FlowIgnore[incompatible-call] setting null on purpose
+                    collisionBoxArray: null,
+                    // $FlowIgnore[incompatible-call] setting null on purpose
+                    glyphAtlasImage: null,
+                    // $FlowIgnore[incompatible-call] setting null on purpose
+                    lineAtlas: null,
+                    // $FlowIgnore[incompatible-call] setting null on purpose
+                    imageAtlas: null,
+                    brightness: options.brightness,
+                    // Only used for benchmarking:
+                    glyphMap: null,
+                    iconMap: null,
+                    glyphPositions: null
+                });
+                PerformanceUtils.endMeasure(m);
             } else if (glyphMap && iconMap && patternMap) {
                 const m = PerformanceUtils.beginMeasure('parseTile2');
                 const glyphAtlas = new GlyphAtlas(glyphMap);
@@ -236,28 +232,28 @@ class WorkerTile {
                 for (const key in buckets) {
                     const bucket = buckets[key];
                     if (bucket instanceof SymbolBucket) {
-                        recalculateLayers(bucket.layers, this.zoom, availableImages);
+                        recalculateLayers(bucket.layers, this.zoom, options.brightness, availableImages);
                         performSymbolLayout(bucket,
-                            glyphMap,
-                            glyphAtlas.positions,
-                            iconMap,
-                            imageAtlas.iconPositions,
-                            this.showCollisionBoxes,
-                            availableImages,
-                            this.tileID.canonical,
-                            this.tileZoom,
-                            this.projection);
+                                glyphMap,
+                                glyphAtlas.positions,
+                                iconMap,
+                                imageAtlas.iconPositions,
+                                this.showCollisionBoxes,
+                                availableImages,
+                                this.tileID.canonical,
+                                this.tileZoom,
+                                this.projection,
+                                this.brightness);
                     } else if (bucket.hasPattern &&
-                        (bucket instanceof LineBucket ||
-                         bucket instanceof FillBucket ||
-                         bucket instanceof FillExtrusionBucket)) {
-                        recalculateLayers(bucket.layers, this.zoom, availableImages);
+                            (bucket instanceof LineBucket ||
+                             bucket instanceof FillBucket ||
+                             bucket instanceof FillExtrusionBucket)) {
+                        recalculateLayers(bucket.layers, this.zoom, options.brightness, availableImages);
                         // $FlowFixMe[incompatible-type] Flow can't interpret ImagePosition as SpritePosition for some reason here
                         const imagePositions: SpritePositions = imageAtlas.patternPositions;
-                        bucket.addFeatures(options, this.tileID.canonical, imagePositions, availableImages, this.tileTransform);
+                        bucket.addFeatures(options, this.tileID.canonical, imagePositions, availableImages, this.tileTransform, this.brightness);
                     }
                 }
-
                 this.status = 'done';
                 callback(null, {
                     buckets: values(buckets).filter(b => !b.isEmpty()),
@@ -266,20 +262,63 @@ class WorkerTile {
                     glyphAtlasImage: glyphAtlas.image,
                     lineAtlas,
                     imageAtlas,
-                    // Only used for benchmarking:
-                    glyphMap: this.returnDependencies ? glyphMap : null,
-                    iconMap: this.returnDependencies ? iconMap : null,
-                    glyphPositions: this.returnDependencies ? glyphAtlas.positions : null
+                    brightness: options.brightness
                 });
                 PerformanceUtils.endMeasure(m);
             }
+        };
+
+        if (!this.extraShadowCaster) {
+            const stacks = mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
+            if (Object.keys(stacks).length) {
+                actor.send('getGlyphs', {uid: this.uid, stacks, scope: this.scope}, (err, result) => {
+                    if (!error) {
+                        error = err;
+                        glyphMap = result;
+                        maybePrepare();
+                    }
+                }, undefined, false, taskMetadata);
+            } else {
+                glyphMap = {};
+            }
+
+            const icons = Object.keys(options.iconDependencies);
+            if (icons.length) {
+                actor.send('getImages', {icons, source: this.source, scope: this.scope, tileID: this.tileID, type: 'icons'}, (err, result) => {
+                    if (!error) {
+                        error = err;
+                        iconMap = result;
+                        maybePrepare();
+                    }
+                }, undefined, false, taskMetadata);
+            } else {
+                iconMap = {};
+            }
+
+            const patterns = Object.keys(options.patternDependencies);
+            if (patterns.length) {
+                actor.send('getImages', {icons: patterns, source: this.source, scope: this.scope, tileID: this.tileID, type: 'patterns'}, (err, result) => {
+                    if (!error) {
+                        error = err;
+                        patternMap = result;
+                        maybePrepare();
+                    }
+                }, undefined, false, taskMetadata);
+            } else {
+                patternMap = {};
+            }
         }
+
+        PerformanceUtils.endMeasure(m);
+
+        maybePrepare();
+
     }
 }
 
-function recalculateLayers(layers: $ReadOnlyArray<StyleLayer>, zoom: number, availableImages: Array<string>) {
+function recalculateLayers(layers: $ReadOnlyArray<StyleLayer>, zoom: number, brightness: number, availableImages: Array<string>) {
     // Layers are shared and may have been used by a WorkerTile with a different zoom.
-    const parameters = new EvaluationParameters(zoom);
+    const parameters = new EvaluationParameters(zoom, {brightness});
     for (const layer of layers) {
         layer.recalculate(parameters, availableImages);
     }

@@ -3,12 +3,11 @@
 import Point from '@mapbox/point-geometry';
 import type Map from '../map.js';
 import {indexTouches} from './handler_util.js';
-import {bindAll} from '../../util/util.js';
+import {bindAll, isFullscreen} from '../../util/util.js';
 import * as DOM from '../../util/dom.js';
-import type {HandlerResult} from '../handler_manager.js';
+import type {Handler, HandlerResult} from '../handler.js';
 
-export default class TouchPanHandler {
-
+export default class TouchPanHandler implements Handler {
     _map: Map;
     _el: HTMLElement;
     _enabled: boolean;
@@ -35,16 +34,18 @@ export default class TouchPanHandler {
         this._sum = new Point(0, 0);
     }
 
+    // $FlowFixMe[method-unbinding]
     touchstart(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>): ?HandlerResult {
         return this._calculateTransform(e, points, mapTouches);
     }
 
+    // $FlowFixMe[method-unbinding]
     touchmove(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>): ?HandlerResult {
         if (!this._active || mapTouches.length < this._minTouches) return;
 
         // if cooperative gesture handling is set to true, require two fingers to touch pan
         if (this._map._cooperativeGestures && !this._map.isMoving()) {
-            if (mapTouches.length === 1) {
+            if (mapTouches.length === 1 && !isFullscreen()) {
                 this._showTouchPanBlockerAlert();
                 return;
             } else if (this._alertContainer.style.visibility !== 'hidden') {
@@ -54,11 +55,14 @@ export default class TouchPanHandler {
             }
         }
 
-        e.preventDefault();
+        if (e.cancelable) {
+            e.preventDefault();
+        }
 
         return this._calculateTransform(e, points, mapTouches);
     }
 
+    // $FlowFixMe[method-unbinding]
     touchend(e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) {
         this._calculateTransform(e, points, mapTouches);
 
@@ -67,6 +71,7 @@ export default class TouchPanHandler {
         }
     }
 
+    // $FlowFixMe[method-unbinding]
     touchcancel() {
         this.reset();
     }
@@ -127,11 +132,11 @@ export default class TouchPanHandler {
     }
 
     isEnabled(): boolean {
-        return this._enabled;
+        return !!this._enabled;
     }
 
     isActive(): boolean {
-        return this._active;
+        return !!this._active;
     }
 
     _addTouchPanBlocker() {
@@ -146,14 +151,15 @@ export default class TouchPanHandler {
     }
 
     _showTouchPanBlockerAlert() {
-        if (this._alertContainer.style.visibility === 'hidden') this._alertContainer.style.visibility = 'visible';
-
+        this._alertContainer.style.visibility = 'visible';
         this._alertContainer.classList.add('mapboxgl-touch-pan-blocker-show');
+        this._alertContainer.setAttribute("role", "alert");
 
         clearTimeout(this._alertTimer);
 
         this._alertTimer = setTimeout(() => {
             this._alertContainer.classList.remove('mapboxgl-touch-pan-blocker-show');
+            this._alertContainer.removeAttribute("role");
         }, 500);
     }
 

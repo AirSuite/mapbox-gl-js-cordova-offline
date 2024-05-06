@@ -7,6 +7,7 @@ import type {FormattedSection} from './types/formatted.js';
 import type {GlobalProperties, Feature, FeatureState} from './index.js';
 import type {CanonicalTileID} from '../../source/tile_id.js';
 import type {FeatureDistanceData} from '../feature_filter/index.js';
+import type {ConfigOptions, ConfigOptionValue} from '../../style/properties.js';
 
 const geometryTypes = ['Unknown', 'Point', 'LineString', 'Polygon'];
 
@@ -16,13 +17,15 @@ class EvaluationContext {
     featureState: ?FeatureState;
     formattedSection: ?FormattedSection;
     availableImages: ?Array<string>;
-    canonical: ?CanonicalTileID;
+    canonical: null | CanonicalTileID;
     featureTileCoord: ?Point;
     featureDistanceData: ?FeatureDistanceData;
+    scope: ?string;
+    options: ?ConfigOptions;
 
     _parseColorCache: {[_: string]: ?Color};
 
-    constructor() {
+    constructor(scope: ?string, options: ?ConfigOptions) {
         this.globals = (null: any);
         this.feature = null;
         this.featureState = null;
@@ -32,29 +35,35 @@ class EvaluationContext {
         this.canonical = null;
         this.featureTileCoord = null;
         this.featureDistanceData = null;
+        this.scope = scope;
+        this.options = options;
     }
 
-    id() {
-        return this.feature && 'id' in this.feature ? this.feature.id : null;
+    id(): number | null {
+        return this.feature && this.feature.id !== undefined ? this.feature.id : null;
     }
 
-    geometryType() {
+    geometryType(): null | string {
         return this.feature ? typeof this.feature.type === 'number' ? geometryTypes[this.feature.type] : this.feature.type : null;
     }
 
-    geometry() {
+    geometry(): ?Array<Array<Point>> {
         return this.feature && 'geometry' in this.feature ? this.feature.geometry : null;
     }
 
-    canonicalID() {
+    canonicalID(): null | CanonicalTileID {
         return this.canonical;
     }
 
-    properties() {
+    properties(): {[string]: any} {
         return (this.feature && this.feature.properties) || {};
     }
 
-    distanceFromCenter() {
+    measureLight(_: string): number {
+        return this.globals.brightness || 0;
+    }
+
+    distanceFromCenter(): number {
         if (this.featureTileCoord && this.featureDistanceData) {
 
             const c = this.featureDistanceData.center;
@@ -83,6 +92,10 @@ class EvaluationContext {
             cached = this._parseColorCache[input] = Color.parse(input);
         }
         return cached;
+    }
+
+    getConfig(id: string): ?ConfigOptionValue {
+        return this.options ? this.options.get(id) : null;
     }
 }
 
