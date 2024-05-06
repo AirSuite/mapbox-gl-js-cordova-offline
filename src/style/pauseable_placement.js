@@ -4,6 +4,7 @@ import browser from '../util/browser.js';
 
 import {Placement} from '../symbol/placement.js';
 import {PerformanceUtils} from '../util/performance.js';
+import {makeFQID} from '../util/fqid.js';
 
 import type Transform from '../geo/transform.js';
 import type StyleLayer from './style_layer.js';
@@ -11,6 +12,7 @@ import type SymbolStyleLayer from './style_layer/symbol_style_layer.js';
 import type Tile from '../source/tile.js';
 import type {BucketPart} from '../symbol/placement.js';
 import type {FogState} from './fog_helpers.js';
+import BuildingIndex from '../source/building_index.js';
 
 class LayerPlacement {
     _sortAcrossTiles: boolean;
@@ -73,9 +75,10 @@ class PauseablePlacement {
                 fadeDuration: number,
                 crossSourceCollisions: boolean,
                 prevPlacement?: Placement,
-                fogState: ?FogState) {
-
-        this.placement = new Placement(transform, fadeDuration, crossSourceCollisions, prevPlacement, fogState);
+                fogState: ?FogState,
+                buildingIndex: ?BuildingIndex
+    ) {
+        this.placement = new Placement(transform, fadeDuration, crossSourceCollisions, prevPlacement, fogState, buildingIndex);
         this._currentPlacementIndex = order.length - 1;
         this._forceFullPlacement = forceFullPlacement;
         this._showCollisionBoxes = showCollisionBoxes;
@@ -86,7 +89,7 @@ class PauseablePlacement {
         return this._done;
     }
 
-    continuePlacement(order: Array<string>, layers: {[_: string]: StyleLayer}, layerTiles: {[_: string]: Array<Tile>}) {
+    continuePlacement(order: Array<string>, layers: {[_: string]: StyleLayer}, layerTiles: {[_: string]: Array<Tile>}, layerTilesInYOrder: {[_: string]: Array<Tile>}) {
         const startTime = browser.now();
 
         const shouldPausePlacement = () => {
@@ -102,11 +105,12 @@ class PauseablePlacement {
                 (!layer.minzoom || layer.minzoom <= placementZoom) &&
                 (!layer.maxzoom || layer.maxzoom > placementZoom)) {
 
-                if (!this._inProgressLayer) {
-                    this._inProgressLayer = new LayerPlacement(((layer: any): SymbolStyleLayer));
-                }
+                const symbolLayer = ((layer: any): SymbolStyleLayer);
+                const zOffset = symbolLayer.layout.get('symbol-z-elevate');
+                const inProgressLayer = this._inProgressLayer = this._inProgressLayer || new LayerPlacement(symbolLayer);
 
-                const pausePlacement = this._inProgressLayer.continuePlacement(layerTiles[layer.source], this.placement, this._showCollisionBoxes, layer, shouldPausePlacement);
+                const sourceId = makeFQID(layer.source, layer.scope);
+                const pausePlacement = inProgressLayer.continuePlacement(zOffset ? layerTilesInYOrder[sourceId] : layerTiles[sourceId], this.placement, this._showCollisionBoxes, layer, shouldPausePlacement);
 
                 if (pausePlacement) {
                     PerformanceUtils.recordPlacementTime(browser.now() - startTime);

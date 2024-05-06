@@ -14,8 +14,14 @@ type Config = {|
   REQUIRE_ACCESS_TOKEN: boolean,
   TILE_URL_VERSION: string,
   RASTER_URL_PREFIX: string,
+  RASTERARRAYS_URL_PREFIX: string,
   ACCESS_TOKEN: ?string,
-  MAX_PARALLEL_IMAGE_REQUESTS: number
+  MAX_PARALLEL_IMAGE_REQUESTS: number,
+  DRACO_URL: string,
+  MESHOPT_URL: string,
+  MESHOPT_SIMD_URL: string,
+  DEFAULT_STYLE: string,
+  GLYPHS_URL: string,
 |};
 
 let mapboxHTTPURLRegex;
@@ -72,9 +78,15 @@ const config: Config = {
     FEEDBACK_URL: 'https://apps.mapbox.com/feedback',
     TILE_URL_VERSION: 'v4',
     RASTER_URL_PREFIX: 'raster/v1',
+    RASTERARRAYS_URL_PREFIX: 'rasterarrays/v1',
     REQUIRE_ACCESS_TOKEN: true,
     ACCESS_TOKEN: null,
-    MAX_PARALLEL_IMAGE_REQUESTS: 16
+    DEFAULT_STYLE: 'mapbox://styles/mapbox/standard',
+    MAX_PARALLEL_IMAGE_REQUESTS: 16,
+    DRACO_URL: 'https://api.mapbox.com/mapbox-gl-js/draco_decoder_gltf_v1.5.6.wasm',
+    MESHOPT_URL: 'https://api.mapbox.com/mapbox-gl-js/meshopt_base_v0.20.wasm',
+    MESHOPT_SIMD_URL: 'https://api.mapbox.com/mapbox-gl-js/meshopt_simd_v0.20.wasm',
+    GLYPHS_URL: 'mapbox://fonts/mapbox/{fontstack}/{range}.pbf'
 };
 
 export default config;

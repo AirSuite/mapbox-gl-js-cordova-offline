@@ -1,41 +1,45 @@
+#include "_prelude_fog.fragment.glsl"
+#include "_prelude_lighting.glsl"
+
 uniform vec2 u_texsize;
 
 uniform sampler2D u_image;
 
 #ifdef FAUX_AO
 uniform lowp vec2 u_ao;
-varying vec3 v_ao;
+in vec3 v_ao;
 #endif
 
 #ifdef LIGHTING_3D_MODE
-varying float v_NdotL;
+in vec3 v_normal;
 #endif
 
-varying vec2 v_pos;
-varying vec4 v_lighting;
+in vec2 v_pos;
+in vec4 v_lighting;
 
 uniform lowp float u_opacity;
 
-#pragma mapbox: define lowp float base
-#pragma mapbox: define lowp float height
-#pragma mapbox: define lowp vec4 pattern
-#pragma mapbox: define lowp float pixel_ratio
+#pragma mapbox: define highp float base
+#pragma mapbox: define highp float height
+#pragma mapbox: define mediump vec4 pattern
+#pragma mapbox: define highp float pixel_ratio
 
 void main() {
-    #pragma mapbox: initialize lowp float base
-    #pragma mapbox: initialize lowp float height
+    #pragma mapbox: initialize highp float base
+    #pragma mapbox: initialize highp float height
     #pragma mapbox: initialize mediump vec4 pattern
-    #pragma mapbox: initialize lowp float pixel_ratio
+    #pragma mapbox: initialize highp float pixel_ratio
 
     vec2 pattern_tl = pattern.xy;
     vec2 pattern_br = pattern.zw;
 
     vec2 imagecoord = mod(v_pos, 1.0);
     vec2 pos = mix(pattern_tl / u_texsize, pattern_br / u_texsize, imagecoord);
-    vec4 out_color = texture2D(u_image, pos);
+    vec2 lod_pos = mix(pattern_tl / u_texsize, pattern_br / u_texsize, v_pos);
+    vec4 out_color = textureLodCustom(u_image, pos, lod_pos);
 
 #ifdef LIGHTING_3D_MODE
-    out_color = apply_lighting(out_color, v_NdotL) * u_opacity;
+    out_color = apply_lighting(out_color, normalize(v_normal)) * u_opacity;
 #else
     out_color = out_color * v_lighting;
 #endif
@@ -56,9 +60,15 @@ void main() {
     out_color = fog_dither(fog_apply_premultiplied(out_color, v_fog_pos));
 #endif
 
-    gl_FragColor = out_color;
+#ifdef INDICATOR_CUTOUT
+    out_color = applyCutout(out_color);
+#endif
+
+    glFragColor = out_color;
 
 #ifdef OVERDRAW_INSPECTOR
-    gl_FragColor = vec4(1.0);
+    glFragColor = vec4(1.0);
 #endif
+
+    HANDLE_WIREFRAME_DEBUG;
 }

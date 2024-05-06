@@ -3,7 +3,7 @@
 import {extend} from './util.js';
 import type {MapEvent} from '../ui/events.js';
 
-type Listener = (Object) => any;
+export type Listener = (Object) => void;
 type Listeners = {[_: string]: Array<Listener> };
 
 function _addEventListener(type: string, listener: Listener, listenerList: Listeners) {
@@ -101,7 +101,7 @@ export class Evented {
      */
     once(type: MapEvent, listener?: Listener): this | Promise<Event> {
         if (!listener) {
-            return new Promise(resolve => this.once(type, resolve));
+            return new Promise((resolve) => this.once(type, resolve));
         }
 
         this._oneTimeListeners = this._oneTimeListeners || {};

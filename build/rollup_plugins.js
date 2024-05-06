@@ -1,3 +1,4 @@
+/* eslint-disable flowtype/require-valid-file-annotation */
 
 import flowRemoveTypes from '@mapbox/flow-remove-types';
 import resolve from '@rollup/plugin-node-resolve';
@@ -9,6 +10,8 @@ import minifyStyleSpec from './rollup_plugin_minify_style_spec.js';
 import {createFilter} from '@rollup/pluginutils';
 import strip from '@rollup/plugin-strip';
 import replace from '@rollup/plugin-replace';
+import alias from '@rollup/plugin-alias';
+import {fileURLToPath} from 'url';
 
 // Common set of plugins/transformations shared across different rollup
 // builds (main mapboxgl bundle, style-spec package, benchmarks bundle)
@@ -19,17 +22,27 @@ export const plugins = ({minified, production, test, bench, keepClassNames}) => 
     json({
         exclude: 'src/style-spec/reference/v8.json'
     }),
+    alias({
+        entries: [{
+            find: 'tracked_parameters_proxy',
+            replacement: production ?
+                fileURLToPath(new URL('../src/tracked-parameters/internal/tracked_parameters_mock.js', import.meta.url)) :
+                fileURLToPath(new URL('../src/tracked-parameters/internal/tracked_parameters_ui.js', import.meta.url))
+        }]
+    }),
     (production && !bench) ? strip({
         sourceMap: true,
         functions: ['PerformanceUtils.*', 'WorkerPerformanceUtils.*', 'Debug.*', 'performance.mark']
     }) : false,
     production || bench ? unassert() : false,
+    replace({
+        'process.env.ROLLUP_WATCH': JSON.stringify(process.env.ROLLUP_WATCH),
+    }),
     test ? replace({
         'process.env.CI': JSON.stringify(process.env.CI),
-        'process.env.UPDATE': JSON.stringify(process.env.UPDATE),
-        'process.env.USE_WEBGL2': JSON.stringify(process.env.USE_WEBGL2)
+        'process.env.UPDATE': JSON.stringify(process.env.UPDATE)
     }) : false,
-    glsl('./src/shaders/*.glsl', production),
+    glsl(['./src/shaders/*.glsl', './3d-style/shaders/*.glsl'], production),
     minified ? terser({
         compress: {
             pure_getters: true,
@@ -39,7 +52,8 @@ export const plugins = ({minified, production, test, bench, keepClassNames}) => 
     }) : false,
     resolve({
         browser: true,
-        preferBuiltins: false
+        preferBuiltins: false,
+        mainFields: ['browser', 'main']
     }),
     commonjs({
         // global keyword handling causes Webpack compatibility issues, so we disabled it:

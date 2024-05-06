@@ -1,22 +1,26 @@
+#include "_prelude_lighting.glsl"
+
 #define SDF_PX 8.0
 
 #define SDF 1.0
 #define ICON 0.0
 
-uniform bool u_is_halo;
 uniform sampler2D u_texture;
 uniform sampler2D u_texture_icon;
 uniform highp float u_gamma_scale;
 uniform lowp float u_device_pixel_ratio;
+uniform bool u_is_halo;
 
-varying vec4 v_data0;
-varying vec4 v_data1;
+in float v_draw_halo;
+in vec4 v_data0;
+in vec4 v_data1;
 
 #pragma mapbox: define highp vec4 fill_color
 #pragma mapbox: define highp vec4 halo_color
 #pragma mapbox: define lowp float opacity
 #pragma mapbox: define lowp float halo_width
 #pragma mapbox: define lowp float halo_blur
+#pragma mapbox: define lowp float emissive_strength
 
 void main() {
     #pragma mapbox: initialize highp vec4 fill_color
@@ -24,16 +28,17 @@ void main() {
     #pragma mapbox: initialize lowp float opacity
     #pragma mapbox: initialize lowp float halo_width
     #pragma mapbox: initialize lowp float halo_blur
+    #pragma mapbox: initialize lowp float emissive_strength
 
     float fade_opacity = v_data1[2];
 
     if (v_data1.w == ICON) {
         vec2 tex_icon = v_data0.zw;
         lowp float alpha = opacity * fade_opacity;
-        gl_FragColor = texture2D(u_texture_icon, tex_icon) * alpha;
+        glFragColor = texture(u_texture_icon, tex_icon) * alpha;
 
 #ifdef OVERDRAW_INSPECTOR
-        gl_FragColor = vec4(1.0);
+        glFragColor = vec4(1.0);
 #endif
         return;
     }
@@ -50,19 +55,29 @@ void main() {
     lowp vec4 color = fill_color;
     highp float gamma = EDGE_GAMMA / (fontScale * u_gamma_scale);
     lowp float buff = (256.0 - 64.0) / 256.0;
-    if (u_is_halo) {
+
+    bool draw_halo = v_draw_halo > 0.0;
+    if (draw_halo) {
         color = halo_color;
         gamma = (halo_blur * 1.19 / SDF_PX + EDGE_GAMMA) / (fontScale * u_gamma_scale);
         buff = (6.0 - halo_width / fontScale) / SDF_PX;
     }
 
-    lowp float dist = texture2D(u_texture, tex).a;
+    lowp float dist = texture(u_texture, tex).r;
     highp float gamma_scaled = gamma * gamma_scale;
     highp float alpha = smoothstep(buff - gamma_scaled, buff + gamma_scaled, dist);
 
-    gl_FragColor = color * (alpha * opacity * fade_opacity);
+    vec4 out_color = color * (alpha * opacity * fade_opacity);
+
+#ifdef LIGHTING_3D_MODE
+    out_color = apply_lighting_with_emission_ground(out_color, emissive_strength);
+#endif
+
+    glFragColor = out_color;
 
 #ifdef OVERDRAW_INSPECTOR
-    gl_FragColor = vec4(1.0);
+    glFragColor = vec4(1.0);
 #endif
+
+    HANDLE_WIREFRAME_DEBUG;
 }

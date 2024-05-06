@@ -1,6 +1,6 @@
 // @flow strict
-
-import window from './window.js';
+import assert from 'assert';
+import offscreenCanvasSupported from './offscreen_canvas_supported.js';
 import type {Cancelable} from '../types/cancelable.js';
 
 let linkEl;
@@ -10,6 +10,8 @@ let reducedMotionQuery: MediaQueryList;
 let stubTime: number | void;
 
 let canvas;
+
+let hasCanvasFingerprintNoise;
 
 /**
  * @private
@@ -23,7 +25,7 @@ const exported = {
         if (stubTime !== undefined) {
             return stubTime;
         }
-        return window.performance.now();
+        return performance.now();
     },
     setNow(time: number) {
         stubTime = time;
@@ -34,15 +36,15 @@ const exported = {
     },
 
     frame(fn: (paintStartTimestamp: number) => void): Cancelable {
-        const frame = window.requestAnimationFrame(fn);
-        return {cancel: () => window.cancelAnimationFrame(frame)};
+        const frame = requestAnimationFrame(fn);
+        return {cancel: () => cancelAnimationFrame(frame)};
     },
 
     getImageData(img: CanvasImageSource, padding?: number = 0): ImageData {
         const {width, height} = img;
 
         if (!canvas) {
-            canvas = window.document.createElement('canvas');
+            canvas = document.createElement('canvas');
         }
 
         const context = canvas.getContext('2d', {willReadFrequently: true});
@@ -61,7 +63,7 @@ const exported = {
     },
 
     resolveURL(path: string): string {
-        if (!linkEl) linkEl = window.document.createElement('a');
+        if (!linkEl) linkEl = document.createElement('a');
         linkEl.href = path;
         return linkEl.href;
     },
@@ -75,6 +77,43 @@ const exported = {
         }
         return reducedMotionQuery.matches;
     },
+
+    /**
+     * Returns true if the browser has OffscreenCanvas support and
+     * adds noise to Canvas2D operations used for image decoding to prevent fingerprinting.
+     */
+    hasCanvasFingerprintNoise(): boolean {
+        if (hasCanvasFingerprintNoise !== undefined) {
+            return hasCanvasFingerprintNoise;
+        }
+
+        if (!offscreenCanvasSupported()) {
+            hasCanvasFingerprintNoise = false;
+            return false;
+        }
+
+        assert(self.OffscreenCanvas, 'OffscreenCanvas is not supported');
+
+        const offscreenCanvas = new OffscreenCanvas(255 / 3, 1);
+        // $FlowFixMe[extra-arg] probably fixed in later versions of Flow
+        const offscreenCanvasContext = offscreenCanvas.getContext('2d', {willReadFrequently: true});
+        let inc = 0;
+        // getImageData is lossy with premultiplied alpha.
+        for (let i = 0; i < offscreenCanvas.width; ++i) {
+            offscreenCanvasContext.fillStyle = `rgba(${inc++},${inc++},${inc++}, 255)`;
+            offscreenCanvasContext.fillRect(i, 0, 1, 1);
+        }
+        const readData = offscreenCanvasContext.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        inc = 0;
+        for (let i = 0; i < readData.data.length; ++i) {
+            if (i % 4 !== 3 && inc++ !== readData.data[i]) {
+                hasCanvasFingerprintNoise = true;
+                return true;
+            }
+        }
+        hasCanvasFingerprintNoise = false;
+        return false;
+    }
 };
 
 export default exported;

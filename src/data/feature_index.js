@@ -4,7 +4,7 @@ import Point from '@mapbox/point-geometry';
 
 import loadGeometry from './load_geometry.js';
 import toEvaluationFeature from './evaluation_feature.js';
-import EXTENT from './extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import featureFilter from '../style-spec/feature_filter/index.js';
 import Grid from 'grid-index';
 import DictionaryCoder from '../util/dictionary_coder.js';
@@ -68,6 +68,7 @@ class FeatureIndex {
     vtLayers: {[_: string]: IVectorTileLayer};
     vtFeatures: {[_: string]: IVectorTileFeature[]};
     sourceLayerCoder: DictionaryCoder;
+    is3DTile: boolean; // no vector source layers
 
     constructor(tileID: OverscaledTileID, promoteId?: ?PromoteIdSpecification) {
         this.tileID = tileID;
@@ -77,9 +78,10 @@ class FeatureIndex {
         this.grid = new Grid(EXTENT, 16, 0);
         this.featureIndexArray = new FeatureIndexArray();
         this.promoteId = promoteId;
+        this.is3DTile = false;
     }
 
-    insert(feature: IVectorTileFeature, geometry: Array<Array<Point>>, featureIndex: number, sourceLayerIndex: number, bucketIndex: number, layoutVertexArrayOffset: number = 0) {
+    insert(feature: IVectorTileFeature, geometry: Array<Array<Point>>, featureIndex: number, sourceLayerIndex: number, bucketIndex: number, layoutVertexArrayOffset: number = 0, envelopePadding: number = 0) {
         const key = this.featureIndexArray.length;
         this.featureIndexArray.emplaceBack(featureIndex, sourceLayerIndex, bucketIndex, layoutVertexArrayOffset);
 
@@ -95,6 +97,13 @@ class FeatureIndex {
                 bbox[1] = Math.min(bbox[1], p.y);
                 bbox[2] = Math.max(bbox[2], p.x);
                 bbox[3] = Math.max(bbox[3], p.y);
+            }
+
+            if (envelopePadding !== 0) {
+                bbox[0] -= envelopePadding;
+                bbox[1] -= envelopePadding;
+                bbox[2] += envelopePadding;
+                bbox[3] += envelopePadding;
             }
 
             if (bbox[0] < EXTENT &&
@@ -149,6 +158,19 @@ class FeatureIndex {
 
             const match = this.featureIndexArray.get(index);
             let featureGeometry = null;
+
+            if (this.is3DTile) {
+                // 3D tile is a single bucket tile.
+                const layerID = this.bucketLayerIDs[0][0];
+                const layer = styleLayers[layerID];
+                if (layer.type !== "model") continue;
+                const {queryFeature, intersectionZ} = layer.queryIntersectsMatchingFeature(tilespaceGeometry, match.featureIndex, filter, transform);
+                if (queryFeature) {
+                    this.appendToResult(result, layerID, match.featureIndex, queryFeature, intersectionZ);
+                }
+                continue;
+            }
+
             this.loadMatchingFeature(
                 result,
                 match,
@@ -221,11 +243,6 @@ class FeatureIndex {
                 featureState = sourceFeatureState.getState(styleLayer.sourceLayer || '_geojsonTileLayer', id);
             }
 
-            const serializedLayer = extend({}, serializedLayers[layerID]);
-
-            serializedLayer.paint = evaluateProperties(serializedLayer.paint, styleLayer.paint, feature, featureState, availableImages);
-            serializedLayer.layout = evaluateProperties(serializedLayer.layout, styleLayer.layout, feature, featureState, availableImages);
-
             const intersectionZ = !intersectionTest || intersectionTest(feature, styleLayer, featureState, layoutVertexArrayOffset);
             if (!intersectionZ) {
                 // Only applied for non-symbol features
@@ -233,14 +250,24 @@ class FeatureIndex {
             }
 
             const geojsonFeature = new GeoJSONFeature(feature, this.z, this.x, this.y, id);
-            geojsonFeature.layer = serializedLayer;
-            let layerResult = result[layerID];
-            if (layerResult === undefined) {
-                layerResult = result[layerID] = [];
-            }
 
-            layerResult.push({featureIndex, feature: geojsonFeature, intersectionZ});
+            const serializedLayer = extend({}, serializedLayers[layerID]);
+
+            serializedLayer.paint = evaluateProperties(serializedLayer.paint, styleLayer.paint, feature, featureState, availableImages);
+            serializedLayer.layout = evaluateProperties(serializedLayer.layout, styleLayer.layout, feature, featureState, availableImages);
+
+            geojsonFeature.layer = serializedLayer;
+            this.appendToResult(result, layerID, featureIndex, geojsonFeature, intersectionZ);
         }
+    }
+
+    appendToResult(result: QueryResult, layerID: string, featureIndex: number, geojsonFeature: QueryFeature, intersectionZ: boolean | number) {
+        let layerResult = result[layerID];
+        if (layerResult === undefined) {
+            layerResult = result[layerID] = [];
+        }
+
+        layerResult.push({featureIndex, feature: geojsonFeature, intersectionZ});
     }
 
     // Given a set of symbol indexes that have already been looked up,

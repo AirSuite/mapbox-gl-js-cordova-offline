@@ -1,11 +1,11 @@
 // @flow
 
 import Tile from './tile.js';
-import window from '../util/window.js';
+import Texture from '../render/texture.js';
 import TileBounds from './tile_bounds.js';
-import RasterTileSource from './raster_tile_source.js';
 import {extend, pick} from '../util/util.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
+import {makeFQID} from '../util/fqid.js';
 
 import type Map from '../ui/map.js';
 import type Dispatcher from '../util/dispatcher.js';
@@ -16,12 +16,13 @@ import type {OverscaledTileID} from './tile_id.js';
 type DataType = 'raster';
 
 function isRaster(data: any): boolean {
-    return data instanceof window.ImageData ||
-        data instanceof window.HTMLCanvasElement ||
-        data instanceof window.ImageBitmap ||
-        data instanceof window.HTMLImageElement;
+    return data instanceof ImageData ||
+        data instanceof HTMLCanvasElement ||
+        data instanceof ImageBitmap ||
+        data instanceof HTMLImageElement;
 }
 
+/* eslint-disable jsdoc/check-examples */
 /**
  * Interface for custom sources. This is a specification for
  * implementers to model: it is not an exported method or class.
@@ -72,6 +73,7 @@ function isRaster(data: any): boolean {
  *     });
  * });
  */
+/* eslint-enable jsdoc/check-examples */
 
 /**
  * Optional method called when the source has been added to the Map with {@link Map#addSource}.
@@ -148,8 +150,8 @@ export type CustomSourceInterface<T> = {
 }
 
 class CustomSource<T> extends Evented implements Source {
-
     id: string;
+    scope: string;
     type: 'custom';
     scheme: string;
     minzoom: number;
@@ -254,7 +256,7 @@ class CustomSource<T> extends Evented implements Source {
 
     loadTile(tile: Tile, callback: Callback<void>): void {
         const {x, y, z} = tile.tileID.canonical;
-        const controller = new window.AbortController();
+        const controller = new AbortController();
         const signal = controller.signal;
 
         // $FlowFixMe[prop-missing]
@@ -311,17 +313,26 @@ class CustomSource<T> extends Evented implements Source {
 
     loadTileData(tile: Tile, data: T): void {
         // Only raster data supported at the moment
-        RasterTileSource.loadTileData(tile, (data: any), this._map.painter);
-    }
-
-    unloadTileData(tile: Tile): void {
-        // Only raster data supported at the moment
-        RasterTileSource.unloadTileData(tile, this._map.painter);
+        tile.setTexture((data: any), this._map.painter);
     }
 
     // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile, callback: Callback<void>): void {
-        this.unloadTileData(tile);
+        // Only raster data supported at the moment
+        // Cache the tile texture to avoid re-allocating Textures if they'll just be reloaded
+        if (tile.texture && tile.texture instanceof Texture) {
+            // Clean everything else up owned by the tile, but preserve the texture.
+            // Destroy first to prevent racing with the texture cache being popped.
+            tile.destroy(true);
+
+            // Save the texture to the cache
+            if (tile.texture && tile.texture instanceof Texture) {
+                this._map.painter.saveTileTexture(tile.texture);
+            }
+        } else {
+            tile.destroy();
+        }
+
         if (this._implementation.unloadTile) {
             const {x, y, z} = tile.tileID.canonical;
             this._implementation.unloadTile({x, y, z});
@@ -356,7 +367,8 @@ class CustomSource<T> extends Evented implements Source {
     }
 
     _clearTiles() {
-        this._map.style._clearSource(this.id);
+        const fqid = makeFQID(this.id, this.scope);
+        this._map.style.clearSource(fqid);
     }
 
     _update() {

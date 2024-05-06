@@ -13,9 +13,11 @@
 * and the Mapbox Terms of Service are available at https://www.mapbox.com/tos/
 ******************************************************************************/
 
+import assert from 'assert';
+
 import config from './config.js';
-import window from './window.js';
 import webpSupported from './webp_supported.js';
+import {isMapboxHTTPURL, isMapboxURL} from './mapbox_url.js';
 import {createSkuToken, SKU_ID} from './sku_token.js';
 import {version as sdkVersion} from '../../package.json';
 import {uuid, validateUuid, storageAvailable, b64DecodeUnicode, b64EncodeUnicode, warnOnce, extend} from './util.js';
@@ -25,7 +27,6 @@ import type {LivePerformanceData} from '../util/live_performance.js';
 import type {RequestParameters} from './ajax.js';
 import type {Cancelable} from '../types/cancelable.js';
 import type {TileJSON} from '../types/tilejson.js';
-import assert from 'assert';
 
 type ResourceTypeEnum = $Keys<typeof ResourceType>;
 export type RequestTransformFunction = (url: string, resourceType?: ResourceTypeEnum) => RequestParameters;
@@ -48,7 +49,7 @@ export class RequestManager {
     _customAccessToken: ?string;
     _silenceAuthErrors: boolean;
 
-    constructor(transformRequestFn?: RequestTransformFunction, customAccessToken?: string, silenceAuthErrors: ?boolean) {
+    constructor(transformRequestFn?: ?RequestTransformFunction, customAccessToken?: ?string, silenceAuthErrors: ?boolean) {
         this._transformRequestFn = transformRequestFn;
         this._customAccessToken = customAccessToken;
         this._silenceAuthErrors = !!silenceAuthErrors;
@@ -76,6 +77,7 @@ export class RequestManager {
     normalizeStyleURL(url: string, accessToken?: string): string {
         if (!isMapboxURL(url)) return url;
         const urlObject = parseUrl(url);
+        urlObject.params.push(`sdk=js-${sdkVersion}`);
         urlObject.path = `/styles/v1${urlObject.path}`;
         return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
     }
@@ -84,6 +86,13 @@ export class RequestManager {
         if (!isMapboxURL(url)) return url;
         const urlObject = parseUrl(url);
         urlObject.path = `/fonts/v1${urlObject.path}`;
+        return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
+    }
+
+    normalizeModelURL(url: string, accessToken?: string): string {
+        if (!isMapboxURL(url)) return url;
+        const urlObject = parseUrl(url);
+        urlObject.path = `/models/v1${urlObject.path}`;
         return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
     }
 
@@ -133,6 +142,8 @@ export class RequestManager {
 
         if (urlObject.authority === 'raster') {
             urlObject.path = `/${config.RASTER_URL_PREFIX}${urlObject.path}`;
+        } else if (urlObject.authority === 'rasterarrays') {
+            urlObject.path = `/${config.RASTERARRAYS_URL_PREFIX}${urlObject.path}`;
         } else {
             const tileURLAPIPrefixRe = /^.+\/v4\//;
             urlObject.path = urlObject.path.replace(tileURLAPIPrefixRe, '/');
@@ -153,8 +164,8 @@ export class RequestManager {
 
         const urlObject = parseUrl(url);
         // Make sure that we are dealing with a valid Mapbox tile URL.
-        // Has to begin with /v4/ or /raster/v1, with a valid filename + extension
-        if (!urlObject.path.match(/^(\/v4\/|\/raster\/v1\/)/) || !urlObject.path.match(extensionRe)) {
+        // Has to begin with /v4/, /raster/v1 or /rasterarrays/v1 with a valid filename + extension
+        if (!urlObject.path.match(/^(\/v4\/|\/(raster|rasterarrays)\/v1\/)/) || !urlObject.path.match(extensionRe)) {
             // Not a proper Mapbox tile URL.
             return url;
         }
@@ -164,6 +175,10 @@ export class RequestManager {
             // If the tile url has /raster/v1/, make the final URL mapbox://raster/....
             const rasterPrefix = `/${config.RASTER_URL_PREFIX}/`;
             result += `raster/${urlObject.path.replace(rasterPrefix, '')}`;
+        } else if (urlObject.path.match(/^\/rasterarrays\/v1\//)) {
+            // If the tile url has /rasterarrays/v1/, make the final URL mapbox://rasterarrays/....
+            const rasterPrefix = `/${config.RASTERARRAYS_URL_PREFIX}/`;
+            result += `rasterarrays/${urlObject.path.replace(rasterPrefix, '')}`;
         } else {
             const tilesPrefix = `/${config.TILE_URL_VERSION}/`;
             result += `tiles/${urlObject.path.replace(tilesPrefix, '')}`;
@@ -220,38 +235,6 @@ export class RequestManager {
         urlObject.params.push(`access_token=${accessToken || ''}`);
         return formatUrl(urlObject);
     }
-}
-
-export function isMapboxURL(url: string): boolean {
-    return url.indexOf('mapbox:') === 0;
-}
-
-export function isMapboxHTTPURL(url: string): boolean {
-    return config.API_URL_REGEX.test(url);
-}
-
-export function isMapboxHTTPCDNURL(url: string): boolean {
-    return config.API_CDN_URL_REGEX.test(url);
-}
-
-export function isMapboxHTTPStyleURL(url: string): boolean {
-    return config.API_STYLE_REGEX.test(url) && !isMapboxHTTPSpriteURL(url);
-}
-
-export function isMapboxHTTPTileJSONURL(url: string): boolean {
-    return config.API_TILEJSON_REGEX.test(url);
-}
-
-export function isMapboxHTTPSpriteURL(url: string): boolean {
-    return config.API_SPRITE_REGEX.test(url);
-}
-
-export function isMapboxHTTPFontsURL(url: string): boolean {
-    return config.API_FONTS_REGEX.test(url);
-}
-
-export function hasCacheDefeatingSku(url: string): boolean {
-    return url.indexOf('sku=') > 0 && isMapboxHTTPURL(url);
 }
 
 function getAccessToken(params: Array<string>): string | null {
@@ -351,12 +334,12 @@ class TelemetryEvent {
         if (isLocalStorageAvailable) {
             //Retrieve cached data
             try {
-                const data = window.localStorage.getItem(storageKey);
+                const data = localStorage.getItem(storageKey);
                 if (data) {
                     this.eventData = JSON.parse(data);
                 }
 
-                const uuid = window.localStorage.getItem(uuidKey);
+                const uuid = localStorage.getItem(uuidKey);
                 if (uuid) this.anonId = uuid;
             } catch (e) {
                 warnOnce('Unable to read from LocalStorage');
@@ -368,11 +351,12 @@ class TelemetryEvent {
         const isLocalStorageAvailable = storageAvailable('localStorage');
         const storageKey =  this.getStorageKey();
         const uuidKey = this.getStorageKey('uuid');
-        if (isLocalStorageAvailable) {
+        const anonId = this.anonId;
+        if (isLocalStorageAvailable && anonId) {
             try {
-                window.localStorage.setItem(uuidKey, this.anonId);
+                localStorage.setItem(uuidKey, anonId);
                 if (Object.keys(this.eventData).length >= 1) {
-                    window.localStorage.setItem(storageKey, JSON.stringify(this.eventData));
+                    localStorage.setItem(storageKey, JSON.stringify(this.eventData));
                 }
             } catch (e) {
                 warnOnce('Unable to write to LocalStorage');
@@ -514,6 +498,11 @@ export class MapLoadEvent extends TelemetryEvent {
 
         }, customAccessToken);
     }
+
+    remove() {
+        // $FlowFixMe[incompatible-type]
+        this.errorCb = null;
+    }
 }
 
 export class MapSessionAPI extends TelemetryEvent {
@@ -575,6 +564,11 @@ export class MapSessionAPI extends TelemetryEvent {
                 if (id) this.success[id] = true;
             }
         }, customAccessToken);
+    }
+
+    remove() {
+        // $FlowFixMe[incompatible-type]
+        this.errorCb = null;
     }
 }
 
@@ -652,20 +646,20 @@ const turnstileEvent_ = new TurnstileEvent();
 // $FlowFixMe[method-unbinding]
 export const postTurnstileEvent: (tileUrls: Array<string>, customAccessToken?: ?string) => void = turnstileEvent_.postTurnstileEvent.bind(turnstileEvent_);
 
-const mapLoadEvent_ = new MapLoadEvent();
+export const mapLoadEvent: MapLoadEvent = new MapLoadEvent();
 // $FlowFixMe[method-unbinding]
-export const postMapLoadEvent: (number, string, ?string, EventCallback) => void = mapLoadEvent_.postMapLoadEvent.bind(mapLoadEvent_);
+export const postMapLoadEvent: (number, string, ?string, EventCallback) => void = mapLoadEvent.postMapLoadEvent.bind(mapLoadEvent);
 
 export const performanceEvent_: PerformanceEvent = new PerformanceEvent();
 // $FlowFixMe[method-unbinding]
 export const postPerformanceEvent: (?string, LivePerformanceData) => void = performanceEvent_.postPerformanceEvent.bind(performanceEvent_);
 
-const mapSessionAPI_ = new MapSessionAPI();
+export const mapSessionAPI: MapSessionAPI = new MapSessionAPI();
 // $FlowFixMe[method-unbinding]
-export const getMapSessionAPI: (number, string, ?string, EventCallback) => void = mapSessionAPI_.getSessionAPI.bind(mapSessionAPI_);
+export const getMapSessionAPI: (number, string, ?string, EventCallback) => void = mapSessionAPI.getSessionAPI.bind(mapSessionAPI);
 
 const authenticatedMaps = new Set();
-export function storeAuthState(gl: WebGLRenderingContext, state: boolean) {
+export function storeAuthState(gl: WebGL2RenderingContext, state: boolean) {
     if (state) {
         authenticatedMaps.add(gl);
     } else {
@@ -673,11 +667,11 @@ export function storeAuthState(gl: WebGLRenderingContext, state: boolean) {
     }
 }
 
-export function isMapAuthenticated(gl: WebGLRenderingContext): boolean {
+export function isMapAuthenticated(gl: WebGL2RenderingContext): boolean {
     return authenticatedMaps.has(gl);
 }
 
-export function removeAuthState(gl: WebGLRenderingContext) {
+export function removeAuthState(gl: WebGL2RenderingContext) {
     authenticatedMaps.delete(gl);
 }
 

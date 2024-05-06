@@ -1,12 +1,12 @@
 // @flow
 
-import {FillExtrusionLayoutArray, FillExtrusionExtArray, FillExtrusionCentroidArray} from '../array_types.js';
+import {FillExtrusionGroundLayoutArray, FillExtrusionLayoutArray, FillExtrusionExtArray, FillExtrusionCentroidArray, FillExtrusionHiddenByLandmarkArray, PosArray} from '../array_types.js';
 
-import {members as layoutAttributes, centroidAttributes, fillExtrusionAttributesExt} from './fill_extrusion_attributes.js';
+import {members as layoutAttributes, fillExtrusionGroundAttributes, centroidAttributes, fillExtrusionAttributesExt, hiddenByLandmarkAttributes} from './fill_extrusion_attributes.js';
 import SegmentVector from '../segment.js';
 import {ProgramConfigurationSet} from '../program_configuration.js';
 import {TriangleIndexArray} from '../index_array_type.js';
-import EXTENT from '../extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import earcut from 'earcut';
 import {VectorTileFeature} from '@mapbox/vector-tile';
 const vectorTileFeatureTypes = VectorTileFeature.types;
@@ -20,11 +20,19 @@ import toEvaluationFeature from '../evaluation_feature.js';
 import EvaluationParameters from '../../style/evaluation_parameters.js';
 import Point from '@mapbox/point-geometry';
 import {number as interpolate} from '../../style-spec/util/interpolate.js';
-import {lngFromMercatorX, latFromMercatorY, mercatorYfromLat} from '../../geo/mercator_coordinate.js';
+import {lngFromMercatorX, latFromMercatorY, mercatorYfromLat, tileToMeter} from '../../geo/mercator_coordinate.js';
 import {subdividePolygons} from '../../util/polygon_clipping.js';
+import {ReplacementSource, regionsEquals, footprintTrianglesIntersect} from '../../../3d-style/source/replacement_source.js';
+import {clamp} from '../../util/util.js';
+import {earthRadius} from '../../geo/lng_lat.js';
+import {Aabb, Frustum} from '../../util/primitives.js';
+import {Elevation} from '../../terrain/elevation.js';
+
+import type {Feature} from "../../style-spec/expression";
 import type {ClippedPolygon} from '../../util/polygon_clipping.js';
 import type {Vec3} from 'gl-matrix';
-import type {CanonicalTileID} from '../../source/tile_id.js';
+import type {CanonicalTileID, OverscaledTileID} from '../../source/tile_id.js';
+import type {Segment} from '../segment.js';
 import type {
     Bucket,
     BucketParameters,
@@ -32,8 +40,6 @@ import type {
     IndexedFeature,
     PopulateParameters
 } from '../bucket.js';
-import {earthRadius} from '../../geo/lng_lat.js';
-
 import type FillExtrusionStyleLayer from '../../style/style_layer/fill_extrusion_style_layer.js';
 import type Context from '../../gl/context.js';
 import type IndexBuffer from '../../gl/index_buffer.js';
@@ -44,7 +50,31 @@ import type {ProjectionSpecification} from '../../style-spec/types.js';
 import type {TileTransform} from '../../geo/projection/tile_transform.js';
 import type {IVectorTileLayer} from '@mapbox/vector-tile';
 
+export const fillExtrusionDefaultDataDrivenProperties: Array<string> = [
+    'fill-extrusion-base',
+    'fill-extrusion-height',
+    'fill-extrusion-color',
+    'fill-extrusion-pattern',
+    'fill-extrusion-flood-light-wall-radius'
+];
+
+export const fillExtrusionGroundDataDrivenProperties: Array<string> = [
+    'fill-extrusion-flood-light-ground-radius'
+];
+
 const FACTOR = Math.pow(2, 13);
+const TANGENT_CUTOFF = 4;
+const NORM = Math.pow(2, 15) - 1;
+
+const QUAD_VERTS = 4;
+const QUAD_TRIS = 2;
+// In flood lighting a line segment is extruded based on the flood light radius to form a quad.
+// The tile is divided into four regions (left, right, top and bottom).
+// As an example when a quad crosses the left border it belongs to the left region.
+const TILE_REGIONS = 4;
+
+const HIDDEN_CENTROID: Point = new Point(0, 1);
+export const HIDDEN_BY_REPLACEMENT: number = 0x80000000;
 
 // Also declared in _prelude_terrain.vertex.glsl
 // Used to scale most likely elevation values to fit well in an uint16
@@ -66,6 +96,16 @@ function addVertex(vertexArray: FillExtrusionLayoutArray, x: number, y: number, 
     );
 }
 
+function addGroundVertex(vertexArray: FillExtrusionGroundLayoutArray, p: Point, q: Point, start: number, bottom: number, angle: number) {
+    vertexArray.emplaceBack(
+        p.x,
+        p.y,
+        (q.x << 1) + start,
+        (q.y << 1) + bottom,
+        angle
+    );
+}
+
 function addGlobeExtVertex(vertexArray: FillExtrusionExtArray, pos: {x: number, y: number, z: number}, normal: Vec3) {
     const encode = 1 << 14;
     vertexArray.emplaceBack(
@@ -73,49 +113,118 @@ function addGlobeExtVertex(vertexArray: FillExtrusionExtArray, pos: {x: number, 
         normal[0] * encode, normal[1] * encode, normal[2] * encode);
 }
 
-export class PartMetadata {
-    acc: Point;
+class FootprintSegment {
+    vertexOffset: number;
+    vertexCount: number;
+    indexOffset: number;
+    indexCount: number;
+    ringIndices: Array<number>;
+    constructor() {
+        this.vertexOffset = 0;
+        this.vertexCount = 0;
+        this.indexOffset = 0;
+        this.indexCount = 0;
+    }
+}
+
+// Stores centroid buffer content (one entry per feature as opposite to one entry per
+// vertex in the buffer). This information is used to do conflation vs 3d model layers.
+// PartData and BorderCentroidData are split because PartData is stored for every
+// bucket feature and BorderCentroidData only for features that intersect border.
+export class PartData {
+    centroidXY: Point;
+    vertexArrayOffset: number;
+    vertexCount: number;
+    groundVertexArrayOffset: number;
+    groundVertexCount: number;
+    flags: number;
+    footprintSegIdx: number;
+    footprintSegLen: number;
+    polygonSegIdx: number;
+    polygonSegLen: number;
     min: Point;
     max: Point;
-    polyCount: Array<{edges: number, top: number}>;
-    currentPolyCount: {edges: number, top: number};
-    borders: Array<[number, number]>; // Array<[min, max]>
-    vertexArrayOffset: number;
+    height: number;
+
+    constructor() {
+        this.centroidXY = new Point(0, 0);
+        this.vertexArrayOffset = 0;
+        this.vertexCount = 0;
+        this.groundVertexArrayOffset = 0;
+        this.groundVertexCount = 0;
+        this.flags = 0;
+        this.footprintSegIdx = -1;
+        this.footprintSegLen = 0;
+        this.polygonSegIdx = -1;
+        this.polygonSegLen = 0;
+        this.min = new Point(Number.MAX_VALUE, Number.MAX_VALUE);
+        this.max = new Point(-Number.MAX_VALUE, -Number.MAX_VALUE);
+        this.height = 0;
+    }
+
+    span(): Point {
+        return new Point(this.max.x - this.min.x, this.max.y - this.min.y);
+    }
+}
+
+// Used for calculating centroid of a feature and intersections of a feature with tile borders.
+// Uses and extends data in PartData. References to PartData via centroidDataIndex.
+class BorderCentroidData {
+    acc: Point;
+    accCount: number;
+    borders: ?Array<[number, number]>; // Array<[min, max]>
+    centroidDataIndex: number;
 
     constructor() {
         this.acc = new Point(0, 0);
-        this.polyCount = [];
+        this.accCount = 0;
+        this.centroidDataIndex = 0;
     }
 
-    startRing(p: Point) {
-        this.currentPolyCount = {edges: 0, top: 0};
-        this.polyCount.push(this.currentPolyCount);
-        if (this.min) return;
-        this.min = new Point(p.x, p.y);
-        this.max = new Point(p.x, p.y);
+    startRing(data: PartData, p: Point) {
+        if (data.min.x === Number.MAX_VALUE) {  // If not initialized.
+            data.min.x = data.max.x = p.x;
+            data.min.y = data.max.y = p.y;
+        }
     }
 
-    append(p: Point, prev: Point) {
-        this.currentPolyCount.edges++;
+    appendEdge(data: PartData, p: Point, prev: Point) {
+        assert(data.min.x !== Number.MAX_VALUE);
 
+        this.accCount++;
         this.acc._add(p);
-        const min = this.min, max = this.max;
-        if (p.x < min.x) {
-            min.x = p.x;
-        } else if (p.x > max.x) {
-            max.x = p.x;
+
+        let checkBorders = !!this.borders;
+
+        if (p.x < data.min.x) {
+            data.min.x = p.x;
+            checkBorders = true;
+        } else if (p.x > data.max.x) {
+            data.max.x = p.x;
+            checkBorders = true;
         }
-        if (p.y < min.y) {
-            min.y = p.y;
-        } else if (p.y > max.y) {
-            max.y = p.y;
+
+        if (p.y < data.min.y) {
+            data.min.y = p.y;
+            checkBorders = true;
+        } else if (p.y > data.max.y) {
+            data.max.y = p.y;
+            checkBorders = true;
         }
-        if (((p.x === 0 || p.x === EXTENT) && p.x === prev.x) !== ((p.y === 0 || p.y === EXTENT) && p.y === prev.y)) {
+
+        if (((p.x === 0 || p.x === EXTENT) && p.x === prev.x) !==
+            ((p.y === 0 || p.y === EXTENT) && p.y === prev.y)) {
             // Custom defined geojson buildings are cut on borders. Points are
             // repeated when edge cuts tile corner (reason for using xor).
             this.processBorderOverlap(p, prev);
         }
-        // check border intersection
+
+        if (checkBorders) {
+            this.checkBorderIntersection(p, prev);
+        }
+    }
+
+    checkBorderIntersection(p: Point, prev: Point) {
         if ((prev.x < 0) !== (p.x < 0)) {
             this.addBorderIntersection(0, interpolate(prev.y, p.y, (0 - prev.x) / (p.x - prev.x)));
         }
@@ -159,25 +268,339 @@ export class PartMetadata {
     }
 
     centroid(): Point {
-        const count = this.polyCount.reduce((acc, p) => acc + p.edges, 0);
-        return count !== 0 ? this.acc.div(count)._round() : new Point(0, 0);
-    }
-
-    span(): Point {
-        return new Point(this.max.x - this.min.x, this.max.y - this.min.y);
+        if (this.accCount === 0) {
+            return new Point(0, 0);
+        }
+        return new Point(
+            Math.floor(Math.max(0, this.acc.x) / this.accCount),
+            Math.floor(Math.max(0, this.acc.y) / this.accCount));
     }
 
     intersectsCount(): number {
+        if (!this.borders) {
+            return 0;
+        }
         return this.borders.reduce((acc, p) => acc + +(p[0] !== Number.MAX_VALUE), 0);
     }
 }
+
+function concavity(a: Point, b: Point) {
+    return a.x * b.y - a.y * b.x < 0 ? -1 : 1;
+}
+
+function tanAngleClamped(angle: number) {
+    return Math.min(TANGENT_CUTOFF, Math.max(-TANGENT_CUTOFF, Math.tan(angle))) / TANGENT_CUTOFF * NORM;
+}
+
+function getAngularOffsetFactor(na: Point, nb: Point): number {
+    const nm = na.add(nb)._unit();
+    const cosHalfAngle = clamp(na.x * nm.x + na.y * nm.y, -1, 1);
+    const factor = tanAngleClamped(Math.acos(cosHalfAngle)) * concavity(na, nb);
+    return factor;
+}
+
+const borderCheck = [
+    (a: Point): boolean => { return a.x < 0; }, // left
+    (a: Point): boolean => { return a.x > EXTENT; }, // right
+    (a: Point): boolean => { return a.y < 0; }, // top
+    (a: Point): boolean => { return a.y > EXTENT; } // bottom
+];
+
+// Checks which region a quad belongs to. A quad belongs to left, right, top, bottom if
+// it intersects with the left, right, top, bottom borders of the tile respectively.
+// If a quad doesn't intersect any of the borders, it is assumed to be in the "default" region.
+// Ids 0, 1, 2, 3 and 4 are denoting, left, right, top, bottom and default regions respectively.
+// Note that a quad can also belong to more than one region (e.g. when it intersects with left and right borders).
+function getTileRegions(pa: Point, pb: Point, na: Point, maxRadius: number) {
+    const regions = [4];
+    if (maxRadius === 0) return regions;
+
+    // Approximate the position of the extruded points by using a quad.
+    na._mult(maxRadius);
+    const c = pa.sub(na);
+    const d = pb.sub(na);
+
+    const points = [pa, pb, c, d];
+    for (let i = 0; i < TILE_REGIONS; i++) {
+        for (const point of points) {
+            if (borderCheck[i](point)) {
+                regions.push(i);
+                break;
+            }
+        }
+    }
+    return regions;
+}
+
+type GroundQuad = {
+    id: number;
+    region: number; // 0 - left, 1 - right, 2 - top, 3 - bottom, 4 - rest
+}
+
+export class GroundEffect {
+    vertexArray: FillExtrusionGroundLayoutArray;
+    vertexBuffer: VertexBuffer;
+
+    hiddenByLandmarkVertexArray: FillExtrusionHiddenByLandmarkArray;
+    hiddenByLandmarkVertexBuffer: VertexBuffer;
+    _needsHiddenByLandmarkUpdate: boolean;
+
+    indexArray: TriangleIndexArray;
+    indexBuffer: IndexBuffer;
+
+    _segments: SegmentVector;
+
+    _segmentToGroundQuads: {[number]: Array<GroundQuad>};
+    _segmentToRegionTriCounts: {[number]: Array<number>};
+    regionSegments: {[number]: ?SegmentVector};
+
+    programConfigurations: ProgramConfigurationSet<FillExtrusionStyleLayer>;
+
+    constructor(options: BucketParameters<FillExtrusionStyleLayer>) {
+        this.vertexArray = new FillExtrusionGroundLayoutArray();
+        this.indexArray = new TriangleIndexArray();
+        const filtered = (property: string) => {
+            return fillExtrusionGroundDataDrivenProperties.includes(property);
+        };
+        this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom, filtered);
+        this._segments = new SegmentVector();
+        this.hiddenByLandmarkVertexArray = new FillExtrusionHiddenByLandmarkArray();
+        this._segmentToGroundQuads = {};
+        this._segmentToGroundQuads[0] = [];
+        this._segmentToRegionTriCounts = {};
+        this._segmentToRegionTriCounts[0] = [0, 0, 0, 0, 0];
+        this.regionSegments = {};
+        this.regionSegments[4] = new SegmentVector();
+    }
+
+    getDefaultSegment(): any {
+        return this.regionSegments[4];
+    }
+
+    hasData(): boolean { return this.vertexArray.length !== 0; }
+
+    addData(polyline: Array<Point>, bounds: [Point, Point], maxRadius: number, roundedEdges: boolean = false) {
+        const n = polyline.length;
+        if (n > 2) {
+            let sid = Math.max(0, this._segments.get().length - 1);
+            const numNewVerts = n * 4;
+            const numExistingVerts = this.vertexArray.length;
+            const numExistingTris = this._segmentToGroundQuads[sid].length * QUAD_TRIS;
+            const segment = this._segments._prepareSegment(numNewVerts, numExistingVerts, numExistingTris);
+            const newSegmentAdded = sid !== this._segments.get().length - 1;
+            if (newSegmentAdded) {
+                sid++;
+                this._segmentToGroundQuads[sid] = [];
+                this._segmentToRegionTriCounts[sid] = [0, 0, 0, 0, 0];
+            }
+            let prevFactor;
+            {
+                const pa = polyline[n - 1];
+                const pb = polyline[0];
+                const pc = polyline[1];
+                const na = pb.sub(pa)._perp()._unit();
+                const nb = pc.sub(pb)._perp()._unit();
+                prevFactor = getAngularOffsetFactor(na, nb);
+            }
+            for (let i = 0; i < n; i++) {
+                const j = i === n - 1 ? 0 : i + 1;
+                const k = j === n - 1 ? 0 : j + 1;
+
+                const pa = polyline[i];
+                const pb = polyline[j];
+                const pc = polyline[k];
+
+                const na = pb.sub(pa)._perp()._unit();
+                const nb = pc.sub(pb)._perp()._unit();
+                const factor = getAngularOffsetFactor(na, nb);
+                const a0 = prevFactor;
+                const a1 = factor;
+
+                if (isEdgeOutsideBounds(pa, pb, bounds) ||
+                    (roundedEdges && pointOutsideBounds(pa, bounds) && pointOutsideBounds(pb, bounds))) {
+                    prevFactor = factor;
+                    continue;
+                }
+
+                const idx = segment.vertexLength;
+
+                addGroundVertex(this.vertexArray, pa, pb, 1, 1, a0);
+                addGroundVertex(this.vertexArray, pa, pb, 1, 0, a0);
+                addGroundVertex(this.vertexArray, pa, pb, 0, 1, a1);
+                addGroundVertex(this.vertexArray, pa, pb, 0, 0, a1);
+                segment.vertexLength += QUAD_VERTS;
+
+                // When a tile belongs to more than one region it needs to be duplicated for that region.
+                const regions = getTileRegions(pa, pb, na, maxRadius); // Note: mutates na
+                for (const rid of regions) {
+                    this._segmentToGroundQuads[sid].push({
+                        id: idx,
+                        region: rid
+                    });
+                    this._segmentToRegionTriCounts[sid][rid] += QUAD_TRIS;
+                    segment.primitiveLength += QUAD_TRIS;
+                }
+                prevFactor = factor;
+            }
+        }
+    }
+
+    prepareBorderSegments() {
+        if (!this.hasData()) return;
+
+        assert(this._segments && this._segmentToGroundQuads && this._segmentToRegionTriCounts);
+        assert(!this.indexArray.length);
+
+        const segments = this._segments.get();
+        // Sort the geometry in this order: left, right, top, bottom and default regions.
+        const numSegments = segments.length;
+        for (let i = 0; i < numSegments; i++) {
+            const groundQuads = this._segmentToGroundQuads[i];
+            groundQuads.sort((a: GroundQuad, b: GroundQuad) => {
+                return a.region - b.region;
+            });
+        }
+
+        // Populate the index array.
+        for (let i = 0; i < numSegments; i++) {
+            const groundQuads = this._segmentToGroundQuads[i];
+            const segment = segments[i];
+            const regionTriCounts = this._segmentToRegionTriCounts[i];
+
+            const totalTriCount = regionTriCounts.reduce((acc: number, a: number) => { return acc + a; }, 0);
+            assert(segment.primitiveLength === totalTriCount);
+
+            // For each segment create 5 additional segments each representing a region.
+            let regionTriCountOffset = 0;
+            for (let k = 0; k <= TILE_REGIONS; k++) {
+                const triCount = regionTriCounts[k];
+                assert(triCount % QUAD_TRIS === 0);
+
+                if (triCount !== 0) {
+                    let segmentVector = this.regionSegments[k];
+                    // Lazy initialise the segment vector. During rendering if no such vector exists
+                    // it means that no geometry from this tile intersects the corresponding border.
+                    // We therefore can skip the said border to speed up rendering.
+                    if (!segmentVector) {
+                        segmentVector = this.regionSegments[k] = new SegmentVector();
+                    }
+
+                    const nSegment: any = {
+                        vertexOffset: segment.vertexOffset,
+                        primitiveOffset: segment.primitiveOffset + regionTriCountOffset,
+                        vertexLength: segment.vertexLength,
+                        primitiveLength: triCount
+                    };
+                    segmentVector.get().push(nSegment);
+                }
+
+                regionTriCountOffset += triCount;
+            }
+            for (let j = 0; j < groundQuads.length; j++) {
+                const groundQuad = groundQuads[j];
+                const idx = groundQuad.id;
+                this.indexArray.emplaceBack(idx, idx + 1, idx + 3);
+                this.indexArray.emplaceBack(idx, idx + 3, idx + 2);
+            }
+        }
+
+        // Free up memory as we no longer need these.
+        this._segmentToGroundQuads = (null: any);
+        this._segmentToRegionTriCounts = (null: any);
+        this._segments.destroy();
+        this._segments = (null: any);
+    }
+
+    addPaintPropertiesData(feature: Feature, index: number, imagePositions: SpritePositions, availableImages: Array<string>, canonical: CanonicalTileID, brightness: ?number) {
+        if (!this.hasData()) return;
+        this.programConfigurations.populatePaintArrays(this.vertexArray.length, feature, index, imagePositions, availableImages, canonical, brightness);
+    }
+
+    upload(context: Context) {
+        if (!this.hasData()) return;
+        this.vertexBuffer = context.createVertexBuffer(this.vertexArray, fillExtrusionGroundAttributes.members);
+        this.indexBuffer = context.createIndexBuffer(this.indexArray);
+    }
+
+    uploadPaintProperties(context: Context) {
+        if (!this.hasData()) return;
+        this.programConfigurations.upload(context);
+    }
+
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, layers: any, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        if (!this.hasData()) return;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
+    }
+
+    updateHiddenByLandmark(data: PartData) {
+        if (!this.hasData()) return;
+        const offset = data.groundVertexArrayOffset;
+        const vertexArrayBounds = data.groundVertexCount + data.groundVertexArrayOffset;
+        assert(vertexArrayBounds <= this.hiddenByLandmarkVertexArray.length);
+        assert(this.hiddenByLandmarkVertexArray.length === this.vertexArray.length);
+        if (data.groundVertexCount === 0) return;
+        const hide = data.flags & HIDDEN_BY_REPLACEMENT ? 1 : 0;
+        for (let i = offset; i < vertexArrayBounds; ++i) {
+            this.hiddenByLandmarkVertexArray.emplace(i, hide);
+        }
+        this._needsHiddenByLandmarkUpdate = true;
+    }
+
+    uploadHiddenByLandmark(context: Context) {
+        if (!this.hasData() || !this._needsHiddenByLandmarkUpdate) {
+            return;
+        }
+        if (!this.hiddenByLandmarkVertexBuffer && this.hiddenByLandmarkVertexArray.length > 0) {
+            // Create centroids vertex buffer
+            this.hiddenByLandmarkVertexBuffer = context.createVertexBuffer(this.hiddenByLandmarkVertexArray, hiddenByLandmarkAttributes.members, true);
+        } else if (this.hiddenByLandmarkVertexBuffer) {
+            this.hiddenByLandmarkVertexBuffer.updateData(this.hiddenByLandmarkVertexArray);
+        }
+        this._needsHiddenByLandmarkUpdate = false;
+    }
+
+    destroy() {
+        if (!this.vertexBuffer) return;
+        this.vertexBuffer.destroy();
+        this.indexBuffer.destroy();
+        if (this.hiddenByLandmarkVertexBuffer) {
+            this.hiddenByLandmarkVertexBuffer.destroy();
+        }
+        if (this._segments) this._segments.destroy();
+        this.programConfigurations.destroy();
+        for (let i = 0; i <= TILE_REGIONS; i++) {
+            const segments = this.regionSegments[i];
+            if (segments) {
+                segments.destroy();
+            }
+        }
+    }
+}
+
+type PolygonSegment = {
+    triangleArrayOffset: number;
+    triangleCount: number;
+    triangleSegIdx: number;
+};
+
+type SegmentedFeature = {
+    centroidIdx: number;
+    subtile: number;
+    polygonSegmentIdx: number;
+    triangleSegmentIdx: number;
+};
+
+type TriangleSubSegment = {
+    segment: Segment;
+    min: Point;
+    max: Point;
+};
 
 class FillExtrusionBucket implements Bucket {
     index: number;
     zoom: number;
     canonical: CanonicalTileID;
     overscaling: number;
-    enableTerrain: boolean;
     layers: Array<FillExtrusionStyleLayer>;
     layerIds: Array<string>;
     stateDependentLayers: Array<FillExtrusionStyleLayer>;
@@ -195,6 +618,10 @@ class FillExtrusionBucket implements Bucket {
     indexArray: TriangleIndexArray;
     indexBuffer: IndexBuffer;
 
+    footprintSegments: Array<FootprintSegment>
+    footprintVertices: PosArray;
+    footprintIndices: TriangleIndexArray;
+
     hasPattern: boolean;
     edgeRadius: number;
     programConfigurations: ProgramConfigurationSet<FillExtrusionStyleLayer>;
@@ -202,50 +629,72 @@ class FillExtrusionBucket implements Bucket {
     uploaded: boolean;
     features: Array<BucketFeature>;
 
-    featuresOnBorder: Array<PartMetadata>;
+    featuresOnBorder: Array<BorderCentroidData>;
+    borderFeatureIndices: Array<Array<number>>;
+    centroidData: Array<PartData>;
     // borders / borderDoneWithNeighborZ: 0 - left, 1, right, 2 - top, 3 - bottom
-    borders: Array<Array<number>>; // For each side, indices into featuresOnBorder array.
     borderDoneWithNeighborZ: Array<number>;
     needsCentroidUpdate: boolean;
     tileToMeter: number; // cache conversion.
     projection: ProjectionSpecification;
+    activeReplacements: Array<any>;
+    replacementUpdateTime: number;
+
+    groundEffect: GroundEffect;
+    partLookup: {[_: number]: ?PartData};
+
+    maxHeight: number;
+
+    triangleSubSegments: Array<TriangleSubSegment>;
+    polygonSegments: Array<PolygonSegment>;
 
     constructor(options: BucketParameters<FillExtrusionStyleLayer>) {
         this.zoom = options.zoom;
         this.canonical = options.canonical;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.hasPattern = false;
         this.edgeRadius = 0;
         this.projection = options.projection;
+        this.activeReplacements = [];
+        this.replacementUpdateTime = 0;
+        this.centroidData = [];
+        this.footprintIndices = new TriangleIndexArray();
+        this.footprintVertices = new PosArray();
+        this.footprintSegments = [];
 
         this.layoutVertexArray = new FillExtrusionLayoutArray();
         this.centroidVertexArray = new FillExtrusionCentroidArray();
         this.indexArray = new TriangleIndexArray();
-        this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom);
+        const filtered = (property: string) => {
+            return fillExtrusionDefaultDataDrivenProperties.includes(property);
+        };
+        this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom, filtered);
         this.segments = new SegmentVector();
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
-        this.enableTerrain = options.enableTerrain;
+        this.groundEffect = new GroundEffect(options);
+        this.maxHeight = 0;
+        this.partLookup = {};
+        this.triangleSubSegments = [];
+        this.polygonSegments = [];
     }
 
     populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform) {
         this.features = [];
         this.hasPattern = hasPattern('fill-extrusion', this.layers, options);
         this.featuresOnBorder = [];
-        this.borders = [[], [], [], []];
+        this.borderFeatureIndices = [[], [], [], []];
         this.borderDoneWithNeighborZ = [-1, -1, -1, -1];
         this.tileToMeter = tileToMeter(canonical);
         this.edgeRadius = this.layers[0].layout.get('fill-extrusion-edge-radius') / this.tileToMeter;
-
         for (const {feature, id, index, sourceLayerIndex} of features) {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
 
             // $FlowFixMe[method-unbinding]
             if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical)) continue;
-
             const bucketFeature: BucketFeature = {
                 id,
                 sourceLayerIndex,
@@ -260,25 +709,37 @@ class FillExtrusionBucket implements Bucket {
             if (this.hasPattern) {
                 this.features.push(addPatternDependencies('fill-extrusion', this.layers, bucketFeature, this.zoom, options));
             } else {
-                this.addFeature(bucketFeature, bucketFeature.geometry, index, canonical, {}, options.availableImages, tileTransform);
+                this.addFeature(bucketFeature, bucketFeature.geometry, index, canonical, {}, options.availableImages, tileTransform, options.brightness);
             }
 
             options.featureIndex.insert(feature, bucketFeature.geometry, index, sourceLayerIndex, this.index, vertexArrayOffset);
         }
         this.sortBorders();
+        if (this.projection.name === "mercator") {
+            this.splitToSubtiles();
+        }
+        this.groundEffect.prepareBorderSegments();
+        // Clear polygon segment array
+        this.polygonSegments.length = 0;
     }
 
-    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, tileTransform: TileTransform) {
+    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, tileTransform: TileTransform, brightness: ?number) {
         for (const feature of this.features) {
             const {geometry} = feature;
-            this.addFeature(feature, geometry, feature.index, canonical, imagePositions, availableImages, tileTransform);
+            this.addFeature(feature, geometry, feature.index, canonical, imagePositions, availableImages, tileTransform, brightness);
         }
         this.sortBorders();
+        if (this.projection.name === "mercator") {
+            this.splitToSubtiles();
+        }
     }
 
-    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
+        this.groundEffect.update(states, vtLayer, layers, availableImages, imagePositions, brightness);
     }
 
     isEmpty(): boolean {
@@ -286,7 +747,7 @@ class FillExtrusionBucket implements Bucket {
     }
 
     uploadPending(): boolean {
-        return !this.uploaded || this.programConfigurations.needsUpload;
+        return !this.uploaded || this.programConfigurations.needsUpload || this.groundEffect.programConfigurations.needsUpload;
     }
 
     upload(context: Context) {
@@ -297,16 +758,23 @@ class FillExtrusionBucket implements Bucket {
             if (this.layoutVertexExtArray) {
                 this.layoutVertexExtBuffer = context.createVertexBuffer(this.layoutVertexExtArray, fillExtrusionAttributesExt.members, true);
             }
+
+            this.groundEffect.upload(context);
         }
+        this.groundEffect.uploadPaintProperties(context);
         this.programConfigurations.upload(context);
         this.uploaded = true;
     }
 
     uploadCentroid(context: Context) {
-        if (this.centroidVertexArray.length === 0) return;
-        if (!this.centroidVertexBuffer) {
+        this.groundEffect.uploadHiddenByLandmark(context);
+        if (!this.needsCentroidUpdate) {
+            return;
+        }
+        if (!this.centroidVertexBuffer && this.centroidVertexArray.length > 0) {
+            // Create centroids vertex buffer
             this.centroidVertexBuffer = context.createVertexBuffer(this.centroidVertexArray, centroidAttributes.members, true);
-        } else if (this.needsCentroidUpdate) {
+        } else if (this.centroidVertexBuffer) {
             this.centroidVertexBuffer.updateData(this.centroidVertexArray);
         }
         this.needsCentroidUpdate = false;
@@ -321,22 +789,35 @@ class FillExtrusionBucket implements Bucket {
         if (this.layoutVertexExtBuffer) {
             this.layoutVertexExtBuffer.destroy();
         }
+        this.groundEffect.destroy();
         this.indexBuffer.destroy();
         this.programConfigurations.destroy();
         this.segments.destroy();
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, tileTransform: TileTransform) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, tileTransform: TileTransform, brightness: ?number) {
+        const floodLightRadius = this.layers[0].paint.get('fill-extrusion-flood-light-ground-radius').evaluate(feature, {});
+        const maxRadius = floodLightRadius / this.tileToMeter;
+
         const tileBounds = [new Point(0, 0), new Point(EXTENT, EXTENT)];
         const projection = tileTransform.projection;
         const isGlobe = projection.name === 'globe';
-        const metadata = this.enableTerrain && !isGlobe ? new PartMetadata() : null;
         const isPolygon = vectorTileFeatureTypes[feature.type] === 'Polygon';
+
+        const borderCentroidData = new BorderCentroidData();
+        borderCentroidData.centroidDataIndex = this.centroidData.length;
+        const centroid = new PartData();
+
+        const base = this.layers[0].paint.get('fill-extrusion-base').evaluate(feature, {}, canonical);
+        const onGround = base <= 0;
+        const height = this.layers[0].paint.get('fill-extrusion-height').evaluate(feature, {}, canonical);
+        centroid.height = height;
+        centroid.vertexArrayOffset = this.layoutVertexArray.length;
+        centroid.groundVertexArrayOffset = this.groundEffect.vertexArray.length;
 
         if (isGlobe && !this.layoutVertexExtArray) {
             this.layoutVertexExtArray = new FillExtrusionExtArray();
         }
-
         const polygons = classifyRings(geometry, EARCUT_MAX_RINGS);
 
         for (let i = polygons.length - 1; i >= 0; i--) {
@@ -366,6 +847,13 @@ class FillExtrusionBucket implements Bucket {
         }
 
         const edgeRadius = isPolygon ? this.edgeRadius : 0;
+        const optimiseGround = edgeRadius > 0 && this.zoom < 17;
+
+        const isDuplicate = (coords: Array<Point>, a: Point) => {
+            if (coords.length === 0) return false;
+            const b = coords[coords.length - 1];
+            return a.x === b.x && a.y === b.y;
+        };
 
         for (const {polygon, bounds} of clippedPolygons) {
             // Only triangulate and draw the area of the feature if it is a polygon
@@ -377,18 +865,40 @@ class FillExtrusionBucket implements Bucket {
                 if (isPolygon && !ring[0].equals(ring[ring.length - 1])) ring.push(ring[0]);
                 numVertices += (isPolygon ? (ring.length - 1) : ring.length);
             }
+
             // We use "(isPolygon ? 5 : 4) * numVertices" as an estimate to ensure whether additional segments are needed or not (see SegmentVector.MAX_VERTEX_ARRAY_LENGTH).
             const segment = this.segments.prepareSegment((isPolygon ? 5 : 4) * numVertices, this.layoutVertexArray, this.indexArray);
+
+            if (centroid.footprintSegIdx < 0) {
+                centroid.footprintSegIdx = this.footprintSegments.length;
+            }
+
+            if (centroid.polygonSegIdx < 0) {
+                centroid.polygonSegIdx = this.polygonSegments.length;
+            }
+
+            // Store location of generated triangles for the future use
+            const polygonSeg = {triangleArrayOffset: this.indexArray.length, triangleCount: 0, triangleSegIdx: this.segments.segments.length - 1};
+
+            const fpSegment = new FootprintSegment();
+            fpSegment.vertexOffset = this.footprintVertices.length;
+            fpSegment.indexOffset = this.footprintIndices.length * 3;
+            fpSegment.ringIndices = [];
+
             if (isPolygon) {
                 const flattened = [];
                 const holeIndices = [];
                 topIndex = segment.vertexLength;
 
                 // First we offset (inset) the top vertices (i.e the vertices that make up the roof).
-                for (const ring of polygon) {
-                    if (ring.length && ring !== polygon[0]) {
+                for (let r = 0; r < polygon.length; r++) {
+                    const ring = polygon[r];
+                    if (ring.length && r !== 0) {
                         holeIndices.push(flattened.length / 2);
                     }
+
+                    // Geometry used by ground flood light and AO.
+                    const groundPolyline: Array<Point> = [];
 
                     // The following vectors are used to avoid duplicate normal calculations when going over the vertices.
                     let na, nb;
@@ -397,36 +907,54 @@ class FillExtrusionBucket implements Bucket {
                         const p1 = ring[1];
                         na = p1.sub(p0)._perp()._unit();
                     }
+
+                    // Store index to the end of this ring, we substract one because we don't add the last point to the
+                    // footprint as it's the same as the first one
+                    fpSegment.ringIndices.push(ring.length - 1);
+
                     for (let i = 1; i < ring.length; i++) {
                         const p1 = ring[i];
                         const p2 = ring[i === ring.length - 1 ? 1 : i + 1];
 
-                        let {x, y} = p1;
+                        const q = p1.clone();
+
                         if (edgeRadius) {
                             nb = p2.sub(p1)._perp()._unit();
                             const nm = na.add(nb)._unit();
-
                             const cosHalfAngle = na.x * nm.x + na.y * nm.y;
                             const offset = edgeRadius * Math.min(4, 1 / cosHalfAngle);
-
-                            x += offset * nm.x;
-                            y += offset * nm.y;
-
+                            q.x += offset * nm.x;
+                            q.y += offset * nm.y;
+                            q.x = Math.round(q.x);
+                            q.y = Math.round(q.y);
                             na = nb;
                         }
 
-                        addVertex(this.layoutVertexArray, x, y, 0, 0, 1, 1, 0);
+                        if (onGround && (edgeRadius === 0 || optimiseGround) && !isDuplicate(groundPolyline, q)) {
+                            groundPolyline.push(q);
+                        }
+
+                        addVertex(this.layoutVertexArray, q.x, q.y, 0, 0, 1, 1, 0);
                         segment.vertexLength++;
+
+                        this.footprintVertices.emplaceBack(p1.x, p1.y);
 
                         // triangulate as if vertices were not offset to ensure correct triangulation
                         flattened.push(p1.x, p1.y);
 
                         if (isGlobe) {
                             const array: any = this.layoutVertexExtArray;
-                            const projectedP = projection.projectTilePoint(x, y, canonical);
-                            const n = projection.upVector(canonical, x, y);
+                            const projectedP = projection.projectTilePoint(q.x, q.y, canonical);
+                            const n = projection.upVector(canonical, q.x, q.y);
                             addGlobeExtVertex(array, projectedP, n);
                         }
+                    }
+
+                    if (onGround && (edgeRadius === 0 || optimiseGround)) {
+                        if (groundPolyline.length !== 0 && isDuplicate(groundPolyline, groundPolyline[0])) {
+                            groundPolyline.pop();
+                        }
+                        this.groundEffect.addData(groundPolyline, bounds, maxRadius);
                     }
                 }
 
@@ -434,6 +962,11 @@ class FillExtrusionBucket implements Bucket {
                 assert(indices.length % 3 === 0);
 
                 for (let j = 0; j < indices.length; j += 3) {
+                    this.footprintIndices.emplaceBack(
+                        fpSegment.vertexOffset + indices[j + 0],
+                        fpSegment.vertexOffset + indices[j + 1],
+                        fpSegment.vertexOffset + indices[j + 2]);
+
                     // clockwise winding order.
                     this.indexArray.emplaceBack(
                         topIndex + indices[j],
@@ -441,12 +974,19 @@ class FillExtrusionBucket implements Bucket {
                         topIndex + indices[j + 1]);
                     segment.primitiveLength++;
                 }
+
+                fpSegment.indexCount += indices.length;
+                fpSegment.vertexCount += this.footprintVertices.length - fpSegment.vertexOffset;
             }
 
-            for (const ring of polygon) {
-                if (metadata && ring.length) metadata.startRing(ring[0]);
+            for (let r = 0; r < polygon.length; r++) {
+                const ring = polygon[r];
+                borderCentroidData.startRing(centroid, ring[0]);
                 let isPrevCornerConcave = ring.length > 4 && isAOConcaveAngle(ring[ring.length - 2], ring[0], ring[1]);
                 let offsetPrev = edgeRadius ? getRoundedEdgeOffset(ring[ring.length - 2], ring[0], ring[1], edgeRadius) : 0;
+
+                // Geometry used by ground flood light and AO.
+                const groundPolyline: Array<Point> = [];
 
                 let kFirst;
 
@@ -463,7 +1003,8 @@ class FillExtrusionBucket implements Bucket {
                     let p1 = ring[i];
                     const p2 = ring[i === ring.length - 1 ? 1 : i + 1];
 
-                    if (metadata && isPolygon) metadata.currentPolyCount.top++;
+                    borderCentroidData.appendEdge(centroid, p1, p0);
+
                     if (isEdgeOutsideBounds(p1, p0, bounds)) {
                         if (edgeRadius) {
                             na = p2.sub(p1)._perp()._unit();
@@ -471,7 +1012,6 @@ class FillExtrusionBucket implements Bucket {
                         }
                         continue;
                     }
-                    if (metadata) metadata.append(p1, p0);
 
                     const d = p1.sub(p0)._perp();
                     // Given that nz === 0, encode nx / (abs(nx) + abs(ny)) and signs.
@@ -512,6 +1052,11 @@ class FillExtrusionBucket implements Bucket {
                         offsetPrev = offsetNext;
 
                         na = nb;
+
+                        if (onGround && this.zoom >= 17) {
+                            if (!isDuplicate(groundPolyline, p0)) groundPolyline.push(p0);
+                            if (!isDuplicate(groundPolyline, p1)) groundPolyline.push(p1);
+                        }
                     }
 
                     const k = segment.vertexLength;
@@ -586,78 +1131,438 @@ class FillExtrusionBucket implements Bucket {
                     }
                 }
                 if (isPolygon) topIndex += (ring.length - 1);
+                if (onGround && edgeRadius && this.zoom >= 17) {
+                    if (groundPolyline.length !== 0 && isDuplicate(groundPolyline, groundPolyline[0])) {
+                        groundPolyline.pop();
+                    }
+                    this.groundEffect.addData(groundPolyline, bounds, maxRadius, edgeRadius > 0);
+                }
             }
+            this.footprintSegments.push(fpSegment);
+            polygonSeg.triangleCount = this.indexArray.length - polygonSeg.triangleArrayOffset;
+            this.polygonSegments.push(polygonSeg);
+            ++centroid.footprintSegLen;
+            ++centroid.polygonSegLen;
         }
 
         assert(!isGlobe || (this.layoutVertexExtArray && this.layoutVertexExtArray.length === this.layoutVertexArray.length));
 
-        if (metadata && metadata.polyCount.length > 0) {
-            // When building is split between tiles, don't handle flat roofs here.
-            if (metadata.borders) {
-                // Store to the bucket. Flat roofs are handled in flatRoofsUpdate,
-                // after joining parts that lay in different buckets.
-                metadata.vertexArrayOffset = this.centroidVertexArray.length;
-                const borders = metadata.borders;
-                const index = this.featuresOnBorder.push(metadata) - 1;
-                for (let i = 0; i < 4; i++) {
-                    if (borders[i][0] !== Number.MAX_VALUE) { this.borders[i].push(index); }
-                }
-            }
-            this.encodeCentroid(metadata.borders ? undefined : metadata.centroid(), metadata);
-            assert(!this.centroidVertexArray.length || this.centroidVertexArray.length === this.layoutVertexArray.length);
+        centroid.vertexCount = this.layoutVertexArray.length - centroid.vertexArrayOffset;
+        centroid.groundVertexCount = this.groundEffect.vertexArray.length - centroid.groundVertexArrayOffset;
+        if (centroid.vertexCount === 0) {
+            return;
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical);
+        // hiddenCentroid {0, 1}: it is initially hidden as borders are processed later.
+        centroid.centroidXY = borderCentroidData.borders ? HIDDEN_CENTROID : this.encodeCentroid(borderCentroidData, centroid);
+        this.centroidData.push(centroid);
+
+        if (borderCentroidData.borders) {
+            // When building is split between tiles, store information that enables joining.
+            // parts of building that layes in differentt buckets.
+            assert(borderCentroidData.centroidDataIndex === this.centroidData.length - 1);
+            this.featuresOnBorder.push(borderCentroidData);
+            const borderIndex = this.featuresOnBorder.length - 1;
+            for (let i = 0; i < (borderCentroidData.borders: any).length; i++) {
+                if ((borderCentroidData.borders: any)[i][0] !== Number.MAX_VALUE) {
+                    this.borderFeatureIndices[i].push(borderIndex);
+                }
+            }
+        }
+
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical, brightness);
+        this.groundEffect.addPaintPropertiesData(feature, index, imagePositions, availableImages, canonical, brightness);
+        // compute maximum height of the bucket
+        this.maxHeight = Math.max(this.maxHeight, height);
     }
 
     sortBorders() {
-        for (let i = 0; i < 4; i++) {
-            // Sort by border intersection area minimums, ascending.
-            this.borders[i].sort((a, b) => this.featuresOnBorder[a].borders[i][0] - this.featuresOnBorder[b].borders[i][0]);
+        for (let i = 0; i < this.borderFeatureIndices.length; i++) {
+            const borders = this.borderFeatureIndices[i];
+            borders.sort((a, b) => (this.featuresOnBorder[a].borders: any)[i][0] - (this.featuresOnBorder[b].borders: any)[i][0]);
         }
     }
 
-    encodeCentroid(c: ?Point, metadata: PartMetadata, append: boolean = true) {
-        let x, y;
-        // Encoded centroid x and y:
-        //     x     y
-        // ---------------------------------------------
-        //     0     0    Default, no flat roof.
-        //     0     1    Hide, used to hide parts of buildings on border while expecting the other side to get loaded
-        //    >0     0    Elevation encoded to uint16 word
-        //    >0    >0    Encoded centroid position and x & y span
-        if (c) {
-            if (c.y !== 0) {
-                const span = metadata.span()._mult(this.tileToMeter);
-                x = (Math.max(c.x, 1) << 3) + Math.min(7, Math.round(span.x / 10));
-                y = (Math.max(c.y, 1) << 3) + Math.min(7, Math.round(span.y / 10));
-            } else { // encode height:
-                x = Math.ceil((c.x + ELEVATION_OFFSET) * ELEVATION_SCALE);
-                y = 0;
+    splitToSubtiles() {
+        // Split fill extrusion features into 4 "sub-tiles" each of which can
+        // be rendered separately. This allows more effective rendering as primitives
+        // sent to GPU can be reduced by a large margin if most of the tile is outside
+        // of the screen.
+        //
+        // Triangles of each feature are sorted into correct sub-tile based on their centroid
+        // positions. These tiles are in memory in clockwise order so it's possible to
+        // render almost every possible combination with just a single draw call.
+        const segmentedFeatures: Array<SegmentedFeature> = [];
+
+        for (let centroidIdx = 0; centroidIdx < this.centroidData.length; centroidIdx++) {
+            const part = this.centroidData[centroidIdx];
+            const right = +((part.min.x + part.max.x) > EXTENT);
+            const bottom = +((part.min.y + part.max.y) > EXTENT);
+            const subtile = bottom * 2 + (right ^ bottom);
+            for (let i = 0; i < part.polygonSegLen; i++) {
+                const polySegIdx = part.polygonSegIdx + i;
+                segmentedFeatures.push({centroidIdx, subtile, polygonSegmentIdx: polySegIdx, triangleSegmentIdx: this.polygonSegments[polySegIdx].triangleSegIdx});
             }
-        } else {
-            // Use the impossible situation (building that has width and doesn't cross border cannot have centroid
-            // at border) to encode unprocessed border building: it is initially (append === true) hidden until
-            // computing centroid for joined building parts in rendering thread (flatRoofsUpdate). If it intersects more than
-            // two borders, flat roof approach is not applied.
-            x = 0;
-            y = +append; // Hide (1) initially when creating - visibility is changed in draw_fill_extrusion as soon as neighbor tile gets loaded.
+        }
+        // Sort features based on their subtile index. Triangles can't be moved across
+        // orignal segment boundaries due to different baseVertex values.
+        const sortedTriangles = new TriangleIndexArray();
+        segmentedFeatures.sort((a, b) => a.triangleSegmentIdx === b.triangleSegmentIdx ? a.subtile - b.subtile : a.triangleSegmentIdx - b.triangleSegmentIdx);
+        let segmentIdx = 0;
+        let segmentBeginIndex = 0;
+        let segmentEndIndex = 0;
+        for (const segmentedFeature of segmentedFeatures) {
+            if (segmentedFeature.triangleSegmentIdx !== segmentIdx) {
+                break;
+            }
+            segmentEndIndex++;
         }
 
-        assert(append || metadata.vertexArrayOffset !== undefined);
-        let offset = append ? this.centroidVertexArray.length : metadata.vertexArrayOffset;
-        for (const polyInfo of metadata.polyCount) {
-            if (append) {
-                this.centroidVertexArray.resize(this.centroidVertexArray.length + polyInfo.edges * 4 + polyInfo.top);
+        const segmentedFeaturesEndIndex = segmentedFeatures.length;
+
+        while (segmentBeginIndex !== segmentedFeatures.length) {
+            segmentIdx = segmentedFeatures[segmentBeginIndex].triangleSegmentIdx;
+            // For each feature of this triangle segment (as in all triangles in `Segments[triSegIdx]`),
+            // find the number of triangles in each subtile and construct new segments for rendering
+            let subTileIdx = 0;
+            let featuresBeginIndex = segmentBeginIndex;
+            let featuresEndIndex = segmentBeginIndex;
+
+            for (let seg = featuresBeginIndex; seg < segmentEndIndex; seg++) {
+                if (segmentedFeatures[seg].subtile !== subTileIdx) {
+                    break;
+                }
+                featuresEndIndex++;
             }
-            for (let i = 0; i < polyInfo.top; i++) {
-                this.centroidVertexArray.emplace(offset++, x, y);
+            while (featuresBeginIndex !== segmentEndIndex) {
+                const featuresBegin = segmentedFeatures[featuresBeginIndex];
+                subTileIdx = featuresBegin.subtile;
+                const subtileMin = this.centroidData[featuresBegin.centroidIdx].min.clone();
+                const subtileMax = this.centroidData[featuresBegin.centroidIdx].max.clone();
+
+                // Add triangles of this subtile and construct a segment for rendering
+                const segment: Segment = {vertexOffset: this.segments.segments[segmentIdx].vertexOffset,
+                    primitiveOffset: sortedTriangles.length,
+                    vertexLength: this.segments.segments[segmentIdx].vertexLength,
+                    primitiveLength: 0,
+                    sortKey: undefined,
+                    vaos: {}};
+
+                for (let featureIdx = featuresBeginIndex; featureIdx < featuresEndIndex; featureIdx++) {
+
+                    const feature = segmentedFeatures[featureIdx];
+                    const data = this.polygonSegments[feature.polygonSegmentIdx];
+                    const centroidMin = this.centroidData[feature.centroidIdx].min;
+                    const centroidMax = this.centroidData[feature.centroidIdx].max;
+                    const iArray = this.indexArray.uint16;
+                    for (let i = data.triangleArrayOffset; i < data.triangleArrayOffset + data.triangleCount; i++) {
+                        sortedTriangles.emplaceBack(iArray[i * 3], iArray[i * 3 + 1], iArray[i * 3 + 2]);
+                    }
+                    segment.primitiveLength += data.triangleCount;
+                    subtileMin.x = Math.min(subtileMin.x, centroidMin.x);
+                    subtileMin.y = Math.min(subtileMin.y, centroidMin.y);
+                    subtileMax.x = Math.max(subtileMax.x, centroidMax.x);
+                    subtileMax.y = Math.max(subtileMax.y, centroidMax.y);
+                }
+                if (segment.primitiveLength > 0) {
+                    this.triangleSubSegments.push({segment, min: subtileMin, max: subtileMax});
+                }
+                featuresBeginIndex = featuresEndIndex;
+                for (let seg = featuresBeginIndex; seg < segmentEndIndex; seg++) {
+                    if (segmentedFeatures[seg].subtile !== segmentedFeatures[featuresBeginIndex].subtile) {
+                        break;
+                    }
+                    featuresEndIndex++;
+                }
             }
-            for (let i = 0; i < polyInfo.edges * 2; i++) {
-                this.centroidVertexArray.emplace(offset++, 0, y);
-                this.centroidVertexArray.emplace(offset++, x, y);
+
+            segmentBeginIndex = segmentEndIndex;
+            for (let seg = segmentBeginIndex; seg < segmentedFeaturesEndIndex; seg++) {
+                if (segmentedFeatures[seg].triangleSegmentIdx !== segmentedFeatures[segmentBeginIndex].triangleSegmentIdx) {
+                    break;
+                }
+                segmentEndIndex++;
             }
         }
+        sortedTriangles._trim();
+        this.indexArray = sortedTriangles;
+    }
+
+    getVisibleSegments(renderId: OverscaledTileID, elevation: ?Elevation, frustum: Frustum): SegmentVector {
+        let minZ = 0;
+        let maxZ = 0;
+        const tiles =  1 << renderId.canonical.z;
+
+        if (elevation) {
+            const minmax = elevation.getMinMaxForTile(renderId);
+            if (minmax) {
+                minZ = minmax.min;
+                maxZ = minmax.max;
+            }
+        }
+        maxZ += this.maxHeight;
+
+        const id = renderId.toUnwrapped();
+
+        // Go through sub-tiles and merge visible ones that are also adjacent in memory
+        // into single segments.
+        let activeSegment: ?Segment;
+        const tileMin = [(id.canonical.x / tiles) + id.wrap, (id.canonical.y / tiles)];
+        const tileMax = [((id.canonical.x + 1) / tiles) + id.wrap, ((id.canonical.y + 1) / tiles)];
+
+        const outSegments = new SegmentVector();
+
+        const mix = (a: Array<number>, b: Array<number>, c: Array<number>): Array<number> => {
+            return [(a[0] * (1 - c[0])) + (b[0] * c[0]), (a[1] * (1 - c[1])) + (b[1] * c[1])];
+        };
+        const fracMin = [];
+        const fracMax = [];
+
+        for (const subSegment of this.triangleSubSegments) {
+            // Compute aabb of the subtile
+            fracMin[0] = subSegment.min.x / EXTENT;
+            fracMin[1] = subSegment.min.y / EXTENT;
+            fracMax[0] = subSegment.max.x / EXTENT;
+            fracMax[1] = subSegment.max.y / EXTENT;
+            const aabbMin = mix(tileMin, tileMax, fracMin);
+            const aabbMax = mix(tileMin, tileMax, fracMax);
+            const aabb = new Aabb([aabbMin[0], aabbMin[1], minZ], [aabbMax[0], aabbMax[1], maxZ]);
+            if (aabb.intersectsPrecise(frustum) === 0) {
+                if (activeSegment) {
+                    outSegments.segments.push(activeSegment);
+                    activeSegment = undefined;
+                }
+                continue;
+            }
+            const renderSegment = subSegment.segment;
+            if (activeSegment && activeSegment.vertexOffset !== renderSegment.vertexOffset) {
+                // vertex offset is different between adjacent segments => split to separate segments
+                outSegments.segments.push(activeSegment);
+                activeSegment = undefined;
+            }
+            if (!activeSegment) {
+                activeSegment = {vertexOffset: renderSegment.vertexOffset,
+                    primitiveLength: renderSegment.primitiveLength,
+                    vertexLength: renderSegment.vertexLength,
+                    primitiveOffset: renderSegment.primitiveOffset,
+                    sortKey: undefined,
+                    vaos: {}
+                };
+            } else {
+                activeSegment.vertexLength += renderSegment.vertexLength;
+                activeSegment.primitiveLength += renderSegment.primitiveLength;
+            }
+        }
+        if (activeSegment) {
+            outSegments.segments.push(activeSegment);
+        }
+        return outSegments;
+    }
+
+    // Encoded centroid x and y:
+    //     x     y
+    // ---------------------------------------------
+    //     0     0    Default, no flat roof.
+    //     0     1    Hide, used to hide parts of buildings on border while expecting the other side to get loaded
+    //    >0     0    Elevation encoded to uint16 word
+    //    >0    >0    Encoded centroid position and x & y span
+    encodeCentroid(borderCentroidData: BorderCentroidData, data: PartData): Point {
+        const c = borderCentroidData.centroid();
+        const span = data.span();
+        const spanX = Math.min(7, Math.round(span.x * this.tileToMeter / 10));
+        const spanY = Math.min(7, Math.round(span.y * this.tileToMeter / 10));
+        return new Point((clamp(c.x, 1, EXTENT - 1) << 3) | spanX, (clamp(c.y, 1, EXTENT - 1) << 3) | spanY);
+    }
+
+    // Border centroid data is unreliable for elevating parts split on tile borders.
+    // It is used only for synchronous lowering of splits as the centroid (not the size information in split parts) is consistent.
+    encodeBorderCentroid(borderCentroidData: BorderCentroidData): Point {
+        assert(borderCentroidData.borders);
+        if (!borderCentroidData.borders) return new Point(0, 0);
+        const b = borderCentroidData.borders;
+        const notOnBorder = Number.MAX_VALUE;
+        const span = 0x6; // any non zero value since span in this is not used in shader
+        assert(borderCentroidData.intersectsCount() === 1);
+        if (b[0][0] !== notOnBorder || b[1][0] !== notOnBorder) {
+            const x = (b[0][0] !== notOnBorder ? 0 : (0x1FFF << 3)) | span;
+            const index = b[0][0] !== notOnBorder ? 0 : 1;
+            return new Point(x, (((((b[index][0] + b[index][1]) / 2) | 0) << 3) | span));
+        } else {
+            assert(b[2][0] !== notOnBorder || b[3][0] !== notOnBorder);
+            const y = (b[2][0] !== notOnBorder ? 0 : (0x1FFF << 3)) | span;
+            const index = b[2][0] !== notOnBorder ? 2 : 3;
+            return new Point((((((b[index][0] + b[index][1]) / 2) | 0) << 3) | span), y);
+        }
+    }
+
+    showCentroid(borderCentroidData: BorderCentroidData) {
+        const c = this.centroidData[borderCentroidData.centroidDataIndex];
+        c.flags &= HIDDEN_BY_REPLACEMENT;
+        c.centroidXY.x = 0;
+        c.centroidXY.y = 0;
+        this.writeCentroidToBuffer(c);
+    }
+
+    writeCentroidToBuffer(data: PartData) {
+        this.groundEffect.updateHiddenByLandmark(data);
+        const offset = data.vertexArrayOffset;
+        const vertexArrayBounds = data.vertexCount + data.vertexArrayOffset;
+        assert(vertexArrayBounds <= this.centroidVertexArray.length);
+        assert(this.centroidVertexArray.length === this.layoutVertexArray.length);
+        const c = data.flags & HIDDEN_BY_REPLACEMENT ? HIDDEN_CENTROID : data.centroidXY;
+        // All the vertex data is the same, use the first to exit early if it is not needed to re-write all.
+        const firstX = this.centroidVertexArray.geta_centroid_pos0(offset);
+        const firstY = this.centroidVertexArray.geta_centroid_pos1(offset);
+
+        if (firstY === c.y && firstX === c.x) {
+            return;
+        }
+        for (let i = offset; i < vertexArrayBounds; ++i) {
+            this.centroidVertexArray.emplace(i, c.x, c.y);
+        }
+        this.needsCentroidUpdate = true;
+    }
+
+    createCentroidsBuffer() {
+        assert(this.centroidVertexArray.length === 0);
+        assert(this.groundEffect.hiddenByLandmarkVertexArray.length === 0);
+        this.centroidVertexArray.resize(this.layoutVertexArray.length);
+        this.groundEffect.hiddenByLandmarkVertexArray.resize(this.groundEffect.vertexArray.length);
+        for (const centroid of this.centroidData) {
+            this.writeCentroidToBuffer(centroid);
+        }
+    }
+
+    updateReplacement(coord: OverscaledTileID, source: ReplacementSource) {
+        // Replacement has to be re-checked if the source has been updated since last time
+        if (source.updateTime === this.replacementUpdateTime) {
+            return;
+        }
+        this.replacementUpdateTime = source.updateTime;
+
+        // Check if replacements have changed
+        const newReplacements = source.getReplacementRegionsForTile(coord.toUnwrapped());
+        if (regionsEquals(this.activeReplacements, newReplacements)) {
+            return;
+        }
+        this.activeReplacements = newReplacements;
+
+        if (this.centroidVertexArray.length === 0) {
+            this.createCentroidsBuffer();
+        } else {
+            for (const centroid of this.centroidData) {
+                centroid.flags &= ~HIDDEN_BY_REPLACEMENT;
+            }
+        }
+
+        const transformedVertices: Array<Point> = [];
+
+        // Hide all centroids that are overlapping with footprints from the replacement source
+        for (const region of this.activeReplacements) {
+            // Apply slight padding (one unit) to fill extrusion footprints. This reduces false positives where
+            // two adjacent lines would be reported overlapping due to limited precision (16 bit) of tile units.
+            const padding = Math.pow(2.0, region.footprintTileId.canonical.z - coord.canonical.z);
+
+            for (const centroid of this.centroidData) {
+                if (centroid.flags & HIDDEN_BY_REPLACEMENT) {
+                    continue;
+                }
+
+                // Perform a quick aabb-aabb check to determine
+                // whether a more precise check is required
+                if (region.min.x > centroid.max.x || centroid.min.x > region.max.x) {
+                    continue;
+                } else if (region.min.y > centroid.max.y || centroid.min.y > region.max.y) {
+                    continue;
+                }
+
+                for (let i = 0; i < centroid.footprintSegLen; i++) {
+                    const seg = this.footprintSegments[centroid.footprintSegIdx + i];
+
+                    // Transform vertices to footprint's coordinate space
+                    transformedVertices.length = 0;
+
+                    transformFootprintVertices(
+                        this.footprintVertices,
+                        seg.vertexOffset,
+                        seg.vertexCount,
+                        region.footprintTileId.canonical,
+                        coord.canonical,
+                        transformedVertices);
+
+                    if (footprintTrianglesIntersect(
+                        region.footprint,
+                        transformedVertices,
+                        this.footprintIndices.uint16,
+                        seg.indexOffset,
+                        seg.indexCount,
+                        -seg.vertexOffset,
+                        -padding)) {
+                        centroid.flags |= HIDDEN_BY_REPLACEMENT;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (const centroid of this.centroidData) {
+            this.writeCentroidToBuffer(centroid);
+        }
+
+        this.borderDoneWithNeighborZ = [-1, -1, -1, -1];
+    }
+
+    footprintContainsPoint(x: number, y: number, centroid: PartData): boolean {
+        let c = false;
+        for (let s = 0; s < centroid.footprintSegLen; s++) {
+            const seg = this.footprintSegments[centroid.footprintSegIdx + s];
+            let startRing = 0;
+            for (const endRing of seg.ringIndices) {
+                for (let i = startRing, j = endRing + startRing - 1; i < endRing + startRing; j = i++) {
+                    const x1 = this.footprintVertices.int16[(i + seg.vertexOffset) * 2 + 0];
+                    const y1 = this.footprintVertices.int16[(i + seg.vertexOffset) * 2 + 1];
+                    const x2 = this.footprintVertices.int16[(j + seg.vertexOffset) * 2 + 0];
+                    const y2 = this.footprintVertices.int16[(j + seg.vertexOffset) * 2 + 1];
+                    if (((y1 > y) !== (y2 > y)) && (x < ((x2 - x1) * (y - y1) / (y2 - y1) + x1))) {
+                        c = !c;
+                    }
+                }
+                startRing = endRing;
+            }
+        }
+        return c;
+    }
+
+    getHeightAtTileCoord(x: number, y: number): ?{height: number, hidden: boolean} {
+        let height = Number.NEGATIVE_INFINITY;
+        let hidden = true;
+        assert(x > -EXTENT && y > -EXTENT && x < 2 * EXTENT && y < 2 * EXTENT);
+        const lookupKey = (x + EXTENT) * 4 * EXTENT + (y + EXTENT);
+        if (this.partLookup.hasOwnProperty(lookupKey)) {
+            const centroid = this.partLookup[lookupKey];
+            return centroid ? {height: centroid.height, hidden: !!(centroid.flags & HIDDEN_BY_REPLACEMENT)} : undefined;
+        }
+        for (const centroid of this.centroidData) {
+            // Perform a quick aabb-aabb check to determine
+            // whether a more precise check is required
+            if (x > centroid.max.x || centroid.min.x > x || y > centroid.max.y || centroid.min.y > y) {
+                continue;
+            }
+
+            if (this.footprintContainsPoint(x, y, centroid)) {
+                if (centroid && centroid.height > height) {
+                    height = centroid.height;
+                    this.partLookup[lookupKey] = centroid;
+                    hidden = !!(centroid.flags & HIDDEN_BY_REPLACEMENT);
+                }
+            }
+        }
+        if (height === Number.NEGATIVE_INFINITY) {
+            // nothing found, cache that info too.
+            this.partLookup[lookupKey] = undefined;
+            return;
+        }
+        return {height, hidden};
     }
 }
 
@@ -680,7 +1585,10 @@ function _getRoundedEdgeOffset(p0: Point, p1: Point, p2: Point, cosHalfAngle: nu
 }
 
 register(FillExtrusionBucket, 'FillExtrusionBucket', {omit: ['layers', 'features']});
-register(PartMetadata, 'PartMetadata');
+register(PartData, 'PartData');
+register(FootprintSegment, 'FootprintSegment');
+register(BorderCentroidData, 'BorderCentroidData');
+register(GroundEffect, 'GroundEffect');
 
 export default FillExtrusionBucket;
 
@@ -695,6 +1603,11 @@ function isEdgeOutsideBounds(p1: Point, p2: Point, bounds: [Point, Point]) {
            (p1.y > bounds[1].y && p2.y > bounds[1].y);
 }
 
+function pointOutsideBounds(p: Point, bounds: [Point, Point]) {
+    return ((p.x < bounds[0].x) || (p.x > bounds[1].x) ||
+            (p.y < bounds[0].y) || (p.y > bounds[1].y));
+}
+
 function isEntirelyOutside(ring: Array<Point>) {
     // Discard rings with corners on border if all other vertices are outside: they get defined
     // also in the tile across the border. Eventual zero area rings at border are discarded by classifyRings
@@ -703,14 +1616,6 @@ function isEntirelyOutside(ring: Array<Point>) {
         ring.every(p => p.x >= EXTENT) ||
         ring.every(p => p.y <= 0) ||
         ring.every(p => p.y >= EXTENT);
-}
-
-function tileToMeter(canonical: CanonicalTileID) {
-    const circumferenceAtEquator = 40075017;
-    const mercatorY = canonical.y / (1 << canonical.z);
-    const exp = Math.exp(Math.PI * (1 - 2 * mercatorY));
-    // simplify cos(2 * atan(e) - PI/2) from mercator_coordinate.js, remove trigonometrics.
-    return circumferenceAtEquator * 2 * exp / (exp * exp + 1) / EXTENT / (1 << canonical.z);
 }
 
 function isAOConcaveAngle(p2: Point, p1: Point, p3: Point) {
@@ -770,4 +1675,18 @@ export function resampleFillExtrusionPolygonsForGlobe(polygons: Point[][][], til
     };
 
     return subdividePolygons(polygons, tileBounds, cellCountOnXAxis, cellCountOnYAxis, 1.0, splitFn);
+}
+
+function transformFootprintVertices(vertices: PosArray, offset: number, count: number, footprintId: CanonicalTileID, centroidId: CanonicalTileID, out: Array<Point>) {
+    const zDiff = Math.pow(2.0, footprintId.z - centroidId.z);
+
+    for (let i = 0; i < count; i++) {
+        let x = vertices.int16[(i + offset) * 2 + 0];
+        let y = vertices.int16[(i + offset) * 2 + 1];
+
+        x = (x + centroidId.x * EXTENT) * zDiff - footprintId.x * EXTENT;
+        y = (y + centroidId.y * EXTENT) * zDiff - footprintId.y * EXTENT;
+
+        out.push(new Point(x, y));
+    }
 }

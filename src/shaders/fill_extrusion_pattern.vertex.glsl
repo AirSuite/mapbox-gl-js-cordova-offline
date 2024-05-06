@@ -1,3 +1,7 @@
+#include "_prelude_fog.vertex.glsl"
+#include "_prelude_terrain.vertex.glsl"
+#include "_prelude_lighting.glsl"
+
 uniform mat4 u_matrix;
 uniform vec2 u_pixel_coord_upper;
 uniform vec2 u_pixel_coord_lower;
@@ -10,12 +14,12 @@ uniform vec3 u_lightcolor;
 uniform lowp vec3 u_lightpos;
 uniform lowp float u_lightintensity;
 
-attribute vec4 a_pos_normal_ed;
-attribute vec2 a_centroid_pos;
+in vec4 a_pos_normal_ed;
+in vec2 a_centroid_pos;
 
 #ifdef PROJECTION_GLOBE_VIEW
-attribute vec3 a_pos_3;         // Projected position on the globe
-attribute vec3 a_pos_normal_3;  // Surface normal at the position
+in vec3 a_pos_3;         // Projected position on the globe
+in vec3 a_pos_normal_3;  // Surface normal at the position
 
 uniform mat4 u_inv_rot_matrix;
 uniform vec2 u_merc_center;
@@ -25,28 +29,28 @@ uniform vec3 u_up_dir;
 uniform float u_height_lift;
 #endif
 
-varying vec2 v_pos;
-varying vec4 v_lighting;
+out vec2 v_pos;
+out vec4 v_lighting;
 
 #ifdef FAUX_AO
 uniform lowp vec2 u_ao;
-varying vec3 v_ao;
+out vec3 v_ao;
 #endif
 
 #ifdef LIGHTING_3D_MODE
-varying float v_NdotL;
+out vec3 v_normal;
 #endif
 
-#pragma mapbox: define lowp float base
-#pragma mapbox: define lowp float height
-#pragma mapbox: define lowp vec4 pattern
-#pragma mapbox: define lowp float pixel_ratio
+#pragma mapbox: define highp float base
+#pragma mapbox: define highp float height
+#pragma mapbox: define mediump vec4 pattern
+#pragma mapbox: define highp float pixel_ratio
 
 void main() {
-    #pragma mapbox: initialize lowp float base
-    #pragma mapbox: initialize lowp float height
+    #pragma mapbox: initialize highp float base
+    #pragma mapbox: initialize highp float height
     #pragma mapbox: initialize mediump vec4 pattern
-    #pragma mapbox: initialize lowp float pixel_ratio
+    #pragma mapbox: initialize highp float pixel_ratio
 
     vec2 pattern_tl = pattern.xy;
     vec2 pattern_br = pattern.zw;
@@ -152,7 +156,7 @@ void main() {
 #endif
 
 #ifdef LIGHTING_3D_MODE
-    v_NdotL = NdotL;
+    v_normal = normal;
 #else
     v_lighting.rgb += clamp(NdotL * u_lightcolor, mix(vec3(0.0), vec3(0.3), 1.0 - u_lightcolor), vec3(1.0));
     v_lighting *= u_opacity;

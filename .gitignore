@@ -6,7 +6,7 @@
 *.js.map
 *.cjs.map
 node_modules
-package-lock.json
+yarn.lock
 .vscode/
 *.sublime-*
 coverage
@@ -31,3 +31,5 @@ yarn-error.log
 yarn-debug.log
 npm-debug.log
 .idea
+# https://github.com/vitejs/vite/issues/9470
+vitest.config.js.*

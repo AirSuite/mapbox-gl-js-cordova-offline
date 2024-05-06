@@ -1,4 +1,4 @@
-import {test} from '../../util/test.js';
+import {test, expect, vi} from "../../util/vitest.js";
 import WorkerTile from '../../../src/source/worker_tile.js';
 import Wrapper from '../../../src/source/geojson_wrapper.js';
 import {OverscaledTileID} from '../../../src/source/tile_id.js';
@@ -14,7 +14,8 @@ function createWorkerTile() {
         source: 'source',
         tileID: new OverscaledTileID(1, 0, 1, 1, 1),
         overscaling: 1,
-        projection: getProjection({name: 'mercator'})
+        projection: getProjection({name: 'mercator'}),
+        brightness: 0
     });
 }
 
@@ -26,7 +27,7 @@ function createWrapper() {
     }]);
 }
 
-test('WorkerTile#parse', (t) => {
+test('WorkerTile#parse', () => {
     const layerIndex = new StyleLayerIndex([{
         id: 'test',
         source: 'source',
@@ -35,13 +36,12 @@ test('WorkerTile#parse', (t) => {
 
     const tile = createWorkerTile();
     tile.parse(createWrapper(), layerIndex, [], {}, (err, result) => {
-        t.ifError(err);
-        t.ok(result.buckets[0]);
-        t.end();
+        expect(err).toBeFalsy();
+        expect(result.buckets[0]).toBeTruthy();
     });
 });
 
-test('WorkerTile#parse skips hidden layers', (t) => {
+test('WorkerTile#parse skips hidden layers', () => {
     const layerIndex = new StyleLayerIndex([{
         id: 'test-hidden',
         source: 'source',
@@ -51,13 +51,12 @@ test('WorkerTile#parse skips hidden layers', (t) => {
 
     const tile = createWorkerTile();
     tile.parse(createWrapper(), layerIndex, [], {}, (err, result) => {
-        t.ifError(err);
-        t.equal(result.buckets.length, 0);
-        t.end();
+        expect(err).toBeFalsy();
+        expect(result.buckets.length).toEqual(0);
     });
 });
 
-test('WorkerTile#parse skips layers without a corresponding source layer', (t) => {
+test('WorkerTile#parse skips layers without a corresponding source layer', () => {
     const layerIndex = new StyleLayerIndex([{
         id: 'test',
         source: 'source',
@@ -67,13 +66,12 @@ test('WorkerTile#parse skips layers without a corresponding source layer', (t) =
 
     const tile = createWorkerTile();
     tile.parse({layers: {}}, layerIndex, [], {}, (err, result) => {
-        t.ifError(err);
-        t.equal(result.buckets.length, 0);
-        t.end();
+        expect(err).toBeFalsy();
+        expect(result.buckets.length).toEqual(0);
     });
 });
 
-test('WorkerTile#parse warns once when encountering a v1 vector tile layer', (t) => {
+test('WorkerTile#parse warns once when encountering a v1 vector tile layer', () => {
     const layerIndex = new StyleLayerIndex([{
         id: 'test',
         source: 'source',
@@ -89,12 +87,11 @@ test('WorkerTile#parse warns once when encountering a v1 vector tile layer', (t)
         }
     };
 
-    t.stub(console, 'warn');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const tile = createWorkerTile();
     tile.parse(data, layerIndex, [], {}, (err) => {
-        t.ifError(err);
-        t.ok(console.warn.calledWithMatch(/does not use vector tile spec v2/));
-        t.end();
+        expect(err).toBeFalsy();
+        expect(console.warn.mock.calls[0][0]).toMatch(/does not use vector tile spec v2/);
     });
 });

@@ -1,18 +1,20 @@
 // @flow
 
 import Context from '../gl/context.js';
-import type {UniformValues} from './uniform_binding.js';
-import type {UnwrappedTileID} from '../source/tile_id.js';
-import Painter from './painter.js';
 import Fog from '../style/fog.js';
 import {Uniform1f, Uniform1i, Uniform2f, Uniform3f, Uniform4f, UniformMatrix4f} from './uniform_binding.js';
 import {globeToMercatorTransition} from '../geo/projection/globe_util.js';
+
+import type {UniformValues} from './uniform_binding.js';
+import type {UnwrappedTileID} from '../source/tile_id.js';
+import type Painter from './painter.js';
 
 export type FogUniformsType = {|
     'u_fog_matrix': UniformMatrix4f,
     'u_fog_range': Uniform2f,
     'u_fog_color': Uniform4f,
     'u_fog_horizon_blend': Uniform1f,
+    'u_fog_vertical_limit': Uniform2f,
     'u_fog_temporal_offset': Uniform1f,
     'u_frustum_tl': Uniform3f,
     'u_frustum_tr': Uniform3f,
@@ -30,6 +32,7 @@ export const fogUniforms = (context: Context): FogUniformsType => ({
     'u_fog_range': new Uniform2f(context),
     'u_fog_color': new Uniform4f(context),
     'u_fog_horizon_blend': new Uniform1f(context),
+    'u_fog_vertical_limit': new Uniform2f(context),
     'u_fog_temporal_offset': new Uniform1f(context),
     'u_frustum_tl': new Uniform3f(context),
     'u_frustum_tr': new Uniform3f(context),
@@ -53,17 +56,20 @@ export const fogUniformValues = (
     frustumDirBl: [number, number, number],
     globePosition: [number, number, number],
     globeRadius: number,
-    viewport: [number, number]
+    viewport: [number, number],
+    fogMatrix: ?Float32Array
 ): UniformValues<FogUniformsType> => {
     const tr = painter.transform;
     const fogColor = fog.properties.get('color').toArray01();
     fogColor[3] = fogOpacity; // Update Alpha
     const temporalOffset = (painter.frameCounter / 1000.0) % 1;
+    const [verticalRangeMin, verticalRangeMax] = fog.properties.get('vertical-range');
     return {
-        'u_fog_matrix': tileID ? tr.calculateFogTileMatrix(tileID) : painter.identityMat,
+        'u_fog_matrix': tileID ? tr.calculateFogTileMatrix(tileID) : fogMatrix ? fogMatrix : painter.identityMat,
         'u_fog_range': fog.getFovAdjustedRange(tr._fov),
         'u_fog_color': fogColor,
         'u_fog_horizon_blend': fog.properties.get('horizon-blend'),
+        'u_fog_vertical_limit': [Math.min(verticalRangeMin, verticalRangeMax), verticalRangeMax],
         'u_fog_temporal_offset': temporalOffset,
         'u_frustum_tl': frustumDirTl,
         'u_frustum_tr': frustumDirTr,

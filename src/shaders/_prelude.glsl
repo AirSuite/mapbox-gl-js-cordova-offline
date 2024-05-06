@@ -4,9 +4,16 @@
 
 #define EPSILON 0.0000001
 #define PI 3.141592653589793
-#define EXTENT 8192.0
-#define HALF_PI PI / 2.0
-#define QUARTER_PI PI / 4.0
-#define RAD_TO_DEG 180.0 / PI
-#define DEG_TO_RAD PI / 180.0
-#define GLOBE_RADIUS EXTENT / PI / 2.0
+
+#ifdef RENDER_CUTOFF
+// Calculates cutoff and fade out based on the supplied params and depth value
+float cutoff_opacity(vec4 cutoff_params, float depth) {
+    float near = cutoff_params.x;
+    float far = cutoff_params.y;
+    float cutoffStart = cutoff_params.z;
+    float cutoffEnd = cutoff_params.w;
+
+    float linearDepth = (depth - near) / (far - near);
+    return clamp((linearDepth - cutoffStart) / (cutoffEnd - cutoffStart), 0.0, 1.0);
+}
+#endif

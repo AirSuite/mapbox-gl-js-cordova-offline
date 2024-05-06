@@ -9,7 +9,6 @@ import {
     Uniform1f,
     UniformMatrix3f
 } from '../render/uniform_binding.js';
-import browser from '../util/browser.js';
 
 import type Context from '../gl/context.js';
 import type {UniformValues} from '../render/uniform_binding.js';
@@ -25,6 +24,7 @@ export type GlobeRasterUniformsType = {|
     'u_image0': Uniform1i,
     'u_grid_matrix': UniformMatrix3f,
     'u_skirt_height': Uniform1f,
+    'u_far_z_cutoff': Uniform1f,
     'u_frustum_tl': Uniform3f,
     'u_frustum_tr': Uniform3f,
     'u_frustum_br': Uniform3f,
@@ -45,12 +45,8 @@ export type AtmosphereUniformsType = {|
     'u_color': Uniform4f,
     'u_high_color': Uniform4f,
     'u_space_color': Uniform4f,
-    'u_star_intensity': Uniform1f,
-    'u_star_size': Uniform1f,
-    'u_star_density': Uniform1f,
     'u_temporal_offset': Uniform1f,
-    'u_horizon_angle': Uniform1f,
-    'u_rotation_matrix': UniformMatrix4f
+    'u_horizon_angle': Uniform1f
 |};
 
 const globeRasterUniforms = (context: Context): GlobeRasterUniformsType => ({
@@ -63,6 +59,7 @@ const globeRasterUniforms = (context: Context): GlobeRasterUniformsType => ({
     'u_image0': new Uniform1i(context),
     'u_grid_matrix': new UniformMatrix3f(context),
     'u_skirt_height': new Uniform1f(context),
+    'u_far_z_cutoff': new Uniform1f(context),
     'u_frustum_tl': new Uniform3f(context),
     'u_frustum_tr': new Uniform3f(context),
     'u_frustum_br': new Uniform3f(context),
@@ -83,12 +80,8 @@ const atmosphereUniforms = (context: Context): AtmosphereUniformsType => ({
     'u_color': new Uniform4f(context),
     'u_high_color': new Uniform4f(context),
     'u_space_color': new Uniform4f(context),
-    'u_star_intensity': new Uniform1f(context),
-    'u_star_density': new Uniform1f(context),
-    'u_star_size': new Uniform1f(context),
     'u_temporal_offset': new Uniform1f(context),
     'u_horizon_angle': new Uniform1f(context),
-    'u_rotation_matrix': new UniformMatrix4f(context)
 });
 
 const globeRasterUniformValues = (
@@ -106,6 +99,7 @@ const globeRasterUniformValues = (
     globeRadius: number,
     viewport: [number, number],
     skirtHeight: number,
+    farZCutoff: number,
     gridMatrix: ?Mat4
 ): UniformValues<GlobeRasterUniformsType> => ({
     'u_proj_matrix': Float32Array.from(projMatrix),
@@ -123,7 +117,8 @@ const globeRasterUniformValues = (
     'u_globe_radius': globeRadius,
     'u_viewport': viewport,
     'u_grid_matrix': gridMatrix ? Float32Array.from(gridMatrix) : new Float32Array(9),
-    'u_skirt_height': skirtHeight
+    'u_skirt_height': skirtHeight,
+    'u_far_z_cutoff': farZCutoff
 });
 
 const atmosphereUniformValues = (
@@ -137,10 +132,8 @@ const atmosphereUniformValues = (
     color: [number, number, number, number],
     highColor: [number, number, number, number],
     spaceColor: [number, number, number, number],
-    starIntensity: number,
     temporalOffset: number,
-    horizonAngle: number,
-    rotationMatrix: Float32Array
+    horizonAngle: number
 ): UniformValues<AtmosphereUniformsType> => ({
     'u_frustum_tl': frustumDirTl,
     'u_frustum_tr': frustumDirTr,
@@ -152,14 +145,10 @@ const atmosphereUniformValues = (
     'u_color': color,
     'u_high_color': highColor,
     'u_space_color': spaceColor,
-    'u_star_intensity': starIntensity,
-    'u_star_size': 5.0 * browser.devicePixelRatio,
-    'u_star_density': 0.0,
     'u_temporal_offset': temporalOffset,
-    'u_horizon_angle': horizonAngle,
-    'u_rotation_matrix': rotationMatrix
+    'u_horizon_angle': horizonAngle
 });
 
 export {globeRasterUniforms, globeRasterUniformValues, atmosphereUniforms, atmosphereUniformValues};
 
-export type GlobeDefinesType = 'PROJECTION_GLOBE_VIEW' | 'GLOBE_POLES' | 'CUSTOM_ANTIALIASING';
+export type GlobeDefinesType = 'PROJECTION_GLOBE_VIEW' | 'GLOBE_POLES' | 'CUSTOM_ANTIALIASING' | 'ALPHA_PASS';

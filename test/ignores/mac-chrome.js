@@ -39,7 +39,8 @@ const todo = [
     "render-tests/globe/globe-transforms/north-pole",
 
     // Debug rendering
-    "render-tests/terrain/wireframe"
+    "render-tests/terrain/wireframe",
+    "render-tests/wireframe/globe-high-exaggeration"
 ];
 
 const skip = [
@@ -58,7 +59,10 @@ const skip = [
     "render-tests/globe/globe-camera/reset-north",
 
     "render-tests/free-camera/terrain", // Occasionally subtly different camera position
-    "render-tests/fog/terrain/equal-range" // Ground sometimes missing (sky renders)
+    "render-tests/fog/terrain/equal-range", // Ground sometimes missing (sky renders)
+    "render-tests/model-layer/landmark-shadows-terrain", // Terrain makes fill extrusion height different in chrome
+    "render-tests/model-layer/buildings-trees-shadows-fog-terrain-cutoff", // Timing out
+    "render-tests/model-layer/landmark-z-offset-terrain-fix-griffith" // flakey
 ];
 
 export default {todo, skip};

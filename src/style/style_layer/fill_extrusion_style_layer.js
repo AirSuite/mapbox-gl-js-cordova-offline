@@ -7,9 +7,8 @@ import {translateDistance, tilespaceTranslate} from '../query_utils.js';
 import properties from './fill_extrusion_style_layer_properties.js';
 import {Transitionable, Transitioning, PossiblyEvaluated} from '../properties.js';
 import Point from '@mapbox/point-geometry';
-import ProgramConfiguration from '../../data/program_configuration.js';
 import {vec3, vec4} from 'gl-matrix';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import {CanonicalTileID} from '../../source/tile_id.js';
 
 import type {FeatureState} from '../../style-spec/expression/index.js';
@@ -21,6 +20,7 @@ import type {TilespaceQueryGeometry} from '../query_geometry.js';
 import type {DEMSampler} from '../../terrain/elevation.js';
 import type {Vec2, Vec4} from 'gl-matrix';
 import type {IVectorTileFeature} from '@mapbox/vector-tile';
+import type {ConfigOptions} from '../properties.js';
 
 class Point3D extends Point {
     z: number;
@@ -37,8 +37,9 @@ class FillExtrusionStyleLayer extends StyleLayer {
     paint: PossiblyEvaluated<PaintProps>;
     layout: PossiblyEvaluated<LayoutProps>;
 
-    constructor(layer: LayerSpecification) {
-        super(layer, properties);
+    constructor(layer: LayerSpecification, scope: string, options?: ?ConfigOptions) {
+        super(layer, properties, scope, options);
+        this._stats = {numRenderedVerticesInShadowPass : 0, numRenderedVerticesInTransparentPass: 0};
     }
 
     createBucket(parameters: BucketParameters<FillExtrusionStyleLayer>): FillExtrusionBucket {
@@ -54,14 +55,22 @@ class FillExtrusionStyleLayer extends StyleLayer {
         return true;
     }
 
+    hasShadowPass(): boolean {
+        return true;
+    }
+
+    cutoffRange(): number {
+        return this.paint.get('fill-extrusion-cutoff-fade-range');
+    }
+
+    canCastShadows(): boolean {
+        return true;
+    }
+
     getProgramIds(): string[] {
         const patternProperty = this.paint.get('fill-extrusion-pattern');
         const image = patternProperty.constantOr((1: any));
         return [image ? 'fillExtrusionPattern' : 'fillExtrusion'];
-    }
-
-    getProgramConfiguration(zoom: number): ProgramConfiguration {
-        return new ProgramConfiguration(this, zoom);
     }
 
     // $FlowFixMe[method-unbinding]

@@ -4,13 +4,15 @@ import {getImage, getmbtileImage, ResourceType} from '../util/ajax.js';
 import {extend, prevPowerOfTwo} from '../util/util.js';
 import {Evented} from '../util/evented.js';
 import browser from '../util/browser.js';
-import window from '../util/window.js';
 import offscreenCanvasSupported from '../util/offscreen_canvas_supported.js';
 import {OverscaledTileID} from './tile_id.js';
 import RasterTileSource from './raster_tile_source.js';
-// ensure DEMData is registered for worker transfer on main thread:
-import DEMData from '../data/dem_data.js';
 
+// Import DEMData as a module with side effects to ensure
+// it's registered as a serializable class on the main thread
+import '../data/dem_data.js';
+
+import type DEMData from '../data/dem_data.js';
 import type {Source} from './source.js';
 import type Dispatcher from '../util/dispatcher.js';
 import type Tile from './tile.js';
@@ -96,7 +98,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                 callback(err);
             } else if (img) {
                 if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
-                const transfer = window.ImageBitmap && img instanceof window.ImageBitmap && offscreenCanvasSupported();
+                const transfer = ImageBitmap && img instanceof ImageBitmap && offscreenCanvasSupported();
                 // DEMData uses 1px padding. Handle cases with image buffer of 1 and 2 pxs, the rest assume default buffer 0
                 // in order to keep the previous implementation working (no validation against tileSize).
                 const buffer = (img.width - prevPowerOfTwo(img.width)) / 2;
@@ -113,6 +115,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                     uid: tile.uid,
                     coord: tile.tileID,
                     source: this.id,
+                    scope: this.scope,
                     rawImageData,
                     encoding: this.encoding,
                     padding
@@ -172,20 +175,6 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
 
         return neighboringTiles;
     }
-
-    // $FlowFixMe[method-unbinding]
-    unloadTile(tile: Tile) {
-        if (tile.demTexture) this.map.painter.saveTileTexture(tile.demTexture);
-        if (tile.fbo) {
-            tile.fbo.destroy();
-            delete tile.fbo;
-        }
-        if (tile.dem) delete tile.dem;
-        delete tile.neighboringTiles;
-
-        tile.state = 'unloaded';
-    }
-
 }
 
 export default RasterDEMTileSource;

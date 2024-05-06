@@ -21,7 +21,7 @@ import type {
 import type Actor from '../util/actor.js';
 import type StyleLayerIndex from '../style/style_layer_index.js';
 
-import type {LoadVectorDataCallback} from './vector_tile_worker_source.js';
+import type {LoadVectorDataCallback} from './load_vector_tile.js';
 import type {RequestParameters, ResponseCallback} from '../util/ajax.js';
 import type {Callback} from '../types/callback.js';
 import type {GeoJSONFeature} from '@mapbox/geojson-types';
@@ -101,8 +101,8 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
      * See {@link GeoJSONWorkerSource#loadGeoJSON}.
      * @private
      */
-    constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, isSpriteLoaded: boolean, loadGeoJSON: ?LoadGeoJSON) {
-        super(actor, layerIndex, availableImages, isSpriteLoaded, loadGeoJSONTile);
+    constructor(actor: Actor, layerIndex: StyleLayerIndex, availableImages: Array<string>, isSpriteLoaded: boolean, loadGeoJSON: ?LoadGeoJSON, brightness: ?number) {
+        super(actor, layerIndex, availableImages, isSpriteLoaded, loadGeoJSONTile, brightness);
         if (loadGeoJSON) {
             this.loadGeoJSON = loadGeoJSON;
         }

@@ -7,17 +7,28 @@ import MercatorCoordinate, {
     mercatorYfromLat,
     MAX_MERCATOR_LATITUDE
 } from '../mercator_coordinate.js';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import {number as interpolate} from '../../style-spec/util/interpolate.js';
 import {degToRad, radToDeg, clamp, smoothstep, getColumn, shortestAngle} from '../../util/util.js';
 import {vec3, vec4, mat3, mat4} from 'gl-matrix';
 import SegmentVector from '../../data/segment.js';
 import {members as globeLayoutAttributes} from '../../terrain/globe_attributes.js';
 import posAttributes from '../../data/pos_attributes.js';
-import {TriangleIndexArray, GlobeVertexArray, LineIndexArray, PosArray} from '../../data/array_types.js';
+import {TriangleIndexArray, GlobeVertexArray, PosArray} from '../../data/array_types.js';
 import {Aabb, Ray} from '../../util/primitives.js';
-import LngLat, {earthRadius} from '../lng_lat.js';
-import LngLatBounds from '../lng_lat_bounds.js';
+import LngLat, {earthRadius, csLatLngToECEF, latLngToECEF, LngLatBounds} from '../lng_lat.js';
+import {
+    GLOBE_RADIUS,
+    GLOBE_MIN,
+    GLOBE_MAX,
+    TILE_SIZE,
+    GLOBE_NORMALIZATION_MASK,
+    GLOBE_ZOOM_THRESHOLD_MIN,
+    GLOBE_ZOOM_THRESHOLD_MAX,
+    GLOBE_VERTEX_GRID_SIZE,
+    GLOBE_LATITUDINAL_GRID_LOD_TABLE
+} from './globe_constants.js';
+import Point from '@mapbox/point-geometry';
 
 import type Painter from '../../render/painter.js';
 import type {CanonicalTileID, UnwrappedTileID} from '../../source/tile_id.js';
@@ -26,36 +37,10 @@ import type {Vec3, Mat4} from 'gl-matrix';
 import type IndexBuffer from '../../gl/index_buffer.js';
 import type VertexBuffer from '../../gl/vertex_buffer.js';
 import type Transform from '../transform.js';
-import Point from '@mapbox/point-geometry';
-import assert from 'assert';
 
-export const GLOBE_ZOOM_THRESHOLD_MIN = 5;
-export const GLOBE_ZOOM_THRESHOLD_MAX = 6;
-
-// At low zoom levels the globe gets rendered so that the scale at this
-// latitude matches it's scale in a mercator map. The choice of latitude is
-// a bit arbitrary. Different choices will match mercator more closely in different
-// views. 45 is a good enough choice because:
-// - it's half way from the pole to the equator
-// - matches most middle latitudes reasonably well
-// - biases towards increasing size rather than decreasing
-// - makes the globe slightly larger at very low zoom levels, where it already
-//   covers less pixels than mercator (due to the curved surface)
-//
-//   Changing this value will change how large a globe is rendered and could affect
-//   end users. This should only be done of the tradeoffs between change and improvement
-//   are carefully considered.
-export const GLOBE_SCALE_MATCH_LATITUDE = 45;
-
-export const GLOBE_RADIUS = EXTENT / Math.PI / 2.0;
-const GLOBE_NORMALIZATION_BIT_RANGE = 15;
-const GLOBE_NORMALIZATION_MASK = (1 << (GLOBE_NORMALIZATION_BIT_RANGE - 1)) - 1;
-const GLOBE_VERTEX_GRID_SIZE = 64;
-const GLOBE_LATITUDINAL_GRID_LOD_TABLE = [GLOBE_VERTEX_GRID_SIZE, GLOBE_VERTEX_GRID_SIZE / 2, GLOBE_VERTEX_GRID_SIZE / 4];
-const TILE_SIZE = 512;
-
-const GLOBE_MIN = -GLOBE_RADIUS;
-const GLOBE_MAX = GLOBE_RADIUS;
+export function globeMetersToEcef(d: number): number {
+    return d * GLOBE_RADIUS / earthRadius;
+}
 
 const GLOBE_LOW_ZOOM_TILE_AABBS = [
     // z == 0
@@ -66,10 +51,6 @@ const GLOBE_LOW_ZOOM_TILE_AABBS = [
     new Aabb([GLOBE_MIN, 0, GLOBE_MIN], [0, GLOBE_MAX, GLOBE_MAX]), // x=0, y=1
     new Aabb([0, 0, GLOBE_MIN], [GLOBE_MAX, GLOBE_MAX, GLOBE_MAX])  // x=1, y=1
 ];
-
-export function globeMetersToEcef(d: number): number {
-    return d * GLOBE_RADIUS / earthRadius;
-}
 
 export function globePointCoordinate(tr: Transform, x: number, y: number, clampToHorizon: boolean = true): ?MercatorCoordinate {
     const point0 = vec3.scale([], tr._camera.position, tr.worldSize);
@@ -239,7 +220,8 @@ function transformPoints(corners: Array<Vec3>, globeMatrix: Mat4, scale: number)
 }
 
 // Returns AABB in world/camera space scaled by numTiles / tr.worldSize
-export function aabbForTileOnGlobe(tr: Transform, numTiles: number, tileId: CanonicalTileID): Aabb {
+// extendToPoles - extend tiles neighboring to north / south pole segments with the north/south pole point
+export function aabbForTileOnGlobe(tr: Transform, numTiles: number, tileId: CanonicalTileID, extendToPoles: boolean): Aabb {
     const scale = numTiles / tr.worldSize;
     const m = tr.globeMatrix;
 
@@ -263,8 +245,9 @@ export function aabbForTileOnGlobe(tr: Transform, numTiles: number, tileId: Cano
     // Simplified aabb is computed by first encapsulating 4 transformed corner points of the tile.
     // The resulting aabb is not complete yet as curved edges of the tile might span outside of the boundaries.
     // It is enough to extend the aabb to contain only the edge that's closest to the center point.
-    const bounds = tileCornersToBounds(tileId);
-    const corners = boundsToECEF(bounds);
+    const bounds = tileCornersToBounds(tileId, extendToPoles);
+
+    const corners = boundsToECEF(bounds, GLOBE_RADIUS + globeMetersToEcef(tr._tileCoverLift));
 
     // Transform the corners to world space
     transformPoints(corners, m, scale);
@@ -287,6 +270,15 @@ export function aabbForTileOnGlobe(tr: Transform, numTiles: number, tileId: Cano
         vec3.min(cornerMin, cornerMin, center);
         vec3.max(cornerMax, cornerMax, center);
 
+        return new Aabb(cornerMin, cornerMax);
+    }
+
+    if (tr._tileCoverLift > 0.0) {
+        // Early return for elevated globe tiles, where the tile cover optimization is ignored
+        for (const corner of corners) {
+            vec3.min(cornerMin, cornerMin, corner);
+            vec3.max(cornerMax, cornerMax, corner);
+        }
         return new Aabb(cornerMin, cornerMax);
     }
 
@@ -363,10 +355,10 @@ export function aabbForTileOnGlobe(tr: Transform, numTiles: number, tileId: Cano
     return new Aabb(cornerMin, cornerMax);
 }
 
-export function tileCornersToBounds({x, y, z}: CanonicalTileID): LngLatBounds {
+export function tileCornersToBounds({x, y, z}: CanonicalTileID, extendToPoles: boolean = false): LngLatBounds {
     const s = 1.0 / (1 << z);
-    const sw = new LngLat(lngFromMercatorX(x * s), latFromMercatorY((y + 1) * s));
-    const ne = new LngLat(lngFromMercatorX((x + 1) * s), latFromMercatorY(y * s));
+    const sw = new LngLat(lngFromMercatorX(x * s), y === (1 << z) - 1 && extendToPoles ? -90 : latFromMercatorY((y + 1) * s));
+    const ne = new LngLat(lngFromMercatorX((x + 1) * s), y === 0 && extendToPoles ? 90 : latFromMercatorY(y * s));
     return new LngLatBounds(sw, ne);
 }
 
@@ -403,7 +395,7 @@ function mercatorTileCornersInCameraSpace({x, y, z}: CanonicalTileID, numTiles: 
         [w, n, 0]];
 }
 
-function boundsToECEF(bounds: LngLatBounds): Array<Vec3> {
+function boundsToECEF(bounds: LngLatBounds, radius: number = GLOBE_RADIUS): Array<Vec3> {
     const ny = degToRad(bounds.getNorth());
     const sy = degToRad(bounds.getSouth());
     const cosN = Math.cos(ny);
@@ -413,35 +405,11 @@ function boundsToECEF(bounds: LngLatBounds): Array<Vec3> {
     const w = bounds.getWest();
     const e = bounds.getEast();
     return [
-        csLatLngToECEF(cosS, sinS, w),
-        csLatLngToECEF(cosS, sinS, e),
-        csLatLngToECEF(cosN, sinN, e),
-        csLatLngToECEF(cosN, sinN, w)
+        csLatLngToECEF(cosS, sinS, w, radius),
+        csLatLngToECEF(cosS, sinS, e, radius),
+        csLatLngToECEF(cosN, sinN, e, radius),
+        csLatLngToECEF(cosN, sinN, w, radius)
     ];
-}
-
-function csLatLngToECEF(cosLat: number, sinLat: number, lng: number, radius: number = GLOBE_RADIUS): Vec3 {
-    lng = degToRad(lng);
-
-    // Convert lat & lng to spherical representation. Use zoom=0 as a reference
-    const sx = cosLat * Math.sin(lng) * radius;
-    const sy = -sinLat * radius;
-    const sz = cosLat * Math.cos(lng) * radius;
-
-    return [sx, sy, sz];
-}
-
-export function ecefToLatLng([x, y, z]: Array<number>): LngLat {
-    const radius = Math.hypot(x, y, z);
-    const lng = Math.atan2(x, z);
-    const lat = Math.PI * 0.5 - Math.acos(-y / radius);
-
-    return new LngLat(radToDeg(lng), radToDeg(lat));
-}
-
-export function latLngToECEF(lat: number, lng: number, radius?: number): Vec3 {
-    assert(lat <= 90 && lat >= -90, 'Lattitude must be between -90 and 90');
-    return csLatLngToECEF(Math.cos(degToRad(lat)), Math.sin(degToRad(lat)), lng, radius);
 }
 
 export function tileCoordToECEF(x: number, y: number, id: CanonicalTileID, radius?: number): Vec3 {
@@ -561,9 +529,8 @@ export function globePoleMatrixForTile(z: number, x: number, tr: Transform): Flo
 export function globeUseCustomAntiAliasing(painter: Painter, context: Context, transform: Transform): boolean {
     const transitionT = globeToMercatorTransition(transform.zoom);
     const useContextAA = painter.style.map._antialias;
-    const hasStandardDerivatives = !!context.extStandardDerivatives;
-    const disabled = context.extStandardDerivativesForceOff || (painter.terrain && painter.terrain.exaggeration() > 0.0);
-    return transitionT === 0.0 && !useContextAA && !disabled && hasStandardDerivatives;
+    const disabled = context.options.extStandardDerivativesForceOff || (painter.terrain && painter.terrain.exaggeration() > 0.0);
+    return transitionT === 0.0 && !useContextAA && !disabled;
 }
 
 export function getGridMatrix(id: CanonicalTileID, bounds: LngLatBounds, latitudinalLod: number, worldSize: number): Mat4 {
@@ -711,15 +678,14 @@ type GridWithLods = {
 export class GlobeSharedBuffers {
     _poleNorthVertexBuffer: VertexBuffer;
     _poleSouthVertexBuffer: VertexBuffer;
+    _texturedPoleNorthVertexBuffer: VertexBuffer;
+    _texturedPoleSouthVertexBuffer: VertexBuffer;
     _poleIndexBuffer: IndexBuffer;
     _poleSegments: Array<SegmentVector>;
 
     _gridBuffer: VertexBuffer;
     _gridIndexBuffer: IndexBuffer;
     _gridSegments: Array<GridLodSegments>;
-
-    _wireframeIndexBuffer: IndexBuffer;
-    _wireframeSegments: Array<SegmentVector>;
 
     constructor(context: Context) {
         this._createGrid(context);
@@ -736,11 +702,6 @@ export class GlobeSharedBuffers {
         for (const segments of this._gridSegments) {
             segments.withSkirts.destroy();
             segments.withoutSkirts.destroy();
-        }
-
-        if (this._wireframeIndexBuffer) {
-            this._wireframeIndexBuffer.destroy();
-            for (const segments of this._wireframeSegments) segments.destroy();
         }
     }
 
@@ -883,6 +844,8 @@ export class GlobeSharedBuffers {
 
         const northVertices = new GlobeVertexArray();
         const southVertices = new GlobeVertexArray();
+        const texturedNorthVertices = new GlobeVertexArray();
+        const texturedSouthVertices = new GlobeVertexArray();
         const polePrimitives = GLOBE_VERTEX_GRID_SIZE;
         const poleVertices = GLOBE_VERTEX_GRID_SIZE + 2;
         this._poleSegments = [];
@@ -893,13 +856,21 @@ export class GlobeSharedBuffers {
 
             northVertices.emplaceBack(0, -GLOBE_RADIUS, 0, 0.5, 0); // place the tip
             southVertices.emplaceBack(0, -GLOBE_RADIUS, 0, 0.5, 1);
+            texturedNorthVertices.emplaceBack(0, -GLOBE_RADIUS, 0, 0.5, 0.5);
+            texturedSouthVertices.emplaceBack(0, -GLOBE_RADIUS, 0, 0.5, 0.5);
 
             for (let i = 0; i <= GLOBE_VERTEX_GRID_SIZE; i++) {
-                const uvX = i / GLOBE_VERTEX_GRID_SIZE;
+                let uvX = i / GLOBE_VERTEX_GRID_SIZE;
+                let uvY = 0.0;
                 const angle = interpolate(0, endAngle, uvX);
                 const [gx, gy, gz] = csLatLngToECEF(POLE_COS, POLE_SIN, angle, GLOBE_RADIUS);
-                northVertices.emplaceBack(gx, gy, gz, uvX, 0);
-                southVertices.emplaceBack(gx, gy, gz, uvX, 1);
+                northVertices.emplaceBack(gx, gy, gz, uvX, uvY);
+                southVertices.emplaceBack(gx, gy, gz, uvX, 1.0 - uvY);
+                const rad = degToRad(angle);
+                uvX = 0.5 + 0.5 * Math.sin(rad);
+                uvY = 0.5 + 0.5 * Math.cos(rad);
+                texturedNorthVertices.emplaceBack(gx, gy, gz, uvX, uvY);
+                texturedSouthVertices.emplaceBack(gx, gy, gz, uvX, 1.0 - uvY);
             }
 
             this._poleSegments.push(SegmentVector.simpleSegment(offset, 0, poleVertices, polePrimitives));
@@ -909,45 +880,20 @@ export class GlobeSharedBuffers {
 
         this._poleNorthVertexBuffer = context.createVertexBuffer(northVertices, globeLayoutAttributes, false);
         this._poleSouthVertexBuffer = context.createVertexBuffer(southVertices, globeLayoutAttributes, false);
+        this._texturedPoleNorthVertexBuffer = context.createVertexBuffer(texturedNorthVertices, globeLayoutAttributes, false);
+        this._texturedPoleSouthVertexBuffer = context.createVertexBuffer(texturedSouthVertices, globeLayoutAttributes, false);
     }
 
     getGridBuffers(latitudinalLod: number, withSkirts: boolean): [VertexBuffer, IndexBuffer, SegmentVector] {
         return [this._gridBuffer, this._gridIndexBuffer, withSkirts ? this._gridSegments[latitudinalLod].withSkirts : this._gridSegments[latitudinalLod].withoutSkirts];
     }
 
-    getPoleBuffers(z: number): [VertexBuffer, VertexBuffer, IndexBuffer, SegmentVector] {
-        return [this._poleNorthVertexBuffer, this._poleSouthVertexBuffer, this._poleIndexBuffer, this._poleSegments[z]];
-    }
-
-    getWirefameBuffers(context: Context, lod: number): [VertexBuffer, IndexBuffer, SegmentVector] {
-        if (!this._wireframeSegments) {
-            const wireframeIndices = new LineIndexArray();
-            const quadExt = GLOBE_VERTEX_GRID_SIZE;
-            const vertexExt = quadExt + 1 + (EMBED_SKIRTS ? 2 : 0);
-
-            const iterOffset = EMBED_SKIRTS ? 1 : 0;
-
-            this._wireframeSegments = [];
-            for (let k = 0, primitiveOffset = 0; k < GLOBE_LATITUDINAL_GRID_LOD_TABLE.length; k++) {
-                const latitudinalLod = GLOBE_LATITUDINAL_GRID_LOD_TABLE[k];
-                for (let j = iterOffset; j < latitudinalLod + iterOffset; j++) {
-                    for (let i = iterOffset; i < quadExt + iterOffset; i++) {
-                        const index = j * vertexExt + i;
-                        wireframeIndices.emplaceBack(index, index + 1);
-                        wireframeIndices.emplaceBack(index, index + vertexExt);
-                        wireframeIndices.emplaceBack(index, index + vertexExt + 1);
-                    }
-                }
-
-                const numVertices = (latitudinalLod + 1) * vertexExt;
-                const numPrimitives = latitudinalLod * quadExt * 3;
-
-                this._wireframeSegments.push(SegmentVector.simpleSegment(0, primitiveOffset, numVertices, numPrimitives));
-                primitiveOffset += numPrimitives;
-            }
-
-            this._wireframeIndexBuffer = context.createIndexBuffer(wireframeIndices);
-        }
-        return [this._gridBuffer, this._wireframeIndexBuffer, this._wireframeSegments[lod]];
+    getPoleBuffers(z: number, textured: boolean): [VertexBuffer, VertexBuffer, IndexBuffer, SegmentVector] {
+        return [
+            textured ? this._texturedPoleNorthVertexBuffer : this._poleNorthVertexBuffer,
+            textured ? this._texturedPoleSouthVertexBuffer : this._poleSouthVertexBuffer,
+            this._poleIndexBuffer,
+            this._poleSegments[z]
+        ];
     }
 }

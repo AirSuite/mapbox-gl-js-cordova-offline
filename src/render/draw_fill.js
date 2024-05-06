@@ -27,7 +27,8 @@ function drawFill(painter: Painter, sourceCache: SourceCache, layer: FillStyleLa
         return;
     }
 
-    const colorMode = painter.colorModeForRenderPass();
+    const emissiveStrength = layer.paint.get('fill-emissive-strength');
+    const colorMode = painter.colorModeForDrapableLayerRenderPass(emissiveStrength);
 
     const pattern = layer.paint.get('fill-pattern');
     const pass = painter.opaquePassEnabledForLayer() &&
@@ -83,11 +84,14 @@ function drawFillTiles(painter: Painter, sourceCache: SourceCache, layer: FillSt
         painter.prepareDrawTile();
 
         const programConfiguration = bucket.programConfigurations.get(layer.id);
-        const program = painter.useProgram(programName, programConfiguration);
+        const affectedByFog = painter.isTileAffectedByFog(coord);
+        const program = painter.getOrCreateProgram(programName, {config: programConfiguration, overrideFog: affectedByFog});
 
         if (image) {
             painter.context.activeTexture.set(gl.TEXTURE0);
-            tile.imageAtlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            if (tile.imageAtlasTexture) {
+                tile.imageAtlasTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            }
             programConfiguration.updatePaintBuffers();
         }
 
@@ -101,26 +105,28 @@ function drawFillTiles(painter: Painter, sourceCache: SourceCache, layer: FillSt
         const tileMatrix = painter.translatePosMatrix(coord.projMatrix, tile,
             layer.paint.get('fill-translate'), layer.paint.get('fill-translate-anchor'));
 
+        const emissiveStrength = layer.paint.get('fill-emissive-strength');
+
         if (!isOutline) {
             indexBuffer = bucket.indexBuffer;
             segments = bucket.segments;
             uniformValues = image ?
-                fillPatternUniformValues(tileMatrix, painter, tile) :
-                fillUniformValues(tileMatrix);
+                fillPatternUniformValues(tileMatrix, emissiveStrength, painter, tile) :
+                fillUniformValues(tileMatrix, emissiveStrength);
         } else {
             indexBuffer = bucket.indexBuffer2;
             segments = bucket.segments2;
             const drawingBufferSize = (painter.terrain && painter.terrain.renderingToTexture) ? painter.terrain.drapeBufferSize : [gl.drawingBufferWidth, gl.drawingBufferHeight];
             uniformValues = (programName === 'fillOutlinePattern' && image) ?
-                fillOutlinePatternUniformValues(tileMatrix, painter, tile, drawingBufferSize) :
-                fillOutlineUniformValues(tileMatrix, drawingBufferSize);
+                fillOutlinePatternUniformValues(tileMatrix, emissiveStrength, painter, tile, drawingBufferSize) :
+                fillOutlineUniformValues(tileMatrix, emissiveStrength, drawingBufferSize);
         }
 
-        painter.prepareDrawProgram(painter.context, program, coord.toUnwrapped());
+        painter.uploadCommonUniforms(painter.context, program, coord.toUnwrapped());
 
-        program.draw(painter.context, drawMode, depthMode,
+        program.draw(painter, drawMode, depthMode,
             painter.stencilModeForClipping(coord), colorMode, CullFaceMode.disabled, uniformValues,
             layer.id, bucket.layoutVertexBuffer, indexBuffer, segments,
-            layer.paint, painter.transform.zoom, programConfiguration);
+            layer.paint, painter.transform.zoom, programConfiguration, undefined);
     }
 }

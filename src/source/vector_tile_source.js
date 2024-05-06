@@ -1,15 +1,16 @@
 // @flow
 
-import {Event, ErrorEvent, Evented} from '../util/evented';
+import {Event, ErrorEvent, Evented} from '../util/evented.js';
 
-import {extend, pick} from '../util/util';
-import loadTileJSON from './load_tilejson';
-import {postTurnstileEvent} from '../util/mapbox';
-import TileBounds from './tile_bounds';
-import {ResourceType} from '../util/ajax';
-import browser from '../util/browser';
-import {cacheEntryPossiblyAdded} from '../util/tile_request_cache';
-import {DedupedRequest, loadVectorTile} from './vector_tile_worker_source';
+import {extend, pick} from '../util/util.js';
+import loadTileJSON from './load_tilejson.js';
+import {postTurnstileEvent} from '../util/mapbox.js';
+import TileBounds from './tile_bounds.js';
+import {ResourceType} from '../util/ajax.js';
+import browser from '../util/browser.js';
+import {cacheEntryPossiblyAdded} from '../util/tile_request_cache.js';
+import {DedupedRequest, loadVectorTile} from './load_vector_tile.js';
+import {makeFQID} from '../util/fqid.js';
 
 import type {Source} from './source.js';
 import type {OverscaledTileID} from './tile_id.js';
@@ -21,9 +22,8 @@ import type {Cancelable} from '../types/cancelable.js';
 import type {VectorSourceSpecification, PromoteIdSpecification} from '../style-spec/types.js';
 import Pako from 'pako';
 import type Actor from '../util/actor.js';
-import type {LoadVectorTileResult} from './vector_tile_worker_source.js';
+import type {LoadVectorTileResult} from './load_vector_tile.js';
 import type {WorkerTileResult} from './worker_source.js';
-import window from "../util/window.js";
 
 /**
  * A source containing vector tiles in [Mapbox Vector Tile format](https://docs.mapbox.com/vector-tiles/reference/).
@@ -54,6 +54,7 @@ import window from "../util/window.js";
 class VectorTileSource extends Evented implements Source {
     type: 'vector';
     id: string;
+    scope: string;
     minzoom: number;
     maxzoom: number;
     url: string;
@@ -72,12 +73,10 @@ class VectorTileSource extends Evented implements Source {
     isTileClipped: boolean | void;
     _tileJSONRequest: ?Cancelable;
     _loaded: boolean;
-    _tileWorkers: { [string]: Actor };
+    _tileWorkers: {[string]: Actor};
     _deduped: DedupedRequest;
 
-    constructor(id: string, options: VectorSourceSpecification & {
-        collectResourceTiming: boolean
-    }, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: VectorSourceSpecification & {collectResourceTiming: boolean}, dispatcher: Dispatcher, eventedParent: Evented) {
         super();
         this.id = id;
         this.dispatcher = dispatcher;
@@ -94,7 +93,7 @@ class VectorTileSource extends Evented implements Source {
         extend(this, pick(options, ['url', 'scheme', 'tileSize', 'promoteId']));
         this._options = extend({type: 'vector'}, options);
 
-        this._collectResourceTiming = options.collectResourceTiming;
+        this._collectResourceTiming = !!options.collectResourceTiming;
 
         if (this.tileSize !== 512) {
             throw new Error('vector tile sources must have a tileSize of 512');
@@ -124,7 +123,7 @@ class VectorTileSource extends Evented implements Source {
                 if (tileJSON.bounds) this.tileBounds = new TileBounds(tileJSON.bounds, this.minzoom, this.maxzoom);
                 postTurnstileEvent(tileJSON.tiles, this.map._requestManager._customAccessToken);
 
-                // `content` is included here to prevent a race condition where `Style#_updateSources` is called
+                // `content` is included here to prevent a race condition where `Style#updateSources` is called
                 // before the TileJSON arrives. this makes sure the tiles needed are loaded once TileJSON arrives
                 // ref: https://github.com/mapbox/mapbox-gl-js/pull/4347#discussion_r104418088
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'metadata'}));
@@ -159,7 +158,8 @@ class VectorTileSource extends Evented implements Source {
     // $FlowFixMe[method-unbinding]
     reload() {
         this.cancelTileJSONRequest();
-        this.load(() => this.map.style._clearSource(this.id));
+        const fqid = makeFQID(this.id, this.scope);
+        this.load(() => this.map.style.clearSource(fqid));
     }
 
     /**
@@ -230,16 +230,18 @@ class VectorTileSource extends Evented implements Source {
             tileSize: this.tileSize * tile.tileID.overscaleFactor(),
             type: this.type,
             source: this.id,
+            scope: this.scope,
             pixelRatio: browser.devicePixelRatio,
             showCollisionBoxes: this.map.showCollisionBoxes,
             mbtiles: this._options.mbtiles,
             promoteId: this.promoteId,
-            isSymbolTile: tile.isSymbolTile
+            isSymbolTile: tile.isSymbolTile,
+            brightness: this.map.style ? (this.map.style.getBrightness() || 0.0) : 0.0,
+            extraShadowCaster: tile.isExtraShadowCaster
         };
         params.request.collectResourceTiming = this._collectResourceTiming;
 
         if (!tile.actor || tile.state === 'expired') {
-
             tile.actor = this._tileWorkers[url] = this._tileWorkers[url] || this.dispatcher.getActor();
 
             // if workers are not ready to receive messages yet, use the idle time to preemptively
@@ -255,14 +257,14 @@ class VectorTileSource extends Evented implements Source {
                             expires: data.expires,
                             rawData: data.rawData.slice(0)
                         };
-                        if (tile.actor) tile.actor.send('loadTile', params, done.bind(this));
+                        if (tile.actor) tile.actor.send('loadTile', params, done.bind(this), undefined, true);
                     }
                 }, true);
                 tile.request = {cancel};
 
             } else {
                 if (!params.mbtiles) {
-                    tile.request = tile.actor.send('loadTile', params, done.bind(this));
+                    tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
                 } else {
                     let Rurl = url.split('/'),
                         z = Rurl[0],
@@ -298,7 +300,7 @@ class VectorTileSource extends Evented implements Source {
                                 const tileDataInflated = Pako.inflate(tileDataTypedArray);
                                 params.tileData = tileDataInflated;
                                 tile.actor = this.dispatcher.getActor();
-                                tile.request = tile.actor.send('loadTile', params, done.bind(this));
+                                tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
                             }.bind(this), function (tx, e) {
                                 console.log(`Database Error: ${e.message}`);
                             });
@@ -309,6 +311,7 @@ class VectorTileSource extends Evented implements Source {
         } else if (tile.state === 'loading') {
             // schedule tile reloading after it has been loaded
             tile.reloadCallback = callback;
+
         } else {
             tile.request = tile.actor.send('reloadTile', params, done.bind(this));
         }
@@ -349,16 +352,16 @@ class VectorTileSource extends Evented implements Source {
             delete tile.request;
         }
         if (tile.actor) {
-            tile.actor.send('abortTile', {uid: tile.uid, type: this.type, source: this.id});
+            tile.actor.send('abortTile', {uid: tile.uid, type: this.type, source: this.id, scope: this.scope});
         }
     }
 
     // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile) {
-        tile.unloadVectorData();
         if (tile.actor) {
-            tile.actor.send('removeTile', {uid: tile.uid, type: this.type, source: this.id});
+            tile.actor.send('removeTile', {uid: tile.uid, type: this.type, source: this.id, scope: this.scope});
         }
+        tile.destroy();
     }
 
     hasTransition(): boolean {

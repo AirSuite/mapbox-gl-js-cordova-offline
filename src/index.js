@@ -15,8 +15,7 @@ import FullscreenControl from './ui/control/fullscreen_control.js';
 import Popup from './ui/popup.js';
 import Marker from './ui/marker.js';
 import Style from './style/style.js';
-import LngLat from './geo/lng_lat.js';
-import LngLatBounds from './geo/lng_lat_bounds.js';
+import LngLat, {LngLatBounds} from './geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
 import MercatorCoordinate from './geo/mercator_coordinate.js';
 import {Evented} from './util/evented.js';
@@ -25,10 +24,12 @@ import {Debug} from './util/debug.js';
 import {isSafari} from './util/util.js';
 import {setRTLTextPlugin, getRTLTextPluginStatus} from './source/rtl_text_plugin.js';
 import WorkerPool from './util/worker_pool.js';
+import WorkerClass from './util/worker_class.js';
 import {prewarm, clearPrewarmedResources} from './util/global_worker_pool.js';
 import {clearTileCache} from './util/tile_request_cache.js';
 import {WorkerPerformanceUtils} from './util/worker_performance_utils.js';
 import {FreeCameraOptions} from './ui/free_camera.js';
+import {getDracoUrl, setDracoUrl, setMeshoptUrl, getMeshoptUrl} from '../3d-style/util/loaders.js';
 import browser from './util/browser.js';
 
 const exported = {
@@ -194,7 +195,13 @@ const exported = {
      * ...
      * </script>
      */
-    workerUrl: '',
+    get workerUrl(): string {
+        return WorkerClass.workerUrl;
+    },
+
+    set workerUrl(url: string) {
+        WorkerClass.workerUrl = url;
+    },
 
     /**
      * Provides an interface for external module bundlers such as Webpack or Rollup to package
@@ -210,7 +217,54 @@ const exported = {
      *
      * mapboxgl.workerClass = MapboxGLWorker;
      */
-    workerClass: null,
+    get workerClass(): Object {
+        return WorkerClass.workerClass;
+    },
+
+    set workerClass(klass: Object) {
+        WorkerClass.workerClass = klass;
+    },
+
+    get workerParams(): Object {
+        return WorkerClass.workerParams;
+    },
+
+    set workerParams(params: Object) {
+        WorkerClass.workerParams = params;
+    },
+
+    /**
+     * Provides an interface for loading Draco decoding library (draco_decoder_gltf.wasm v1.5.6) from a self-hosted URL.
+     * This needs to be set only once, and before any call to `new mapboxgl.Map(..)` takes place.
+     * This is useful if your site needs to operate in a strict CSP (Content Security Policy) environment
+     * wherein you are not allowed to load JavaScript code from a [`Blob` URL](https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL), which is default behavior.
+     *
+     * See our documentation on [CSP Directives](https://docs.mapbox.com/mapbox-gl-js/api/#csp-directives) for more details.
+     *
+     * @var {string} dracoUrl
+     * @returns {string} A URL hosting Google Draco decoding library (`draco_wasm_wrapper_gltf.js` and `draco_decoder_gltf.wasm`).
+     * @example
+     * <script src='https://api.mapbox.com/mapbox-gl-js/v3.0.0/mapbox-gl.js'></script>
+     * <script>
+     * mapboxgl.dracoUrl = "https://www.gstatic.com/draco/versioned/decoders/1.5.6/draco_decoder_gltf.wasm";
+     * ...
+     * </script>
+     */
+    get dracoUrl(): string {
+        return getDracoUrl();
+    },
+
+    set dracoUrl(url: string) {
+        setDracoUrl(url);
+    },
+
+    get meshoptUrl(): string {
+        return getMeshoptUrl();
+    },
+
+    set meshoptUrl(url: string) {
+        setMeshoptUrl(url);
+    },
 
     /**
      * Sets the time used by Mapbox GL JS internally for all animations. Useful for generating videos from Mapbox GL JS.

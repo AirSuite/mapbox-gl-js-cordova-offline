@@ -17,7 +17,7 @@ import type Painter from '../painter.js';
 import browser from '../../util/browser.js';
 import {mat4} from 'gl-matrix';
 import {globeToMercatorTransition, globePixelsToTileUnits} from '../../geo/projection/globe_util.js';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 
 export type CircleUniformsType = {|
     'u_camera_to_center_distance': Uniform1f,
@@ -29,9 +29,10 @@ export type CircleUniformsType = {|
     'u_tile_id': Uniform3f,
     'u_zoom_transition': Uniform1f,
     'u_up_dir': Uniform3f,
+    'u_emissive_strength': Uniform1f,
 |};
 
-export type CircleDefinesType = 'PITCH_WITH_MAP' | 'SCALE_WITH_MAP' | 'PROJECTION_GLOBE_VIEW';
+export type CircleDefinesType = 'PITCH_WITH_MAP' | 'SCALE_WITH_MAP';
 
 const circleUniforms = (context: Context): CircleUniformsType => ({
     'u_camera_to_center_distance': new Uniform1f(context),
@@ -43,6 +44,7 @@ const circleUniforms = (context: Context): CircleUniformsType => ({
     'u_tile_id': new Uniform3f(context),
     'u_zoom_transition': new Uniform1f(context),
     'u_up_dir': new Uniform3f(context),
+    'u_emissive_strength': new Uniform1f(context),
 });
 
 const identityMatrix = mat4.create();
@@ -75,7 +77,7 @@ const circleUniformValues = (
     }
 
     const values = {
-        'u_camera_to_center_distance': transform.cameraToCenterDistance,
+        'u_camera_to_center_distance': painter.transform.getCameraToCenterDistance(transform.projection),
         'u_matrix': painter.translatePosMatrix(
             coord.projMatrix,
             tile,
@@ -87,7 +89,8 @@ const circleUniformValues = (
         'u_merc_center': [0, 0],
         'u_tile_id': [0, 0, 0],
         'u_zoom_transition': 0,
-        'u_up_dir': [0, 0, 0]
+        'u_up_dir': [0, 0, 0],
+        'u_emissive_strength': layer.paint.get('circle-emissive-strength')
     };
 
     if (isGlobe) {

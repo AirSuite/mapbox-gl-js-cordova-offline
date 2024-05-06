@@ -1,4 +1,4 @@
-// This file is generated. Edit build/generate-style-code.js, then run `yarn run codegen`.
+// This file is generated. Edit build/generate-style-code.js, then run `npm run codegen`.
 // @flow
 /* eslint-disable */
 
@@ -17,6 +17,13 @@ import type Formatted from '../../style-spec/expression/types/formatted.js';
 
 import type ResolvedImage from '../../style-spec/expression/types/resolved_image.js';
 
+export type LayoutProps = {|
+    "visibility": DataConstantProperty<"visible" | "none">,
+|};
+
+const layout: Properties<LayoutProps> = new Properties({
+    "visibility": new DataConstantProperty(styleSpec["layout_hillshade"]["visibility"]),
+});
 
 export type PaintProps = {|
     "hillshade-illumination-direction": DataConstantProperty<number>,
@@ -25,6 +32,7 @@ export type PaintProps = {|
     "hillshade-shadow-color": DataConstantProperty<Color>,
     "hillshade-highlight-color": DataConstantProperty<Color>,
     "hillshade-accent-color": DataConstantProperty<Color>,
+    "hillshade-emissive-strength": DataConstantProperty<number>,
 |};
 
 const paint: Properties<PaintProps> = new Properties({
@@ -34,11 +42,12 @@ const paint: Properties<PaintProps> = new Properties({
     "hillshade-shadow-color": new DataConstantProperty(styleSpec["paint_hillshade"]["hillshade-shadow-color"]),
     "hillshade-highlight-color": new DataConstantProperty(styleSpec["paint_hillshade"]["hillshade-highlight-color"]),
     "hillshade-accent-color": new DataConstantProperty(styleSpec["paint_hillshade"]["hillshade-accent-color"]),
+    "hillshade-emissive-strength": new DataConstantProperty(styleSpec["paint_hillshade"]["hillshade-emissive-strength"]),
 });
 
 // Note: without adding the explicit type annotation, Flow infers weaker types
 // for these objects from their use in the constructor to StyleLayer, as
 // {layout?: Properties<...>, paint: Properties<...>}
-export default ({ paint }: $Exact<{
-  paint: Properties<PaintProps>
+export default ({ paint, layout }: $Exact<{
+  paint: Properties<PaintProps>, layout: Properties<LayoutProps>
 }>);

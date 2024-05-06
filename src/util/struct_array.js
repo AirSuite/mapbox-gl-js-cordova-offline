@@ -66,6 +66,12 @@ export type StructArrayLayout = {
     alignment: ?number
 }
 
+export interface IStructArrayLayout {
+    _refreshViews(): void;
+    emplace(...args: number[]): number;
+    emplaceBack(...args: number[]): number;
+}
+
 export type SerializedStructArray = {
     length: number,
     arrayBuffer: ArrayBuffer
@@ -92,18 +98,22 @@ export type SerializedStructArray = {
  *
  * @private
  */
-class StructArray {
+class StructArray implements IStructArrayLayout {
     capacity: number;
     length: number;
     isTransferred: boolean;
     arrayBuffer: ArrayBuffer;
+    int8: Int8Array;
     uint8: Uint8Array;
+    int16: Int16Array;
+    uint16: Uint16Array;
+    int32: Int32Array;
+    uint32: Uint32Array;
+    float32: Float32Array;
 
     // The following properties are defined on the prototype.
     members: Array<StructArrayMember>;
     bytesPerElement: number;
-    +emplaceBack: Function;
-    +emplace: Function;
 
     constructor() {
         this.isTransferred = false;
@@ -117,14 +127,14 @@ class StructArray {
      * deserialization.
      * @private
      */
-    static serialize(array: StructArray, transferables?: Array<Transferable>): SerializedStructArray {
+    static serialize(array: StructArray, transferables?: Set<Transferable>): SerializedStructArray {
         assert(!array.isTransferred);
 
         array._trim();
 
         if (transferables) {
             array.isTransferred = true;
-            transferables.push(array.arrayBuffer);
+            transferables.add(array.arrayBuffer);
         }
 
         return {
@@ -155,7 +165,7 @@ class StructArray {
     }
 
     /**
-     * Resets the the length of the array to 0 without de-allocating capcacity.
+     * Resets the the length of the array to 0 without de-allocating capacity.
      */
     clear() {
         this.length = 0;
@@ -193,7 +203,15 @@ class StructArray {
      * Create TypedArray views for the current ArrayBuffer.
      */
     _refreshViews(): void {
-        throw new Error('_refreshViews() must be implemented by each concrete StructArray layout');
+        throw new Error('StructArray#_refreshViews() must be implemented by each concrete StructArray layout');
+    }
+
+    emplace(..._: number[]): number {
+        throw new Error('StructArray#emplace() must be implemented by each concrete StructArray layout');
+    }
+
+    emplaceBack(..._: number[]): number {
+        throw new Error('StructArray#emplaceBack() must be implemented by each concrete StructArray layout');
     }
 
     destroy() {

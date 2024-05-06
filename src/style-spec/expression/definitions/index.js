@@ -14,7 +14,7 @@ import {
     toString as typeToString
 } from '../types.js';
 
-import {typeOf, Color, validateRGBA, toString as valueToString} from '../values.js';
+import {typeOf, Color, validateRGBA, validateHSLA, toString as valueToString} from '../values.js';
 import CompoundExpression from '../compound_expression.js';
 import RuntimeError from '../runtime_error.js';
 import Let from './let.js';
@@ -45,6 +45,9 @@ import FormatExpression from './format.js';
 import ImageExpression from './image.js';
 import Length from './length.js';
 import Within from './within.js';
+import Config from './config.js';
+import Distance from './distance.js';
+import {mulberry32} from '../../util/random.js';
 
 import type EvaluationContext from '../evaluation_context.js';
 import type {Varargs} from '../compound_expression.js';
@@ -106,7 +109,11 @@ const expressions: ExpressionRegistry = {
     // $FlowFixMe[method-unbinding]
     'var': Var,
     // $FlowFixMe[method-unbinding]
-    'within': Within
+    'within': Within,
+    // $FlowFixMe[method-unbinding]
+    'distance': Distance,
+    // $FlowFixMe[method-unbinding]
+    'config': Config
 };
 
 function rgba(ctx: EvaluationContext, [r, g, b, a]: Array<Expression>) {
@@ -117,6 +124,19 @@ function rgba(ctx: EvaluationContext, [r, g, b, a]: Array<Expression>) {
     const error = validateRGBA(r, g, b, alpha);
     if (error) throw new RuntimeError(error);
     return new Color(r / 255 * alpha, g / 255 * alpha, b / 255 * alpha, alpha);
+}
+
+function hsla(ctx: EvaluationContext, [h, s, l, a]: Array<Expression>) {
+    h = h.evaluate(ctx);
+    s = s.evaluate(ctx);
+    l = l.evaluate(ctx);
+    const alpha = a ? a.evaluate(ctx) : 1;
+    const error = validateHSLA(h, s, l, alpha);
+    if (error) throw new RuntimeError(error);
+    const colorFunction = `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+    const color = Color.parse(colorFunction);
+    if (!color) throw new RuntimeError(`Failed to parse HSLA color: ${colorFunction}`);
+    return color;
 }
 
 function has(key: string, obj: {[string]: any}): boolean {
@@ -143,6 +163,19 @@ function binarySearch(v: any, a: {[number]: any}, i: number, j: number) {
 
 function varargs(type: Type): Varargs {
     return {type};
+}
+
+function hashString(str: string) {
+    let hash = 0;
+    if (str.length === 0) {
+        return hash;
+    }
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash;
 }
 
 CompoundExpression.register(expressions, {
@@ -172,6 +205,16 @@ CompoundExpression.register(expressions, {
         ColorType,
         [NumberType, NumberType, NumberType, NumberType],
         rgba
+    ],
+    'hsl': [
+        ColorType,
+        [NumberType, NumberType, NumberType],
+        hsla
+    ],
+    'hsla': [
+        ColorType,
+        [NumberType, NumberType, NumberType, NumberType],
+        hsla
     ],
     'has': {
         type: BooleanType,
@@ -232,6 +275,11 @@ CompoundExpression.register(expressions, {
         [],
         (ctx) => ctx.distanceFromCenter()
     ],
+    'measure-light': [
+        NumberType,
+        [StringType],
+        (ctx, [s]) => ctx.measureLight(s.evaluate(ctx))
+    ],
     'heatmap-density': [
         NumberType,
         [],
@@ -241,6 +289,16 @@ CompoundExpression.register(expressions, {
         NumberType,
         [],
         (ctx) => ctx.globals.lineProgress || 0
+    ],
+    'raster-value': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterValue || 0
+    ],
+    'raster-particle-speed': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterParticleSpeed || 0
     ],
     'sky-radial-progress': [
         NumberType,
@@ -595,7 +653,30 @@ CompoundExpression.register(expressions, {
         StringType,
         [CollatorType],
         (ctx, [collator]) => collator.evaluate(ctx).resolvedLocale()
-    ]
+    ],
+    'random': [
+        NumberType,
+        [NumberType, NumberType, ValueType],
+        (ctx, args) => {
+            const [min, max, seed] = args.map(arg => arg.evaluate(ctx));
+            if (min > max) {
+                return min;
+            }
+            if (min === max) {
+                return min;
+            }
+            let seedVal;
+            if (typeof seed === 'string') {
+                seedVal = hashString(seed);
+            } else if (typeof seed === 'number') {
+                seedVal = seed;
+            } else {
+                throw new RuntimeError(`Invalid seed input: ${seed}`);
+            }
+            const random = mulberry32(seedVal)();
+            return min + random * (max - min);
+        }
+    ],
 });
 
 export default expressions;

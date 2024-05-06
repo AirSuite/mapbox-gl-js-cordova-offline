@@ -8,10 +8,10 @@ import {StylePropertyFunction, StyleExpression, ZoomDependentExpression, ZoomCon
 import CompoundExpression from '../style-spec/expression/compound_expression.js';
 import expressions from '../style-spec/expression/definitions/index.js';
 import ResolvedImage from '../style-spec/expression/types/resolved_image.js';
-import window from './window.js';
 import {AJAXError} from './ajax.js';
 
 import type {Transferable} from '../types/transferable.js';
+import Formatted, {FormattedSection} from '../style-spec/expression/types/formatted.js';
 
 type SerializedObject = interface { [_: string]: Serialized };
 export type Serialized =
@@ -55,7 +55,7 @@ const registry: Registry = {};
 export function register<T: any>(klass: Class<T>, name: string, options: RegisterOptions<T> = {}) {
     assert(name, 'Can\'t register a class without a name.');
     assert(!registry[name], `${name} is already registered.`);
-    (Object.defineProperty: any)(klass, '_classRegistryKey', {
+    Object.defineProperty(klass, '_classRegistryKey', {
         value: name,
         writeable: false
     });
@@ -69,10 +69,10 @@ register(Object, 'Object');
 
 type SerializedGrid = { buffer: ArrayBuffer };
 
-(Grid: any).serialize = function serialize(grid: Grid, transferables?: Array<Transferable>): SerializedGrid {
+(Grid: any).serialize = function serialize(grid: Grid, transferables?: Set<Transferable>): SerializedGrid {
     const buffer = grid.toArrayBuffer();
     if (transferables) {
-        transferables.push(buffer);
+        transferables.add(buffer);
     }
     return {buffer};
 };
@@ -87,6 +87,8 @@ register(Grid, 'Grid');
 
 register(Color, 'Color');
 register(Error, 'Error');
+register(Formatted, 'Formatted');
+register(FormattedSection, 'FormattedSection');
 register(AJAXError, 'AJAXError');
 register(ResolvedImage, 'ResolvedImage');
 register(StylePropertyFunction, 'StylePropertyFunction');
@@ -105,8 +107,7 @@ function isArrayBuffer(val: any): boolean {
 }
 
 function isImageBitmap(val: any): boolean {
-    return window.ImageBitmap &&
-        val instanceof window.ImageBitmap;
+    return self.ImageBitmap && val instanceof ImageBitmap;
 }
 
 /**
@@ -117,13 +118,13 @@ function isImageBitmap(val: any): boolean {
  * with the constructor's `name` so that the appropriate constructor can be
  * looked up in `deserialize()`.
  *
- * If a `transferables` array is provided, add any transferable objects (i.e.,
+ * If a `transferables` set is provided, add any transferable objects (i.e.,
  * any ArrayBuffers or ArrayBuffer views) to the list. (If a copy is needed,
  * this should happen in the client code, before using serialize().)
  *
  * @private
  */
-export function serialize(input: mixed, transferables: ?Array<Transferable>): Serialized {
+export function serialize(input: mixed, transferables: ?Set<Transferable>): Serialized {
     if (input === null ||
         input === undefined ||
         typeof input === 'boolean' ||
@@ -139,7 +140,7 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
 
     if (isArrayBuffer(input) || isImageBitmap(input)) {
         if (transferables) {
-            transferables.push(((input: any): ArrayBuffer));
+            transferables.add(((input: any): ArrayBuffer));
         }
         return (input: any);
     }
@@ -147,14 +148,14 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
     if (ArrayBuffer.isView(input)) {
         const view: $ArrayBufferView = (input: any);
         if (transferables) {
-            transferables.push(view.buffer);
+            transferables.add(view.buffer);
         }
         return view;
     }
 
-    if (input instanceof window.ImageData) {
+    if (input instanceof ImageData) {
         if (transferables) {
-            transferables.push(input.data.buffer);
+            transferables.add(input.data.buffer);
         }
         return input;
     }
@@ -165,6 +166,14 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
             serialized.push(serialize(item, transferables));
         }
         return serialized;
+    }
+
+    if (input instanceof Map) {
+        const properties = {'$name': 'Map'};
+        for (const [key, value] of input.entries()) {
+            properties[key] = serialize(value);
+        }
+        return properties;
     }
 
     if (typeof input === 'object') {
@@ -198,7 +207,7 @@ export function serialize(input: mixed, transferables: ?Array<Transferable>): Se
             }
         } else {
             // make sure statically serialized object survives transfer of $name property
-            assert(!transferables || properties !== transferables[transferables.length - 1]);
+            assert(!transferables || !transferables.has((properties: any)));
         }
 
         if (properties['$name']) {
@@ -228,7 +237,7 @@ export function deserialize(input: Serialized): mixed {
         isArrayBuffer(input) ||
         isImageBitmap(input) ||
         ArrayBuffer.isView(input) ||
-        input instanceof window.ImageData) {
+        input instanceof ImageData) {
         return input;
     }
 
@@ -238,6 +247,17 @@ export function deserialize(input: Serialized): mixed {
 
     if (typeof input === 'object') {
         const name = (input: any).$name || 'Object';
+
+        if (name === 'Map') {
+            const map = new Map();
+            for (const key of Object.keys(input)) {
+                // $FlowFixMe[incompatible-type]
+                if (key === '$name') continue;
+                const value = (input: SerializedObject)[key];
+                map.set(key, deserialize(value));
+            }
+            return map;
+        }
 
         const {klass} = registry[name];
         if (!klass) {

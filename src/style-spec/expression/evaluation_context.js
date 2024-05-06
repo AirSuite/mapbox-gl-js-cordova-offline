@@ -7,6 +7,7 @@ import type {FormattedSection} from './types/formatted.js';
 import type {GlobalProperties, Feature, FeatureState} from './index.js';
 import type {CanonicalTileID} from '../../source/tile_id.js';
 import type {FeatureDistanceData} from '../feature_filter/index.js';
+import type {ConfigOptions, ConfigOptionValue} from '../../style/properties.js';
 
 const geometryTypes = ['Unknown', 'Point', 'LineString', 'Polygon'];
 
@@ -19,10 +20,12 @@ class EvaluationContext {
     canonical: null | CanonicalTileID;
     featureTileCoord: ?Point;
     featureDistanceData: ?FeatureDistanceData;
+    scope: ?string;
+    options: ?ConfigOptions;
 
     _parseColorCache: {[_: string]: ?Color};
 
-    constructor() {
+    constructor(scope: ?string, options: ?ConfigOptions) {
         this.globals = (null: any);
         this.feature = null;
         this.featureState = null;
@@ -32,6 +35,8 @@ class EvaluationContext {
         this.canonical = null;
         this.featureTileCoord = null;
         this.featureDistanceData = null;
+        this.scope = scope;
+        this.options = options;
     }
 
     id(): number | null {
@@ -52,6 +57,10 @@ class EvaluationContext {
 
     properties(): {[string]: any} {
         return (this.feature && this.feature.properties) || {};
+    }
+
+    measureLight(_: string): number {
+        return this.globals.brightness || 0;
     }
 
     distanceFromCenter(): number {
@@ -83,6 +92,10 @@ class EvaluationContext {
             cached = this._parseColorCache[input] = Color.parse(input);
         }
         return cached;
+    }
+
+    getConfig(id: string): ?ConfigOptionValue {
+        return this.options ? this.options.get(id) : null;
     }
 }
 

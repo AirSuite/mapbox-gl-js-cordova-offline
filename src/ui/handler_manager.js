@@ -2,7 +2,6 @@
 
 import {Event} from '../util/evented.js';
 import * as DOM from '../util/dom.js';
-import type Map from './map.js';
 import HandlerInertia from './handler_inertia.js';
 import {MapEventHandler, BlockableMapEventHandler} from './handler/map_event.js';
 import BoxZoomHandler from './handler/box_zoom.js';
@@ -19,13 +18,14 @@ import DragPanHandler from './handler/shim/drag_pan.js';
 import DragRotateHandler from './handler/shim/drag_rotate.js';
 import TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate.js';
 import {bindAll, extend} from '../util/util.js';
-import window from '../util/window.js';
 import Point from '@mapbox/point-geometry';
 import assert from 'assert';
 import {vec3} from 'gl-matrix';
 import MercatorCoordinate, {latFromMercatorY, mercatorScale} from '../geo/mercator_coordinate.js';
 
+import type Map from './map.js';
 import type {Vec3} from 'gl-matrix';
+import type {Handler, HandlerResult} from './handler.js';
 
 export type InputEvent = MouseEvent | TouchEvent | KeyboardEvent | WheelEvent;
 
@@ -81,64 +81,6 @@ class TrackingEllipsoid {
     }
 }
 
-// Handlers interpret dom events and return camera changes that should be
-// applied to the map (`HandlerResult`s). The camera changes are all deltas.
-// The handler itself should have no knowledge of the map's current state.
-// This makes it easier to merge multiple results and keeps handlers simpler.
-// For example, if there is a mousedown and mousemove, the mousePan handler
-// would return a `panDelta` on the mousemove.
-export interface Handler {
-    enable(): void;
-    disable(): void;
-    isEnabled(): boolean;
-    isActive(): boolean;
-
-    // `reset` can be called by the manager at any time and must reset everything to it's original state
-    reset(): void;
-
-    // Handlers can optionally implement these methods.
-    // They are called with dom events whenever those dom evens are received.
-    +touchstart?: (e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) => ?HandlerResult;
-    +touchmove?: (e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) => ?HandlerResult;
-    +touchend?: (e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) => ?HandlerResult;
-    +touchcancel?: (e: TouchEvent, points: Array<Point>, mapTouches: Array<Touch>) => ?HandlerResult;
-    +mousedown?: (e: MouseEvent, point: Point) => ?HandlerResult;
-    +mousemove?: (e: MouseEvent, point: Point) => ?HandlerResult;
-    +mouseup?: (e: MouseEvent, point: Point) => ?HandlerResult;
-    +dblclick?: (e: MouseEvent, point: Point) => ?HandlerResult;
-    +wheel?: (e: WheelEvent, point: Point) => ?HandlerResult;
-    +keydown?: (e: KeyboardEvent) => ?HandlerResult;
-    +keyup?: (e: KeyboardEvent) => ?HandlerResult;
-
-    // `renderFrame` is the only non-dom event. It is called during render
-    // frames and can be used to smooth camera changes (see scroll handler).
-    +renderFrame?: () => ?HandlerResult;
-}
-
-// All handler methods that are called with events can optionally return a `HandlerResult`.
-export type HandlerResult = {
-    panDelta?: Point,
-    zoomDelta?: number,
-    bearingDelta?: number,
-    pitchDelta?: number,
-    // the point to not move when changing the camera
-    around?: Point | null,
-    // same as above, except for pinch actions, which are given higher priority
-    pinchAround?: Point | null,
-    // the point to not move when changing the camera in mercator coordinates
-    aroundCoord?: MercatorCoordinate | null,
-    // A method that can fire a one-off easing by directly changing the map's camera.
-    cameraAnimation?: (map: Map) => any;
-
-    // The last three properties are needed by only one handler: scrollzoom.
-    // The DOM event to be used as the `originalEvent` on any camera change events.
-    originalEvent?: any,
-    // Makes the manager trigger a frame, allowing the handler to return multiple results over time (see scrollzoom).
-    needsRenderFrame?: boolean,
-    // The camera changes won't get recorded for inertial zooming.
-    noInertia?: boolean
-};
-
 function hasChange(result: HandlerResult) {
     return (result.panDelta && result.panDelta.mag()) || result.zoomDelta || result.bearingDelta || result.pitchDelta;
 }
@@ -155,9 +97,10 @@ class HandlerManager {
     _updatingCamera: boolean;
     _changes: Array<[HandlerResult, Object, any]>;
     _previousActiveHandlers: { [string]: Handler };
-    _listeners: Array<[HTMLElement, string, void | EventListenerOptionsOrUseCapture]>;
+    _listeners: Array<[HTMLElement | Document, string, void | EventListenerOptionsOrUseCapture]>;
     _trackingEllipsoid: TrackingEllipsoid;
     _dragOrigin: ?Vec3;
+    _originalZoom: ?number;
 
     constructor(map: Map, options: { interactive: boolean, pitchWithRotate: boolean, clickTolerance: number, bearingSnap: number}) {
         this._map = map;
@@ -203,8 +146,8 @@ class HandlerManager {
             // window-level event listeners give us the best shot at capturing events that
             // fall outside the map canvas element. Use `{capture: true}` for the move event
             // to prevent map move events from being fired during a drag.
-            [window.document, 'mousemove', {capture: true}],
-            [window.document, 'mouseup', undefined],
+            [document, 'mousemove', {capture: true}],
+            [document, 'mouseup', undefined],
 
             [el, 'mouseover', undefined],
             [el, 'mouseout', undefined],
@@ -222,7 +165,7 @@ class HandlerManager {
 
         for (const [target, type, listenerOptions] of this._listeners) {
             // $FlowFixMe[method-unbinding]
-            const listener = target === window.document ? this.handleWindowEvent : this.handleEvent;
+            const listener = target === document ? this.handleWindowEvent : this.handleEvent;
             target.addEventListener((type: any), (listener: any), listenerOptions);
         }
     }
@@ -230,7 +173,7 @@ class HandlerManager {
     destroy() {
         for (const [target, type, listenerOptions] of this._listeners) {
             // $FlowFixMe[method-unbinding]
-            const listener = target === window.document ? this.handleWindowEvent : this.handleEvent;
+            const listener = target === document ? this.handleWindowEvent : this.handleEvent;
             target.removeEventListener((type: any), (listener: any), listenerOptions);
         }
     }
@@ -318,6 +261,7 @@ class HandlerManager {
         this._inertia.clear();
         this._fireEvents({}, {}, allowEndAnimation);
         this._changes = [];
+        this._originalZoom = undefined;
     }
 
     isActive(): boolean {
@@ -506,8 +450,14 @@ class HandlerManager {
         if (eventEnded("drag") && !hasChange(combinedResult)) {
             const preZoom = tr.zoom;
             tr.cameraElevationReference = "sea";
-            tr.recenterOnTerrain();
-            tr.cameraElevationReference = "ground";
+            if (this._originalZoom != null && tr._orthographicProjectionAtLowPitch && tr.projection.name !== 'globe' && tr.pitch  === 0) {
+                // keep constant zoom from drag gesture start.
+                tr.cameraElevationReference = "ground";
+                tr.zoom = this._originalZoom;
+            } else {
+                tr.recenterOnTerrain();
+                tr.cameraElevationReference = "ground";
+            }
             // Map zoom might change during the pan operation due to terrain elevation.
             if (preZoom !== tr.zoom) this._map._update(true);
         }
@@ -534,6 +484,7 @@ class HandlerManager {
 
         if ((zoomDelta || eventStarted("drag")) && around) {
             this._dragOrigin = toVec3(tr.pointCoordinate3D(around));
+            this._originalZoom = tr.zoom;
             // Construct the tracking ellipsoid every time user changes the zoom or drag origin.
             // Direction of the ray will define size of the shape and hence defining the available range of movement
             this._trackingEllipsoid.setup(tr._camera.position, this._dragOrigin);

@@ -3,10 +3,19 @@
 import {version} from '../../package.json';
 import {asyncAll, extend, bindAll, warnOnce, uniqueId, isSafariWithAntialiasingBug} from '../util/util.js';
 import browser from '../util/browser.js';
-import window from '../util/window.js';
 import * as DOM from '../util/dom.js';
 import {getImage, getJSON, ResourceType} from '../util/ajax.js';
-import {RequestManager, getMapSessionAPI, postPerformanceEvent, postMapLoadEvent, AUTH_ERR_MSG, storeAuthState, removeAuthState} from '../util/mapbox.js';
+import {
+    RequestManager,
+    mapSessionAPI,
+    mapLoadEvent,
+    getMapSessionAPI,
+    postPerformanceEvent,
+    postMapLoadEvent,
+    AUTH_ERR_MSG,
+    storeAuthState,
+    removeAuthState
+} from '../util/mapbox.js';
 import Style from '../style/style.js';
 import EvaluationParameters from '../style/evaluation_parameters.js';
 import Painter from '../render/painter.js';
@@ -14,8 +23,7 @@ import Transform from '../geo/transform.js';
 import Hash from './hash.js';
 import HandlerManager from './handler_manager.js';
 import Camera from './camera.js';
-import LngLat from '../geo/lng_lat.js';
-import LngLatBounds from '../geo/lng_lat_bounds.js';
+import LngLat, {LngLatBounds} from '../geo/lng_lat.js';
 import Point from '@mapbox/point-geometry';
 import AttributionControl from './control/attribution_control.js';
 import LogoControl from './control/logo_control.js';
@@ -31,14 +39,16 @@ import Marker from '../ui/marker.js';
 import Popup from '../ui/popup.js';
 import EasedVariable from '../util/eased_variable.js';
 import SourceCache from '../source/source_cache.js';
-import {GLOBE_ZOOM_THRESHOLD_MAX} from '../geo/projection/globe_util.js';
+import {GLOBE_ZOOM_THRESHOLD_MAX} from '../geo/projection/globe_constants.js';
 import {setCacheLimits} from '../util/tile_request_cache.js';
 import {Debug} from '../util/debug.js';
+import config from '../util/config.js';
+import {isFQID} from '../util/fqid.js';
 
+import type {Listener} from '../util/evented.js';
 import type {PointLike} from '@mapbox/point-geometry';
 import type {RequestTransformFunction} from '../util/mapbox.js';
-import type {LngLatLike} from '../geo/lng_lat.js';
-import type {LngLatBoundsLike} from '../geo/lng_lat_bounds.js';
+import type {LngLatLike, LngLatBoundsLike} from '../geo/lng_lat.js';
 import type {StyleOptions, StyleSetterOptions} from '../style/style.js';
 import type {MapEvent, MapDataEvent} from './events.js';
 import type {CustomLayerInterface} from '../style/style_layer/custom_style_layer.js';
@@ -48,7 +58,8 @@ import type ScrollZoomHandler from './handler/scroll_zoom.js';
 import type BoxZoomHandler from './handler/box_zoom.js';
 import type {TouchPitchHandler} from './handler/touch_zoom_rotate.js';
 import type DragRotateHandler from './handler/shim/drag_rotate.js';
-import type DragPanHandler, {DragPanOptions} from './handler/shim/drag_pan.js';
+import type DragPanHandler from './handler/shim/drag_pan.js';
+import type {DragPanOptions} from './handler/shim/drag_pan.js';
 import type KeyboardHandler from './handler/keyboard.js';
 import type DoubleClickZoomHandler from './handler/shim/dblclick_zoom.js';
 import type TouchZoomRotateHandler from './handler/shim/touch_zoom_rotate.js';
@@ -60,17 +71,25 @@ import type {
     FilterSpecification,
     StyleSpecification,
     LightSpecification,
+    FlatLightSpecification,
+    LightsSpecification,
     TerrainSpecification,
     FogSpecification,
     SourceSpecification,
     ProjectionSpecification,
     PropertyValueSpecification,
-    TransitionSpecification
+    TransitionSpecification,
+    CameraSpecification,
+    ImportSpecification
 } from '../style-spec/types.js';
 import type StyleLayer from '../style/style_layer.js';
 import type {Source} from '../source/source.js';
 import type {QueryFeature} from '../util/vectortile_to_geojson.js';
 import type {QueryResult} from '../data/feature_index.js';
+import type {EasingOptions} from './camera.js';
+import type {ContextOptions} from '../gl/context.js';
+
+import * as TP from '../tracked-parameters/tracked_parameters.js';
 
 export type ControlPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 /* eslint-disable no-use-before-define */
@@ -89,10 +108,13 @@ export const AVERAGE_ELEVATION_EASE_THRESHOLD = 1; // meters
 export const AVERAGE_ELEVATION_CHANGE_THRESHOLD = 1e-4; // meters
 
 type MapOptions = {
+    style: StyleSpecification | string | void,
     hash?: boolean | string,
     interactive?: boolean,
     container: HTMLElement | string,
     bearingSnap?: number,
+    clickTolerance?: number,
+    pitchWithRotate?: boolean,
     attributionControl?: boolean,
     customAttribution?: string | Array<string>,
     logoPosition?: ControlPosition,
@@ -100,7 +122,9 @@ type MapOptions = {
     preserveDrawingBuffer?: boolean,
     antialias?: boolean,
     refreshExpiredTiles?: boolean,
+    bounds?: LngLatBoundsLike,
     maxBounds?: LngLatBoundsLike,
+    fitBoundsOptions?: EasingOptions,
     scrollZoom?: boolean,
     minZoom?: ?number,
     maxZoom?: ?number,
@@ -119,7 +143,7 @@ type MapOptions = {
     zoom?: number,
     bearing?: number,
     pitch?: number,
-    optimizeForTerrain?: boolean,
+    projection?: ProjectionSpecification | string,
     renderWorldCopies?: boolean,
     minTileCacheSize?: number,
     maxTileCacheSize?: number,
@@ -127,9 +151,13 @@ type MapOptions = {
     accessToken: string,
     testMode: ?boolean,
     locale?: Object,
-    projection?: ProjectionSpecification | string,
     language?: string,
-    worldview?: string
+    worldview?: string,
+    crossSourceCollisions?: boolean,
+    collectResourceTiming?: boolean,
+    respectPrefersReducedMotion?: boolean,
+    contextCreateOptions?: ContextOptions,
+    devtools?: boolean
 };
 
 const defaultMinZoom = -2;
@@ -170,10 +198,10 @@ const defaultOptions = {
     hash: false,
     attributionControl: true,
 
+    antialias: false,
     failIfMajorPerformanceCaveat: false,
     preserveDrawingBuffer: false,
     trackResize: true,
-    optimizeForTerrain: true,
     renderWorldCopies: true,
     refreshExpiredTiles: true,
     minTileCacheSize: null,
@@ -184,8 +212,39 @@ const defaultOptions = {
     accessToken: null,
     fadeDuration: 300,
     respectPrefersReducedMotion: true,
-    crossSourceCollisions: true
+    crossSourceCollisions: true,
+    collectResourceTiming: false,
+    testMode: false,
 };
+
+class DebugParams {
+    showOverdrawInspector: boolean;
+    showTileBoundaries: boolean;
+    showParseStatus: boolean;
+    continuousRedraw: boolean;
+
+    showTileAABBs: boolean;
+    showPadding: boolean;
+
+    showTerrainWireframe: boolean;
+    showLayers2DWireframe: boolean;
+    showLayers3DWireframe: boolean;
+
+    constructor() {
+        this.showOverdrawInspector = false;
+        this.showTileBoundaries = false;
+        this.showParseStatus = false;
+
+        this.continuousRedraw = false;
+
+        this.showTileAABBs = false;
+        this.showPadding = false;
+
+        this.showTerrainWireframe = false;
+        this.showLayers2DWireframe = false;
+        this.showLayers3DWireframe = false;
+    }
+}
 
 /**
  * The `Map` object represents the map on your page. It exposes methods
@@ -203,7 +262,7 @@ const defaultOptions = {
  * @param {number} [options.maxZoom=22] The maximum zoom level of the map (0-24).
  * @param {number} [options.minPitch=0] The minimum pitch of the map (0-85).
  * @param {number} [options.maxPitch=85] The maximum pitch of the map (0-85).
- * @param {Object | string} options.style The map's Mapbox style. This must be an a JSON object conforming to
+ * @param {Object | string} [options.style='mapbox://styles/mapbox/standard'] The map's Mapbox style. This must be an a JSON object conforming to
  *     the schema described in the [Mapbox Style Specification](https://mapbox.com/mapbox-gl-style-spec/), or a URL
  *     to such JSON. Can accept a null value to allow adding a style manually.
  *
@@ -211,12 +270,13 @@ const defaultOptions = {
  *     where `:owner` is your Mapbox account name and `:style` is the style ID. You can also use a
  *     [Mapbox-owned style](https://docs.mapbox.com/api/maps/styles/#mapbox-styles):
  *
- *     * `mapbox://styles/mapbox/streets-v11`
- *     * `mapbox://styles/mapbox/outdoors-v11`
- *     * `mapbox://styles/mapbox/light-v10`
- *     * `mapbox://styles/mapbox/dark-v10`
+ *     * `mapbox://styles/mapbox/standard`
+ *     * `mapbox://styles/mapbox/streets-v12`
+ *     * `mapbox://styles/mapbox/outdoors-v12`
+ *     * `mapbox://styles/mapbox/light-v11`
+ *     * `mapbox://styles/mapbox/dark-v11`
  *     * `mapbox://styles/mapbox/satellite-v9`
- *     * `mapbox://styles/mapbox/satellite-streets-v11`
+ *     * `mapbox://styles/mapbox/satellite-streets-v12`
  *     * `mapbox://styles/mapbox/navigation-day-v1`
  *     * `mapbox://styles/mapbox/navigation-night-v1`.
  *
@@ -240,7 +300,6 @@ const defaultOptions = {
  * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`, map creation will fail if the performance of Mapbox GL JS would be dramatically worse than expected (a software renderer would be used).
  * @param {boolean} [options.preserveDrawingBuffer=false] If `true`, the map's canvas can be exported to a PNG using `map.getCanvas().toDataURL()`. This is `false` by default as a performance optimization.
  * @param {boolean} [options.antialias=false] If `true`, the gl context will be created with [MSAA antialiasing](https://en.wikipedia.org/wiki/Multisample_anti-aliasing), which can be useful for antialiasing custom layers. This is `false` by default as a performance optimization.
- * @param {boolean} [options.useWebGL2=false] This is an experimental feature. If true and device's capabilities support it, WebGL 2 context will be created.
  * @param {boolean} [options.refreshExpiredTiles=true] If `false`, the map won't attempt to re-request tiles once they expire per their HTTP `cacheControl`/`expires` headers.
  * @param {LngLatBoundsLike} [options.maxBounds=null] If set, the map will be constrained to the given bounds.
  * @param {boolean|Object} [options.scrollZoom=true] If `true`, the "scroll to zoom" interaction is enabled. An `Object` value is passed as options to {@link ScrollZoomHandler#enable}.
@@ -259,7 +318,7 @@ const defaultOptions = {
  * @param {number} [options.bearing=0] The initial [bearing](https://docs.mapbox.com/help/glossary/camera#bearing) (rotation) of the map, measured in degrees counter-clockwise from north. If `bearing` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `0`.
  * @param {number} [options.pitch=0] The initial [pitch](https://docs.mapbox.com/help/glossary/camera#pitch) (tilt) of the map, measured in degrees away from the plane of the screen (0-85). If `pitch` is not specified in the constructor options, Mapbox GL JS will look for it in the map's style object. If it is not specified in the style, either, it will default to `0`.
  * @param {LngLatBoundsLike} [options.bounds=null] The initial bounds of the map. If `bounds` is specified, it overrides `center` and `zoom` constructor options.
- * @param {Object} [options.fitBoundsOptions] A {@link Map#fitBounds} options object to use _only_ when fitting the initial `bounds` provided above.
+ * @param {Object} [options.fitBoundsOptions=null] A {@link Map#fitBounds} options object to use _only_ when fitting the initial `bounds` provided above.
  * @param {'auto' | string | string[]} [options.language=null] A string with a BCP 47 language tag, or an array of such strings representing the desired languages used for the map's labels and UI components. Languages can only be set on Mapbox vector tile sources.
  *     By default, GL JS will not set a language so that the language of Mapbox tiles will be determined by the vector tile source's TileJSON.
  *     Valid language strings must be a [BCP-47 language code](https://en.wikipedia.org/wiki/IETF_language_tag#List_of_subtags). Unsupported BCP-47 codes will not include any translations. Invalid codes will result in an recoverable error.
@@ -270,7 +329,6 @@ const defaultOptions = {
  *     are rendered. By default, GL JS will not set a worldview so that the worldview of Mapbox tiles will be determined by the vector tile source's TileJSON.
  *     Valid worldview strings must be an [ISO alpha-2 country code](https://en.wikipedia.org/wiki/ISO_3166-1#Current_codes). Unsupported
  *     ISO alpha-2 codes will fall back to the TileJSON's default worldview. Invalid codes will result in a recoverable error.
- * @param {boolean} [options.optimizeForTerrain=true] With terrain on, if `true`, the map will render for performance priority, which may lead to layer reordering allowing to maximize performance (layers that are draped over terrain will be drawn first, including fill, line, background, hillshade and raster). Otherwise, if set to `false`, the map will always be drawn for layer order priority.
  * @param {boolean} [options.renderWorldCopies=true] If `true`, multiple copies of the world will be rendered side by side beyond -180 and 180 degrees longitude. If set to `false`:
  *     - When the map is zoomed out far enough that a single representation of the world does not fill the map's entire
  *     container, there will be blank space beyond 180 and -180 degrees longitude.
@@ -282,7 +340,7 @@ const defaultOptions = {
  *     In these ranges, font settings from the map's style will be ignored, except for font-weight keywords (light/regular/medium/bold).
  *     Set to `false`, to enable font settings from the map's style for these glyph ranges. Note that [Mapbox Studio](https://studio.mapbox.com/) sets this value to `false` by default.
  *     The purpose of this option is to avoid bandwidth-intensive glyph server requests. For an example of this option in use, see [Use locally generated ideographs](https://www.mapbox.com/mapbox-gl-js/example/local-ideographs).
- * @param {string} [options.localFontFamily=false] Defines a CSS
+ * @param {string} [options.localFontFamily=null] Defines a CSS
  *     font-family for locally overriding generation of all glyphs. Font settings from the map's style will be ignored, except for font-weight keywords (light/regular/medium/bold).
  *     If set, this option overrides the setting in localIdeographFontFamily.
  * @param {RequestTransformFunction} [options.transformRequest=null] A callback run before the Map makes a request for an external URL. The callback can be used to modify the url, set headers, or set the credentials property for cross-origin requests.
@@ -340,7 +398,12 @@ class Map extends Camera {
     _controlPositions: {[_: string]: HTMLElement};
     _interactive: ?boolean;
     _showTileBoundaries: ?boolean;
+    _showParseStatus: ?boolean;
+
     _showTerrainWireframe: ?boolean;
+    _showLayers2DWireframe: ?boolean;
+    _showLayers3DWireframe: ?boolean;
+
     _showQueryGeometry: ?boolean;
     _showCollisionBoxes: ?boolean;
     _showPadding: ?boolean;
@@ -349,8 +412,8 @@ class Map extends Camera {
     _repaint: ?boolean;
     _vertices: ?boolean;
     _canvas: HTMLCanvasElement;
-    _minTileCacheSize: number;
-    _maxTileCacheSize: number;
+    _minTileCacheSize: ?number;
+    _maxTileCacheSize: ?number;
     _frame: ?Cancelable;
     _renderNextFrame: ?boolean;
     _styleDirty: ?boolean;
@@ -362,7 +425,6 @@ class Map extends Camera {
     _preserveDrawingBuffer: boolean;
     _failIfMajorPerformanceCaveat: boolean;
     _antialias: boolean;
-    _useWebGL2: boolean;
     _refreshExpiredTiles: boolean;
     _hash: Hash;
     _delegatedListeners: any;
@@ -372,7 +434,6 @@ class Map extends Camera {
     _fadeDuration: number;
     _crossSourceCollisions: boolean;
     _collectResourceTiming: boolean;
-    _optimizeForTerrain: boolean;
     _renderTaskQueue: TaskQueue;
     _domRenderTaskQueue: TaskQueue;
     _controls: Array<IControl>;
@@ -381,7 +442,7 @@ class Map extends Camera {
     _logoControl: IControl;
     _mapId: number;
     _localIdeographFontFamily: string;
-    _localFontFamily: string;
+    _localFontFamily: ?string;
     _requestManager: RequestManager;
     _locale: Object;
     _removed: boolean;
@@ -454,10 +515,16 @@ class Map extends Camera {
      */
     touchPitch: TouchPitchHandler;
 
+    _contextCreateOptions: ContextOptions;
+    _tp: TP.TrackedParameters | TP.TrackedParametersMock;
+    _debugParams: DebugParams;
+
     constructor(options: MapOptions) {
         LivePerformanceUtils.mark(PerformanceMarkers.create);
 
-        options = extend({}, defaultOptions, options);
+        const initialOptions = options;
+
+        options = (extend({}, defaultOptions, options): typeof defaultOptions & MapOptions);
 
         if (options.minZoom != null && options.maxZoom != null && options.minZoom > options.maxZoom) {
             throw new Error(`maxZoom must be greater than or equal to minZoom`);
@@ -484,13 +551,13 @@ class Map extends Camera {
         const transform = new Transform(options.minZoom, options.maxZoom, options.minPitch, options.maxPitch, options.renderWorldCopies);
         super(transform, options);
 
+        this._repaint = false;
         this._interactive = options.interactive;
         this._minTileCacheSize = options.minTileCacheSize;
         this._maxTileCacheSize = options.maxTileCacheSize;
         this._failIfMajorPerformanceCaveat = options.failIfMajorPerformanceCaveat;
         this._preserveDrawingBuffer = options.preserveDrawingBuffer;
         this._antialias = options.antialias;
-        this._useWebGL2 = options.useWebGL2;
         this._trackResize = options.trackResize;
         this._bearingSnap = options.bearingSnap;
         this._refreshExpiredTiles = options.refreshExpiredTiles;
@@ -498,7 +565,6 @@ class Map extends Camera {
         this._isInitialLoad = true;
         this._crossSourceCollisions = options.crossSourceCollisions;
         this._collectResourceTiming = options.collectResourceTiming;
-        this._optimizeForTerrain = options.optimizeForTerrain;
         this._language = this._parseLanguage(options.language);
         this._worldview = options.worldview;
         this._renderTaskQueue = new TaskQueue();
@@ -513,6 +579,7 @@ class Map extends Camera {
         this._performanceMetricsCollection = options.performanceMetricsCollection;
         this._containerWidth = 0;
         this._containerHeight = 0;
+        this._showParseStatus = true;
 
         this._averageElevationLastSampledAt = -Infinity;
         this._averageElevationExaggeration = 0;
@@ -525,14 +592,21 @@ class Map extends Camera {
 
         this._requestManager = new RequestManager(options.transformRequest, options.accessToken, options.testMode);
         this._silenceAuthErrors = !!options.testMode;
+        if (options.contextCreateOptions) {
+            this._contextCreateOptions = {...options.contextCreateOptions};
+        } else {
+            this._contextCreateOptions = {};
+        }
 
         if (typeof options.container === 'string') {
-            this._container = window.document.getElementById(options.container);
-
-            if (!this._container) {
-                throw new Error(`Container '${options.container}' not found.`);
+            const container = document.getElementById(options.container);
+            if (container) {
+                this._container = container;
+            } else {
+                throw new Error(`Container '${options.container.toString()}' not found.`);
             }
-        } else if (options.container instanceof window.HTMLElement) {
+
+        } else if (options.container instanceof HTMLElement) {
             this._container = options.container;
         } else {
             throw new Error(`Invalid type: 'container' must be a String or HTMLElement.`);
@@ -556,6 +630,22 @@ class Map extends Camera {
         ], this);
 
         this._setupContainer();
+        this._debugParams = new DebugParams();
+        if (options.devtools) {
+            this._tp = new TP.TrackedParameters(this);
+        } else {
+            this._tp = new TP.TrackedParametersMock();
+        }
+        this._tp.registerParameter(this._debugParams, ["Debug"], "showOverdrawInspector", undefined, () => { this._update(); });
+        this._tp.registerParameter(this._debugParams, ["Debug"], "showTileBoundaries", undefined, () => { this._update(); });
+        this._tp.registerParameter(this._debugParams, ["Debug"], "showParseStatus", undefined, () => { this._update(); });
+        this._tp.registerParameter(this._debugParams, ["Debug"], "continuousRedraw", undefined, (value) => { this.repaint = value; });
+        this._tp.registerParameter(this._debugParams, ["Debug"], "showTileAABBs", undefined, (value) => { this.showTileAABBs = value; });
+        this._tp.registerParameter(this._debugParams, ["Debug"], "showPadding", undefined, (value) => { this.showPadding = value; });
+        this._tp.registerParameter(this._debugParams, ["Debug", "Wireframe"], "showTerrainWireframe", undefined, () => { this._update(); });
+        this._tp.registerParameter(this._debugParams, ["Debug", "Wireframe"], "showLayers2DWireframe", undefined, () => { this._update(); });
+        this._tp.registerParameter(this._debugParams, ["Debug", "Wireframe"], "showLayers3DWireframe", undefined, () => { this._update(); });
+
         this._setupPainter();
         if (this.painter === undefined) {
             throw new Error(`Failed to initialize WebGL.`);
@@ -565,30 +655,29 @@ class Map extends Camera {
         this.on('moveend', () => this._update(false));
         this.on('zoom', () => this._update(true));
 
-        if (typeof window !== 'undefined') {
-            this._fullscreenchangeEvent = 'onfullscreenchange' in window.document ?
-                'fullscreenchange' :
-                'webkitfullscreenchange';
+        this._fullscreenchangeEvent = 'onfullscreenchange' in document ?
+            'fullscreenchange' :
+            'webkitfullscreenchange';
 
-            // $FlowFixMe[method-unbinding]
-            window.addEventListener('online', this._onWindowOnline, false);
-            // $FlowFixMe[method-unbinding]
-            window.addEventListener('resize', this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.addEventListener('orientationchange', this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.addEventListener(this._fullscreenchangeEvent, this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.addEventListener('visibilitychange', this._onVisibilityChange, false);
-        }
+        // $FlowFixMe[method-unbinding]
+        window.addEventListener('online', this._onWindowOnline, false);
+        // $FlowFixMe[method-unbinding]
+        window.addEventListener('resize', this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.addEventListener('orientationchange', this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.addEventListener(this._fullscreenchangeEvent, this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.addEventListener('visibilitychange', this._onVisibilityChange, false);
 
         this.handlers = new HandlerManager(this, options);
 
         this._localFontFamily = options.localFontFamily;
         this._localIdeographFontFamily = options.localIdeographFontFamily;
 
-        if (options.style) {
-            this.setStyle(options.style, {localFontFamily: this._localFontFamily, localIdeographFontFamily: this._localIdeographFontFamily});
+        if (options.style || !options.testMode) {
+            const style = options.style || config.DEFAULT_STYLE;
+            this.setStyle(style, {localFontFamily: this._localFontFamily, localIdeographFontFamily: this._localIdeographFontFamily});
         }
 
         if (options.projection) {
@@ -596,9 +685,14 @@ class Map extends Camera {
         }
 
         const hashName = (typeof options.hash === 'string' && options.hash) || undefined;
-        this._hash = options.hash && (new Hash(hashName)).addTo(this);
+        if (options.hash) this._hash = (new Hash(hashName)).addTo(this);
         // don't set position from options if set through hash
         if (!this._hash || !this._hash._onHashChange()) {
+            // if we set `center`/`zoom` explicitly, mark as modified even if the values match defaults
+            if (initialOptions.center != null || initialOptions.zoom != null) {
+                this.transform._unmodified = false;
+            }
+
             this.jumpTo({
                 center: options.center,
                 zoom: options.zoom,
@@ -606,9 +700,10 @@ class Map extends Camera {
                 pitch: options.pitch
             });
 
-            if (options.bounds) {
+            const bounds = options.bounds;
+            if (bounds) {
                 this.resize();
-                this.fitBounds(options.bounds, extend({}, options.fitBoundsOptions, {duration: 0}));
+                this.fitBounds(bounds, extend({}, options.fitBoundsOptions, {duration: 0}));
             }
         }
 
@@ -1097,10 +1192,10 @@ class Map extends Camera {
     }
 
     _parseLanguage(language?: 'auto' | ?string | ?string[]): ?string | ?string[] {
-        if (language === 'auto') return window.navigator.language;
+        if (language === 'auto') return navigator.language;
         if (Array.isArray(language)) return language.length === 0 ?
             undefined :
-            language.map(l => l === 'auto' ? window.navigator.language : l);
+            language.map(l => l === 'auto' ? navigator.language : l);
 
         return language;
     }
@@ -1133,7 +1228,7 @@ class Map extends Camera {
         if (!this.style || newLanguage === this._language) return this;
         this._language = newLanguage;
 
-        this.style._reloadSources();
+        this.style.reloadSources();
 
         for (const control of this._controls) {
             if (control._setLanguage) {
@@ -1176,7 +1271,7 @@ class Map extends Camera {
         if (!this.style || worldview === this._worldview) return this;
 
         this._worldview = worldview;
-        this.style._reloadSources();
+        this.style.reloadSources();
 
         return this;
     }
@@ -1234,8 +1329,7 @@ class Map extends Camera {
         }
 
         this._useExplicitProjection = !!projection;
-        const stylesheetProjection = this.style.stylesheet ? this.style.stylesheet.projection : null;
-        return this._prioritizeAndUpdateProjection(projection, stylesheetProjection);
+        return this._prioritizeAndUpdateProjection(projection, this.style.projection);
     }
 
     _updateProjectionTransition() {
@@ -1285,9 +1379,8 @@ class Map extends Camera {
 
         if (projectionHasChanged) {
             this.painter.clearBackgroundTiles();
-            for (const id in this.style._sourceCaches) {
-                this.style._sourceCaches[id].clearTiles();
-            }
+            this.style.clearSources();
+
             this._update(true);
             this._forceMarkerAndPopupUpdate(true);
         }
@@ -1539,7 +1632,7 @@ class Map extends Camera {
      * @see [Example: Create a hover effect](https://docs.mapbox.com/mapbox-gl-js/example/hover-styles/)
      * @see [Example: Display popup on click](https://docs.mapbox.com/mapbox-gl-js/example/popup-on-click/)
      */
-    on(type: MapEvent, layerIds: any, listener: any): this {
+    on(type: MapEvent, layerIds: any, listener?: Listener): this {
         if (listener === undefined) {
             return super.on(type, layerIds);
         }
@@ -1547,6 +1640,15 @@ class Map extends Camera {
         if (!Array.isArray(layerIds)) {
             layerIds = [layerIds];
         }
+
+        if (layerIds) {
+            for (const layerId of layerIds) {
+                if (!this._isValidId(layerId)) {
+                    return this;
+                }
+            }
+        }
+
         const delegatedListener = this._createDelegatedListener(type, layerIds, listener);
 
         this._delegatedListeners = this._delegatedListeners || {};
@@ -1599,7 +1701,7 @@ class Map extends Camera {
      * @see [Example: Animate the camera around a point with 3D terrain](https://docs.mapbox.com/mapbox-gl-js/example/free-camera-point/)
      * @see [Example: Play map locations as a slideshow](https://docs.mapbox.com/mapbox-gl-js/example/playback-locations/)
      */
-    once(type: MapEvent, layerIds: any, listener: any): this | Promise<Event> {
+    once(type: MapEvent, layerIds: any, listener?: Listener): this | Promise<Event> {
 
         if (listener === undefined) {
             return super.once(type, layerIds);
@@ -1608,6 +1710,15 @@ class Map extends Camera {
         if (!Array.isArray(layerIds)) {
             layerIds = [layerIds];
         }
+
+        if (layerIds) {
+            for (const layerId of layerIds) {
+                if (!this._isValidId(layerId)) {
+                    return this;
+                }
+            }
+        }
+
         const delegatedListener = this._createDelegatedListener(type, layerIds, listener);
 
         for (const event in delegatedListener.delegates) {
@@ -1642,12 +1753,18 @@ class Map extends Camera {
      * });
      * @see [Example: Create a draggable point](https://docs.mapbox.com/mapbox-gl-js/example/drag-a-point/)
      */
-    off(type: MapEvent, layerIds: any, listener: any): this {
+    off(type: MapEvent, layerIds: any, listener?: Listener): this {
         if (listener === undefined) {
             return super.off(type, layerIds);
         }
 
         layerIds = new Set(Array.isArray(layerIds) ? layerIds : [layerIds]);
+        for (const layerId of layerIds) {
+            if (!this._isValidId(layerId)) {
+                return this;
+            }
+        }
+
         const areLayerArraysEqual = (hash1: Set<string>, hash2: Set<string>) => {
             if (hash1.size !== hash2.size) {
                 return false; // at-least 1 arr has duplicate value(s)
@@ -1784,6 +1901,14 @@ class Map extends Camera {
         options = options || {};
         geometry = geometry || [([0, 0]: PointLike), ([this.transform.width, this.transform.height]: PointLike)];
 
+        if (options.layers && Array.isArray(options.layers)) {
+            for (const layerId of options.layers) {
+                if (!this._isValidId(layerId)) {
+                    return [];
+                }
+            }
+        }
+
         return this.style.queryRenderedFeatures(geometry, options, this.transform);
     }
 
@@ -1825,6 +1950,10 @@ class Map extends Camera {
      * @see [Example: Highlight features containing similar data](https://www.mapbox.com/mapbox-gl-js/example/query-similar-features/)
      */
     querySourceFeatures(sourceId: string, parameters: ?{sourceLayer: ?string, filter: ?Array<any>, validate?: boolean}): Array<QueryFeature> {
+        if (!this._isValidId(sourceId)) {
+            return [];
+        }
+
         return this.style.querySourceFeatures(sourceId, parameters);
     }
 
@@ -1987,6 +2116,21 @@ class Map extends Camera {
         return this.style.loaded();
     }
 
+    _isValidId(id: ?string): boolean {
+        if (id == null) {
+            this.fire(new ErrorEvent(new Error(`IDs can't be empty.`)));
+            return false;
+        }
+
+        // Disallow using fully qualified IDs in the public APIs
+        if (isFQID(id)) {
+            this.fire(new ErrorEvent(new Error(`IDs can't contain special symbols: "${id}".`)));
+            return false;
+        }
+
+        return true;
+    }
+
     /** @section {Sources} */
 
     /**
@@ -2022,6 +2166,10 @@ class Map extends Camera {
      * @see Example: Raster DEM source: [Add hillshading](https://docs.mapbox.com/mapbox-gl-js/example/hillshade/)
      */
     addSource(id: string, source: SourceSpecification): this {
+        if (!this._isValidId(id)) {
+            return this;
+        }
+
         this._lazyInitEmptyStyle();
         this.style.addSource(id, source);
         return this._update(true);
@@ -2037,6 +2185,10 @@ class Map extends Camera {
      * const sourceLoaded = map.isSourceLoaded('bathymetry-data');
      */
     isSourceLoaded(id: string): boolean {
+        if (!this._isValidId(id)) {
+            return false;
+        }
+
         return !!this.style && this.style._isSourceCacheLoaded(id);
     }
 
@@ -2048,18 +2200,8 @@ class Map extends Camera {
      * @example
      * const tilesLoaded = map.areTilesLoaded();
      */
-
     areTilesLoaded(): boolean {
-        const sources = this.style && this.style._sourceCaches;
-        for (const id in sources) {
-            const source = sources[id];
-            const tiles = source._tiles;
-            for (const t in tiles) {
-                const tile = tiles[t];
-                if (!(tile.state === 'loaded' || tile.state === 'errored')) return false;
-            }
-        }
-        return true;
+        return this.style.areTilesLoaded();
     }
 
     /**
@@ -2084,6 +2226,10 @@ class Map extends Camera {
      * map.removeSource('bathymetry-data');
      */
     removeSource(id: string): this {
+        if (!this._isValidId(id)) {
+            return this;
+        }
+
         this.style.removeSource(id);
         this._updateTerrain();
         return this._update(true);
@@ -2110,7 +2256,11 @@ class Map extends Camera {
      * @see [Example: Add live realtime data](https://docs.mapbox.com/mapbox-gl-js/example/live-geojson/)
      */
     getSource(id: string): ?Source {
-        return this.style.getSource(id);
+        if (!this._isValidId(id)) {
+            return null;
+        }
+
+        return this.style.getOwnSource(id);
     }
 
     /** @section {Images} */
@@ -2166,7 +2316,7 @@ class Map extends Camera {
         this._lazyInitEmptyStyle();
         const version = 0;
 
-        if (image instanceof window.HTMLImageElement || (window.ImageBitmap && image instanceof window.ImageBitmap)) {
+        if (image instanceof HTMLImageElement || (ImageBitmap && image instanceof ImageBitmap)) {
             const {width, height, data} = browser.getImageData(image);
             this.style.addImage(id, {data: new RGBAImage({width, height}, data), pixelRatio, stretchX, stretchY, content, sdf, version});
         } else if (image.width === undefined || image.height === undefined) {
@@ -2219,6 +2369,7 @@ class Map extends Camera {
      */
     updateImage(id: string,
         image: HTMLImageElement | ImageBitmap | ImageData | {width: number, height: number, data: Uint8Array | Uint8ClampedArray} | StyleImageInterface) {
+        this._lazyInitEmptyStyle();
 
         const existingImage = this.style.getImage(id);
         if (!existingImage) {
@@ -2226,7 +2377,7 @@ class Map extends Camera {
                 'The map has no image with that id. If you are adding a new image use `map.addImage(...)` instead.')));
             return;
         }
-        const imageData = (image instanceof window.HTMLImageElement || (window.ImageBitmap && image instanceof window.ImageBitmap)) ? browser.getImageData(image) : image;
+        const imageData = (image instanceof HTMLImageElement || (ImageBitmap && image instanceof ImageBitmap)) ? browser.getImageData(image) : image;
         const {width, height} = imageData;
         // Flow can't refine the type enough to exclude ImageBitmap
         const data = ((imageData: any).data: Uint8Array | Uint8ClampedArray);
@@ -2246,7 +2397,7 @@ class Map extends Camera {
             return;
         }
 
-        const copy = !(image instanceof window.HTMLImageElement || (window.ImageBitmap && image instanceof window.ImageBitmap));
+        const copy = !(image instanceof HTMLImageElement || (ImageBitmap && image instanceof ImageBitmap));
         existingImage.data.replace(data, copy);
 
         this.style.updateImage(id, existingImage);
@@ -2270,6 +2421,8 @@ class Map extends Camera {
             this.fire(new ErrorEvent(new Error('Missing required image id')));
             return false;
         }
+
+        if (!this.style) return false;
 
         return !!this.style.getImage(id);
     }
@@ -2309,7 +2462,7 @@ class Map extends Camera {
      */
     loadImage(url: string, callback: Function) {
         getImage(this._requestManager.transformRequest(url, ResourceType.Image), (err, img) => {
-            callback(err, img instanceof window.HTMLImageElement ? browser.getImageData(img) : img);
+            callback(err, img instanceof HTMLImageElement ? browser.getImageData(img) : img);
         });
     }
 
@@ -2327,6 +2480,95 @@ class Map extends Camera {
         return this.style.listImages();
     }
 
+    /**
+     * @section {Models}
+     * @private
+     */
+
+    // eslint-disable-next-line jsdoc/require-returns
+    /**
+     * Add a model to the style. This model can be displayed on the map like any other model in the style
+     * using the model ID in conjunction with a 2D vector layer. This API can also be used for updating
+     * a model. If the model for a given `modelId` was already added, it gets replaced by the new model.
+     *
+     * @param {string} id The ID of the model.
+     * @param {string} url Pointing to the model to load.
+     *
+     * @example
+     * // If the style does not already contain a model with ID 'tree',
+     * // load a tree model and then use a geojson to show it.
+     * map.addModel('tree', 'http://path/to/my/tree.glb');
+     * map.addLayer({
+     *     "id": "tree-layer",
+     *     "type": "model",
+     *     "source": "trees",
+     *     "source-layer": "trees",
+     *     "layout": {
+     *         "model-id": "tree"
+     *     }
+     *});
+     *
+     * @private
+     */
+    addModel(id: string, url: string) {
+        this._lazyInitEmptyStyle();
+        this.style.addModel(id, url);
+    }
+
+    /**
+     * Check whether or not a model with a specific ID exists in the style. This checks both models
+     * in the style and any models that have been added at runtime using {@link Map#addModel}.
+     *
+     * @param {string} id The ID of the model.
+     *
+     * @returns {boolean} A Boolean indicating whether the model exists.
+     * @example
+     * // Check if a model with the ID 'tree' exists in
+     * // the style.
+     * const treeModelExists = map.hasModel('tree');
+     *
+     * @private
+     */
+    hasModel(id: string): boolean {
+        if (!id) {
+            this.fire(new ErrorEvent(new Error('Missing required model id')));
+            return false;
+        }
+        return this.style.hasModel(id);
+    }
+
+    /**
+     * Remove an model from a style. This can be a model from the style original
+     *  or any models that have been added at runtime using {@link Map#addModel}.
+     *
+     * @param {string} id The ID of the model.
+     *
+     * @example
+     * // If an model with the ID 'tree' exists in
+     * // the style, remove it.
+     * if (map.hasModel('tree')) map.removeModel('tree');
+     *
+     * @private
+     */
+    removeModel(id: string) {
+        this.style.removeModel(id);
+    }
+
+    /**
+    * Returns an Array of strings containing the IDs of all models currently available in the map.
+    * This includes both models from the style and any models that have been added at runtime using {@link Map#addModel}.
+    *
+    * @returns {Array<string>} An Array of strings containing the names of all model IDs currently available in the map.
+    *
+    * @example
+    * const allModels = map.listModels();
+    *
+    * @private
+    */
+    listModels(): Array<string> {
+        return this.style.listModels();
+    }
+
     /** @section {Layers} */
 
     /**
@@ -2342,7 +2584,6 @@ class Map extends Camera {
      * @param {string} layer.id A unique identifier that you define.
      * @param {string} layer.type The type of layer (for example `fill` or `symbol`).
      *     A list of layer types is available in the [Mapbox Style Specification](https://docs.mapbox.com/mapbox-gl-js/style-spec/layers/#type).
-     *
      *     This can also be `custom`. For more information, see {@link CustomLayerInterface}.
      * @param {string | Object} [layer.source] The data source for the layer.
      *     Reference a source that has _already been defined_ using the source's unique id.
@@ -2350,6 +2591,13 @@ class Map extends Camera {
      *     This is **required** for all `layer.type` options _except_ for `custom` and `background`.
      * @param {string} [layer.sourceLayer] (optional) The name of the [source layer](https://docs.mapbox.com/help/glossary/source-layer/) within the specified `layer.source` to use for this style layer.
      *     This is only applicable for vector tile sources and is **required** when `layer.source` is of the type `vector`.
+     * @param {string} [layer.slot] (optional) The identifier of a [`slot`](https://docs.mapbox.com/style-spec/reference/slots/) layer that will be used to position this style layer.
+     *     A `slot` layer serves as a predefined position in the layer order for inserting associated layers.
+     *     *Note*: During 3D globe and terrain rendering, GL JS aims to batch multiple layers together for optimal performance.
+     *     This process might lead to a rearrangement of layers. Layers draped over globe and terrain,
+     *     such as `fill`, `line`, `background`, `hillshade`, and `raster`, are rendered first.
+     *     These layers are rendered underneath symbols, regardless of whether they are placed
+     *     in the middle or top slots or without a designated slot.
      * @param {Array} [layer.filter] (optional) An expression specifying conditions on source features.
      *     Only features that match the filter are displayed.
      *     The Mapbox Style Specification includes more information on the limitations of the [`filter`](https://docs.mapbox.com/mapbox-gl-js/style-spec/layers/#filter) parameter
@@ -2378,6 +2626,15 @@ class Map extends Camera {
      *     resulting in the new layer appearing visually beneath the existing layer.
      *     If this argument is not specified, the layer will be appended to the end of the layers array
      *     and appear visually above all other layers.
+     *     *Note*: Layers can only be rearranged within the same `slot`. The new layer must share the
+     *     same `slot` as the existing layer to be positioned underneath it. If the
+     *     layers are in different slots, the `beforeId` parameter will be ignored and
+     *     the new layer will be appended to the end of the layers array.
+     *     During 3D globe and terrain rendering, GL JS aims to batch multiple layers together for optimal performance.
+     *     This process might lead to a rearrangement of layers. Layers draped over globe and terrain,
+     *     such as `fill`, `line`, `background`, `hillshade`, and `raster`, are rendered first.
+     *     These layers are rendered underneath symbols, regardless of whether they are placed
+     *     in the middle or top slots or without a designated slot.
      *
      * @returns {Map} Returns itself to allow for method chaining.
      *
@@ -2420,6 +2677,22 @@ class Map extends Camera {
      * });
      *
      * @example
+     * // Add a new symbol layer to a slot
+     * map.addLayer({
+     *     id: 'states',
+     *     // References a source that's already been defined
+     *     source: 'state-data',
+     *     type: 'symbol',
+     *     // Add the layer to the existing `top` slot
+     *     slot: 'top',
+     *     layout: {
+     *         // Set the label content to the
+     *         // feature's `name` property
+     *         'text-field': ['get', 'name']
+     *     }
+     * });
+     *
+     * @example
      * // Add a new symbol layer before an existing layer
      * map.addLayer({
      *     id: 'states',
@@ -2441,8 +2714,170 @@ class Map extends Camera {
      * @see [Example: Add a WMS layer](https://docs.mapbox.com/mapbox-gl-js/example/wms/) (raster layer)
      */
     addLayer(layer: LayerSpecification | CustomLayerInterface, beforeId?: string): this {
+        if (!this._isValidId(layer.id)) {
+            return this;
+        }
+
         this._lazyInitEmptyStyle();
         this.style.addLayer(layer, beforeId);
+        return this._update(true);
+    }
+
+    /**
+     * Returns current slot of the layer.
+     *
+     * @param {string} layerId Identifier of the layer to retrieve its current slot.
+     * @returns {string | null} The slot identifier or `null` if layer doesn't have it.
+     *
+     * @example
+     * map.getSlot('roads');
+     */
+    getSlot(layerId: string): ?string {
+        const layer = this.getLayer(layerId);
+
+        if (!layer) {
+            return null;
+        }
+
+        return layer.slot || null;
+    }
+
+    /**
+     * Sets or removes [a slot](https://docs.mapbox.com/style-spec/reference/slots/) of style layer.
+     *
+     * @param {string} layerId Identifier of style layer.
+     * @param {string} slot Identifier of slot. If `null` or `undefined` is provided, the method removes slot.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * // Sets new slot for style layer
+     * map.setSlot("heatmap", "top");
+     */
+    setSlot(layerId: string, slot: ?string): this {
+        this.style.setSlot(layerId, slot);
+        this.style.mergeLayers();
+        return this._update(true);
+    }
+
+    /**
+     * Adds new [import](https://docs.mapbox.com/style-spec/reference/imports/) to current style.
+     *
+     * @param {ImportSpecification} importSpecification Specification of import.
+     * @param {string} beforeId (optional) Identifier of an existing import to insert the new import before.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * // Add streets style to empty map
+     * new Map({style: {version: 8, sources: {}, layers: []}})
+     *     .addImport({id: 'basemap', url: 'mapbox://styles/mapbox/streets-v12'});
+     *
+     * @example
+     * // Add new style before already added
+     * const map = new Map({
+     *     imports: [
+     *         {
+     *             id: 'basemap',
+     *             url: 'mapbox://styles/mapbox/standard'
+     *         }
+     *     ],
+     *     style: {
+     *         version: 8,
+     *         sources: {},
+     *         layers: []
+     *     }
+     * });
+     *
+     * map.addImport({
+     *     id: 'lakes',
+     *     url: 'https://styles/mapbox/streets-v12'
+     * }, 'basemap');
+     */
+    addImport(importSpecification: ImportSpecification, beforeId: ?string): this {
+        this.style.addImport(importSpecification, beforeId);
+        return this;
+    }
+
+    /**
+     * Updates already added to style import.
+     *
+     * @param {string} importId Identifier of import to update.
+     * @param {ImportSpecification | string} importSpecification Import specification or URL of style.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * // Update import with new data
+     * map.updateImport('basemap', {
+     *     data: {
+     *         version: 8,
+     *         sources: {},
+     *         layers: [
+     *             {
+     *                 id: 'background',
+     *                 type: 'background',
+     *                 paint: {
+     *                     'background-color': '#eee'
+     *                 }
+     *             }
+     *         ]
+     *     }
+     * });
+     *
+     * @example
+     * // Change URL of imported style
+     * map.updateImport('basemap', 'mapbox://styles/mapbox/other-standard');
+     */
+    updateImport(importId: string, importSpecification: ImportSpecification | string): this {
+        if (typeof importSpecification !== 'string' && importSpecification.id !== importId) {
+            this.removeImport(importId);
+            return this.addImport(importSpecification);
+        }
+
+        this.style.updateImport(importId, importSpecification);
+        return this._update(true);
+    }
+
+    /**
+     * Removes added to style import.
+     *
+     * @param {string} importId Identifier of import to remove.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * // Removes imported style
+     * map.removeImport('basemap');
+     */
+    removeImport(importId: string): this {
+        this.style.removeImport(importId);
+        return this;
+    }
+
+    /**
+     * Moves import to position before another import, specified with `beforeId`. Order of imported styles corresponds to order of their layers.
+     *
+     * @param {string} importId Identifier of import to move.
+     * @param {string} beforeId The identifier of an existing import to move the new import before.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * const map = new Map({
+     *     style: {
+     *         imports: [
+     *             {
+     *                 id: 'basemap',
+     *                 url: 'mapbox://styles/mapbox/standard'
+     *             },
+     *             {
+     *                 id: 'streets-v12',
+     *                 url: 'mapbox://styles/mapbox/streets-v12'
+     *             }
+     *         ]
+     *     }
+     * });
+     * // Place `streets-v12` import before `basemap`
+     * map.moveImport('streets-v12', 'basemap');
+     */
+    moveImport(importId: string, beforeId: string): this {
+        this.style.moveImport(importId, beforeId);
         return this._update(true);
     }
 
@@ -2450,7 +2885,19 @@ class Map extends Camera {
      * Moves a layer to a different z-position.
      *
      * @param {string} id The ID of the layer to move.
-     * @param {string} [beforeId] The ID of an existing layer to insert the new layer before. When viewing the map, the `id` layer will appear beneath the `beforeId` layer. If `beforeId` is omitted, the layer will be appended to the end of the layers array and appear above all other layers on the map.
+     * @param {string} [beforeId] The ID of an existing layer to insert the new layer before.
+     *     When viewing the map, the `id` layer will appear beneath the `beforeId` layer.
+     *     If `beforeId` is omitted, the layer will be appended to the end of the layers array
+     *     and appear above all other layers on the map.
+     *     *Note*: Layers can only be rearranged within the same `slot`. The new layer must share the
+     *     same `slot` as the existing layer to be positioned underneath it. If the
+     *     layers are in different slots, the `beforeId` parameter will be ignored and
+     *     the new layer will be appended to the end of the layers array.
+     *     During 3D globe and terrain rendering, GL JS aims to batch multiple layers together for optimal performance.
+     *     This process might lead to a rearrangement of layers. Layers draped over globe and terrain,
+     *     such as `fill`, `line`, `background`, `hillshade`, and `raster`, are rendered first.
+     *     These layers are rendered underneath symbols, regardless of whether they are placed
+     *     in the middle or top slots or without a designated slot.
      * @returns {Map} Returns itself to allow for method chaining.
      *
      * @example
@@ -2458,6 +2905,10 @@ class Map extends Camera {
      * map.moveLayer('polygon', 'country-label');
      */
     moveLayer(id: string, beforeId?: string): this {
+        if (!this._isValidId(id)) {
+            return this;
+        }
+
         this.style.moveLayer(id, beforeId);
         return this._update(true);
     }
@@ -2476,6 +2927,10 @@ class Map extends Camera {
      * if (map.getLayer('state-data')) map.removeLayer('state-data');
      */
     removeLayer(id: string): this {
+        if (!this._isValidId(id)) {
+            return this;
+        }
+
         this.style.removeLayer(id);
         return this._update(true);
     }
@@ -2494,7 +2949,11 @@ class Map extends Camera {
      * @see [Example: Filter symbols by text input](https://www.mapbox.com/mapbox-gl-js/example/filter-markers-by-input/)
      */
     getLayer(id: string): ?StyleLayer {
-        return this.style.getLayer(id);
+        if (!this._isValidId(id)) {
+            return null;
+        }
+
+        return this.style.getOwnLayer(id);
     }
 
     /**
@@ -2517,6 +2976,10 @@ class Map extends Camera {
      * map.setLayerZoomRange('my-layer', 2, 5);
      */
     setLayerZoomRange(layerId: string, minzoom: number, maxzoom: number): this {
+        if (!this._isValidId(layerId)) {
+            return this;
+        }
+
         this.style.setLayerZoomRange(layerId, minzoom, maxzoom);
         return this._update(true);
     }
@@ -2555,6 +3018,10 @@ class Map extends Camera {
      * @see [Tutorial: Show changes over time](https://docs.mapbox.com/help/tutorials/show-changes-over-time/)
      */
     setFilter(layerId: string, filter: ?FilterSpecification,  options: StyleSetterOptions = {}): this {
+        if (!this._isValidId(layerId)) {
+            return this;
+        }
+
         this.style.setFilter(layerId, filter, options);
         return this._update(true);
     }
@@ -2568,6 +3035,10 @@ class Map extends Camera {
      * const filter = map.getFilter('myLayer');
      */
     getFilter(layerId: string): ?FilterSpecification {
+        if (!this._isValidId(layerId)) {
+            return null;
+        }
+
         return this.style.getFilter(layerId);
     }
 
@@ -2588,6 +3059,10 @@ class Map extends Camera {
      * @see [Example: Create a draggable point](https://www.mapbox.com/mapbox-gl-js/example/drag-a-point/)
      */
     setPaintProperty(layerId: string, name: string, value: any, options: StyleSetterOptions = {}): this {
+        if (!this._isValidId(layerId)) {
+            return this;
+        }
+
         this.style.setPaintProperty(layerId, name, value, options);
         return this._update(true);
     }
@@ -2602,6 +3077,10 @@ class Map extends Camera {
      * const paintProperty = map.getPaintProperty('mySymbolLayer', 'icon-color');
      */
     getPaintProperty(layerId: string, name: string): void | TransitionSpecification | PropertyValueSpecification<mixed> {
+        if (!this._isValidId(layerId)) {
+            return null;
+        }
+
         return this.style.getPaintProperty(layerId, name);
     }
 
@@ -2619,6 +3098,10 @@ class Map extends Camera {
      * @see [Example: Show and hide layers](https://docs.mapbox.com/mapbox-gl-js/example/toggle-layers/)
      */
     setLayoutProperty(layerId: string, name: string, value: any, options: StyleSetterOptions = {}): this {
+        if (!this._isValidId(layerId)) {
+            return this;
+        }
+
         this.style.setLayoutProperty(layerId, name, value, options);
         return this._update(true);
     }
@@ -2633,13 +3116,106 @@ class Map extends Camera {
      * const layoutProperty = map.getLayoutProperty('mySymbolLayer', 'icon-anchor');
      */
     getLayoutProperty(layerId: string, name: string): ?PropertyValueSpecification<mixed> {
+        if (!this._isValidId(layerId)) {
+            return null;
+        }
+
         return this.style.getLayoutProperty(layerId, name);
     }
 
     /** @section {Style properties} */
 
     /**
+     * Returns the value of a configuration property in the imported style.
+     *
+     * @param {string} importId The name of the imported style to set the config for (e.g. `basemap`).
+     * @param {string} configName The name of the configuration property from the style.
+     * @returns {*} Returns the value of the configuration property.
+     * @example
+     * map.getConfigProperty('basemap', 'showLabels');
+     */
+    getConfigProperty(importId: string, configName: string): ?any {
+        return this.style.getConfigProperty(importId, configName);
+    }
+
+    /**
+     * Sets the value of a configuration property in the currently set style.
+     *
+     * @param {string} importId The name of the imported style to set the config for (e.g. `basemap`).
+     * @param {string} configName The name of the configuration property from the style.
+     * @param {*} value The value of the configuration property. Must be of a type appropriate for the property, as defined by the style configuration schema.
+     * @returns {Map} Returns itself to allow for method chaining.
+     * @example
+     * map.setConfigProperty('basemap', 'showLabels', false);
+     */
+    setConfigProperty(importId: string, configName: string, value: any): this {
+        this.style.setConfigProperty(importId, configName, value);
+        return this._update(true);
+    }
+
+    /**
+     * Adds a set of Mapbox style light to the map's style.
+     *
+     * _Note: This light is not to confuse with our legacy light API used through {@link Map#setLight} and {@link Map#getLight}_.
+     *
+     * @param {Array<LightsSpecification>} lights An array of lights to add, conforming to the Mapbox Style Specification's light definition.
+     * @returns {Map} Returns itself to allow for method chaining.
+     *
+     * @example
+     * // Add a directional light
+     * map.setLights([{
+     *     "id": "sun_light",
+     *     "type": "directional",
+     *     "properties": {
+     *         "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+     *         "intensity": 0.4,
+     *         "direction": [200.0, 40.0],
+     *         "cast-shadows": true,
+     *         "shadow-intensity": 0.2
+     *     }
+     * }]);
+     */
+    setLights(lights: ?Array<LightsSpecification>): this {
+        this._lazyInitEmptyStyle();
+        if (lights && lights.length === 1 && lights[0].type === "flat") {
+            const flatLight: FlatLightSpecification = lights[0];
+            if (!flatLight.properties) {
+                this.style.setFlatLight({}, "flat");
+            } else {
+                this.style.setFlatLight(flatLight.properties, flatLight.id, {});
+            }
+        } else {
+            this.style.setLights(lights);
+            if (this.painter.terrain) {
+                this.painter.terrain.invalidateRenderCache = true;
+            }
+        }
+        return this._update(true);
+    }
+
+    /**
+     * Returns the lights added to the map.
+     *
+     * @returns {Array<LightSpecification>} Lights added to the map.
+     * @example
+     * const lights = map.getLights();
+     */
+    getLights(): ?Array<LightsSpecification> {
+        const lights = this.style.getLights() || [];
+        if (lights.length === 0) {
+            lights.push({
+                "id": this.style.light.id,
+                "type": "flat",
+                "properties": this.style.getFlatLight()
+            });
+        }
+        return lights;
+    }
+
+    /**
      * Sets the any combination of light values.
+     *
+     * _Note: that this API is part of the legacy light API, prefer using {@link Map#setLights}.
      *
      * @param {LightSpecification} light Light properties to set. Must conform to the [Light Style Specification](https://www.mapbox.com/mapbox-gl-style-spec/#light).
      * @param {Object} [options] Options object.
@@ -2652,10 +3228,14 @@ class Map extends Camera {
      *     "intensity": 0.5
      * });
      */
+    // eslint-disable-next-line no-unused-vars
     setLight(light: LightSpecification, options: StyleSetterOptions = {}): this {
-        this._lazyInitEmptyStyle();
-        this.style.setLight(light, options);
-        return this._update(true);
+        console.log("The `map.setLight` function is deprecated, prefer using `map.setLights` with `flat` light type instead.");
+        return this.setLights([{
+            "id": "flat",
+            "type": "flat",
+            "properties": light
+        }]);
     }
 
     /**
@@ -2666,7 +3246,8 @@ class Map extends Camera {
      * const light = map.getLight();
      */
     getLight(): LightSpecification {
-        return this.style.getLight();
+        console.log("The `map.getLight` function is deprecated, prefer using `map.getLights` instead.");
+        return this.style.getFlatLight();
     }
 
     // eslint-disable-next-line jsdoc/require-returns
@@ -2675,6 +3256,7 @@ class Map extends Camera {
      *
      * @param {TerrainSpecification} terrain Terrain properties to set. Must conform to the [Terrain Style Specification](https://docs.mapbox.com/mapbox-gl-js/style-spec/terrain/).
      *     If `null` or `undefined` is provided, function removes terrain.
+     *     Exaggeration could be updated for the existing terrain without explicitly specifying the `source`.
      * @returns {Map} Returns itself to allow for method chaining.
      * @example
      * map.addSource('mapbox-dem', {
@@ -2685,6 +3267,8 @@ class Map extends Camera {
      * });
      * // add the DEM source as a terrain layer with exaggerated height
      * map.setTerrain({'source': 'mapbox-dem', 'exaggeration': 1.5});
+     * // update the exaggeration for the existing terrain
+     * map.setTerrain({'exaggeration': 2});
      */
     setTerrain(terrain: TerrainSpecification): this {
         this._lazyInitEmptyStyle();
@@ -2740,6 +3324,36 @@ class Map extends Camera {
      */
     getFog(): ?FogSpecification {
         return this.style ? this.style.getFog() : null;
+    }
+
+    /**
+     * Sets the camera property of the style.
+     *
+     * @param {CameraSpecification} camera The camera properties to set. Must conform to the Camera Style Specification.
+     * @returns {Map} Returns itself to allow for method chaining.
+     * @example
+     * map.setCamera({
+     *     "camera-projection": "perspective",
+     * });
+     */
+    setCamera(camera: CameraSpecification): this {
+        this.style.setCamera(camera);
+        return this._triggerCameraUpdate(camera);
+    }
+
+    _triggerCameraUpdate(camera: CameraSpecification): this {
+        return this._update(this.transform.setOrthographicProjectionAtLowPitch(camera['camera-projection'] === 'orthographic'));
+    }
+
+    /**
+     * Returns the camera options specification.
+     *
+     * @returns {CameraSpecification} Camera specification properties of the style.
+     * @example
+     * const camera = map.getCamera();
+     */
+    getCamera(): CameraSpecification {
+        return this.style.camera;
     }
 
     /**
@@ -2800,6 +3414,10 @@ class Map extends Camera {
      * @see [Tutorial: Create interactive hover effects with Mapbox GL JS](https://docs.mapbox.com/help/tutorials/create-interactive-hover-effects-with-mapbox-gl-js/)
      */
     setFeatureState(feature: { source: string; sourceLayer?: string; id: string | number; }, state: Object): this {
+        if (!this._isValidId(feature.source)) {
+            return this;
+        }
+
         this.style.setFeatureState(feature, state);
         return this._update();
     }
@@ -2851,6 +3469,10 @@ class Map extends Camera {
      * });
      */
     removeFeatureState(feature: { source: string; sourceLayer?: string; id?: string | number; }, key?: string): this {
+        if (!this._isValidId(feature.source)) {
+            return this;
+        }
+
         this.style.removeFeatureState(feature, key);
         return this._update();
     }
@@ -2884,6 +3506,10 @@ class Map extends Camera {
      * });
      */
     getFeatureState(feature: { source: string; sourceLayer?: string; id: string | number; }): any {
+        if (!this._isValidId(feature.source)) {
+            return null;
+        }
+
         return this.style.getFeatureState(feature);
     }
 
@@ -2930,16 +3556,17 @@ class Map extends Camera {
         this._detectMissingCSS();
 
         const canvasContainer = this._canvasContainer = DOM.create('div', 'mapboxgl-canvas-container', container);
+        this._canvas = DOM.create('canvas', 'mapboxgl-canvas', canvasContainer);
+
         if (this._interactive) {
             canvasContainer.classList.add('mapboxgl-interactive');
+            this._canvas.setAttribute('tabindex', '0');
         }
 
-        this._canvas = DOM.create('canvas', 'mapboxgl-canvas', canvasContainer);
         // $FlowFixMe[method-unbinding]
         this._canvas.addEventListener('webglcontextlost', this._contextLost, false);
         // $FlowFixMe[method-unbinding]
         this._canvas.addEventListener('webglcontextrestored', this._contextRestored, false);
-        this._canvas.setAttribute('tabindex', '0');
         this._canvas.setAttribute('aria-label', this._getUIString('Map.Title'));
         this._canvas.setAttribute('role', 'region');
 
@@ -2997,22 +3624,16 @@ class Map extends Camera {
             antialias: this._antialias || false
         });
 
-        const gl2 = this._useWebGL2 && ((this._canvas.getContext("webgl2", attributes): any): WebGLRenderingContext);
-        const gl = gl2 ||
-            this._canvas.getContext('webgl', attributes) ||
-            this._canvas.getContext('experimental-webgl', attributes);
+        const gl = ((this._canvas.getContext('webgl2', attributes): any): WebGL2RenderingContext);
 
         if (!gl) {
             this.fire(new ErrorEvent(new Error('Failed to initialize WebGL')));
             return;
         }
 
-        if (this._useWebGL2 && !gl2) {
-            warnOnce('Failed to create WebGL 2 context. Using WebGL 1.');
-        }
         storeAuthState(gl, true);
 
-        this.painter = new Painter(gl, this.transform, !!gl2);
+        this.painter = new Painter(gl, this._contextCreateOptions, this.transform, this._tp);
         this.on('data', (event: MapDataEvent) => {
             if (event.dataType === 'source') {
                 this.painter.setTileLoadedFlag(true);
@@ -3128,13 +3749,15 @@ class Map extends Camera {
      */
     _render(paintStartTimeStamp: number) {
         const m = PerformanceUtils.beginMeasure('render');
+        this.fire(new Event('renderstart'));
 
         let gpuTimer;
         const extTimerQuery = this.painter.context.extTimerQuery;
         const frameStartTime = browser.now();
+        const gl = this.painter.context.gl;
         if (this.listens('gpu-timing-frame')) {
-            gpuTimer = extTimerQuery.createQueryEXT();
-            extTimerQuery.beginQueryEXT(extTimerQuery.TIME_ELAPSED_EXT, gpuTimer);
+            gpuTimer = gl.createQuery();
+            gl.beginQuery(extTimerQuery.TIME_ELAPSED_EXT, gpuTimer);
         }
 
         // A custom layer may have used the context asynchronously. Mark the state as dirty.
@@ -3142,8 +3765,8 @@ class Map extends Camera {
         this.painter.setBaseState();
 
         if (this.isMoving() || this.isRotating() || this.isZooming()) {
-            this._interactionRange[0] = Math.min(this._interactionRange[0], window.performance.now());
-            this._interactionRange[1] = Math.max(this._interactionRange[1], window.performance.now());
+            this._interactionRange[0] = Math.min(this._interactionRange[0], performance.now());
+            this._interactionRange[1] = Math.max(this._interactionRange[1], performance.now());
         }
 
         this._renderTaskQueue.run(paintStartTimeStamp);
@@ -3169,15 +3792,13 @@ class Map extends Camera {
                 now,
                 fadeDuration,
                 pitch,
-                transition: this.style.getTransition()
+                transition: this.style.transition
             });
 
             this.style.update(parameters);
         }
 
-        const fogIsTransitioning = this.style && this.style.fog && this.style.fog.hasTransition();
-
-        if (fogIsTransitioning) {
+        if (this.style && this.style.hasFogTransition()) {
             this.style._markersNeedUpdate = true;
             this._sourcesDirty = true;
         }
@@ -3189,9 +3810,9 @@ class Map extends Camera {
         if (this.style && this._sourcesDirty) {
             this._sourcesDirty = false;
             this.painter._updateFog(this.style);
-            this._updateTerrain(); // Terrain DEM source updates here and skips update in style._updateSources.
+            this._updateTerrain(); // Terrain DEM source updates here and skips update in Style#updateSources.
             averageElevationChanged = this._updateAverageElevation(frameStartTime);
-            this.style._updateSources(this.transform);
+            this.style.updateSources(this.transform);
             // Update positions of markers and popups on enabling/disabling terrain
             this._forceMarkerAndPopupUpdate();
         } else {
@@ -3203,17 +3824,22 @@ class Map extends Camera {
         // Actually draw
         if (this.style) {
             this.painter.render(this.style, {
-                showTileBoundaries: this.showTileBoundaries,
-                showTerrainWireframe: this.showTerrainWireframe,
-                showOverdrawInspector: this._showOverdrawInspector,
+                showTileBoundaries: this.showTileBoundaries || this._debugParams.showTileBoundaries,
+                showParseStatus: this.showParseStatus || this._debugParams.showParseStatus,
+                wireframe: {
+                    terrain: this.showTerrainWireframe || this._debugParams.showTerrainWireframe,
+                    layers2D: this.showLayers2DWireframe || this._debugParams.showLayers2DWireframe,
+                    layers3D: this.showLayers3DWireframe || this._debugParams.showLayers3DWireframe
+                },
+                showOverdrawInspector: this._showOverdrawInspector || this._debugParams.showOverdrawInspector,
                 showQueryGeometry: !!this._showQueryGeometry,
-                showTileAABBs: this.showTileAABBs,
+                showTileAABBs: this.showTileAABBs || this._debugParams.showTileAABBs,
                 rotating: this.isRotating(),
                 zooming: this.isZooming(),
                 moving: this.isMoving(),
                 fadeDuration,
                 isInitialLoad: this._isInitialLoad,
-                showPadding: this.showPadding,
+                showPadding: this.showPadding || this._debugParams.showPadding,
                 gpuTiming: !!this.listens('gpu-timing-layer'),
                 gpuTimingDeferredRender: !!this.listens('gpu-timing-deferred-render'),
                 speedIndexTiming: this.speedIndexTiming,
@@ -3241,15 +3867,16 @@ class Map extends Camera {
 
         if (gpuTimer) {
             const renderCPUTime = browser.now() - frameStartTime;
-            extTimerQuery.endQueryEXT(extTimerQuery.TIME_ELAPSED_EXT, gpuTimer);
+            gl.endQuery(extTimerQuery.TIME_ELAPSED_EXT);
             setTimeout(() => {
-                const renderGPUTime = extTimerQuery.getQueryObjectEXT(gpuTimer, extTimerQuery.QUERY_RESULT_EXT) / (1000 * 1000);
-                extTimerQuery.deleteQueryEXT(gpuTimer);
+                const renderGPUTime = gl.getQueryParameter(gpuTimer, gl.QUERY_RESULT) / (1000 * 1000);
+                gl.deleteQuery(gpuTimer);
                 this.fire(new Event('gpu-timing-frame', {
                     cpuTime: renderCPUTime,
                     gpuTime: renderGPUTime
                 }));
-                window.performance.mark('frame-gpu', {
+                // $FlowFixMe extra-arg: fixed in later Flow versions
+                performance.mark('frame-gpu', {
                     startTime: frameStartTime,
                     detail: {
                         gpuTime: renderGPUTime
@@ -3287,7 +3914,7 @@ class Map extends Camera {
         //
         // Even though `_styleDirty` and `_sourcesDirty` are reset in this
         // method, synchronous events fired during Style#update or
-        // Style#_updateSources could have caused them to be set again.
+        // Style#updateSources could have caused them to be set again.
         const somethingDirty = this._sourcesDirty || this._styleDirty || this._placementDirty || averageElevationChanged;
         if (somethingDirty || this._repaint) {
             this.triggerRepaint();
@@ -3373,14 +4000,14 @@ class Map extends Camera {
             return false;
         }
 
+        const exaggerationChanged = this.transform.elevation && this.transform.elevation.exaggeration() !== this._averageElevationExaggeration;
         const timeoutElapsed = ignoreTimeout || timeStamp - this._averageElevationLastSampledAt > AVERAGE_ELEVATION_SAMPLING_INTERVAL;
 
-        if (timeoutElapsed && !this._averageElevation.isEasing(timeStamp)) {
+        if (exaggerationChanged || (timeoutElapsed && !this._averageElevation.isEasing(timeStamp))) {
             const currentElevation = this.transform.averageElevation;
             let newElevation = this.transform.sampleAverageElevation();
-            let exaggerationChanged = false;
+
             if (this.transform.elevation) {
-                exaggerationChanged = this.transform.elevation.exaggeration() !== this._averageElevationExaggeration;
                 // $FlowIgnore[incompatible-use]
                 this._averageElevationExaggeration = this.transform.elevation.exaggeration();
             }
@@ -3445,6 +4072,7 @@ class Map extends Camera {
                 }
             }
         });
+
         postMapLoadEvent(this._getMapId(), this._requestManager._skuToken, this._requestManager._customAccessToken, () => {});
     }
 
@@ -3532,18 +4160,16 @@ class Map extends Camera {
         this.handlers = undefined;
         this.setStyle(null);
 
-        if (typeof window !== 'undefined') {
-            // $FlowFixMe[method-unbinding]
-            window.removeEventListener('resize', this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.removeEventListener('orientationchange', this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.removeEventListener(this._fullscreenchangeEvent, this._onWindowResize, false);
-            // $FlowFixMe[method-unbinding]
-            window.removeEventListener('online', this._onWindowOnline, false);
-            // $FlowFixMe[method-unbinding]
-            window.removeEventListener('visibilitychange', this._onVisibilityChange, false);
-        }
+        // $FlowFixMe[method-unbinding]
+        window.removeEventListener('resize', this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.removeEventListener('orientationchange', this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.removeEventListener(this._fullscreenchangeEvent, this._onWindowResize, false);
+        // $FlowFixMe[method-unbinding]
+        window.removeEventListener('online', this._onWindowOnline, false);
+        // $FlowFixMe[method-unbinding]
+        window.removeEventListener('visibilitychange', this._onVisibilityChange, false);
 
         const extension = this.painter.context.gl.getExtension('WEBGL_lose_context');
         if (extension) extension.loseContext();
@@ -3568,6 +4194,10 @@ class Map extends Camera {
 
         PerformanceUtils.clearMetrics();
         removeAuthState(this.painter.context.gl);
+
+        mapSessionAPI.remove();
+        mapLoadEvent.remove();
+
         this._removed = true;
         this.fire(new Event('remove'));
     }
@@ -3629,7 +4259,7 @@ class Map extends Camera {
     }
 
     _onVisibilityChange() {
-        if (window.document.visibilityState === 'hidden') {
+        if (document.visibilityState === 'hidden') {
             this._visibilityHidden++;
         }
     }
@@ -3638,11 +4268,7 @@ class Map extends Camera {
 
     /**
      * Gets and sets a Boolean indicating whether the map will render an outline
-     * around each tile and the tile ID. These tile boundaries are useful for
-     * debugging.
-     *
-     * The uncompressed file size of the first vector source is drawn in the top left
-     * corner of each tile, next to the tile ID.
+     * around each tile. These tile boundaries are useful for debugging.
      *
      * @name showTileBoundaries
      * @type {boolean}
@@ -3655,6 +4281,27 @@ class Map extends Camera {
     set showTileBoundaries(value: boolean) {
         if (this._showTileBoundaries === value) return;
         this._showTileBoundaries = value;
+        this._update();
+    }
+
+    /**
+     * Gets and sets a Boolean indicating whether the map will render the tile ID
+     * and the status of the tile in their corner when `showTileBoundaries` is on.
+     *
+     * The uncompressed file size of the first vector source is drawn in the top left
+     * corner of each tile, next to the tile ID.
+     *
+     * @name showParseStatus
+     * @type {boolean}
+     * @instance
+     * @memberof Map
+     * @example
+     * map.showParseStatus = true;
+     */
+    get showParseStatus(): boolean { return !!this._showParseStatus; }
+    set showParseStatus(value: boolean) {
+        if (this._showParseStatus === value) return;
+        this._showParseStatus = value;
         this._update();
     }
 
@@ -3675,6 +4322,46 @@ class Map extends Camera {
     set showTerrainWireframe(value: boolean) {
         if (this._showTerrainWireframe === value) return;
         this._showTerrainWireframe = value;
+        this._update();
+    }
+
+    /**
+     * Gets and sets a Boolean indicating whether the map will render a wireframe
+     * on top of 2D layers. Useful for debugging.
+     *
+     * The wireframe is always red and is drawn only for 2D layers.
+     *
+     * @name showLayers2DWireframe
+     * @type {boolean}
+     * @instance
+     * @memberof Map
+     * @example
+     * map.showLayers2DWireframe = true;
+     */
+    get showLayers2DWireframe(): boolean { return !!this._showLayers2DWireframe; }
+    set showLayers2DWireframe(value: boolean) {
+        if (this._showLayers2DWireframe === value) return;
+        this._showLayers2DWireframe = value;
+        this._update();
+    }
+
+    /**
+     * Gets and sets a Boolean indicating whether the map will render a wireframe
+     * on top of 3D layers. Useful for debugging.
+     *
+     * The wireframe is always red and is drawn only for 3D layers.
+     *
+     * @name showLayers3DWireframe
+     * @type {boolean}
+     * @instance
+     * @memberof Map
+     * @example
+     * map.showLayers3DWireframe = true;
+     */
+    get showLayers3DWireframe(): boolean { return !!this._showLayers3DWireframe; }
+    set showLayers3DWireframe(value: boolean) {
+        if (this._showLayers3DWireframe === value) return;
+        this._showLayers3DWireframe = value;
         this._update();
     }
 

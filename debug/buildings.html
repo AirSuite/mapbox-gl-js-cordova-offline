@@ -28,6 +28,7 @@
 
 var map = window.map = new mapboxgl.Map({
     container: 'map',
+    devtools: true,
     zoom: 12.5,
     center: [-122.4194, 37.7749],
     style: 'mapbox://styles/mapbox/streets-v11',
@@ -47,16 +48,33 @@ map.on('load', () => {
             'fill-extrusion-edge-radius': 0.4
         },
         'paint': {
-            'fill-extrusion-color': '#bbb',
+            'fill-extrusion-color': [
+                "hsla",
+                ["random", 200, 300, ["id"]],
+                80,
+                ["random", 70, 100, ["+", 2, ["id"]]],
+                1.0
+            ],
             'fill-extrusion-height': ['get', 'height'],
             'fill-extrusion-base': ['get', 'min_height'],
             'fill-extrusion-opacity': 1,
             'fill-extrusion-ambient-occlusion-intensity': 0.5,
-            'fill-extrusion-ambient-occlusion-radius': 0.1
+            'fill-extrusion-ambient-occlusion-radius': 0.1,
+            'fill-extrusion-cutoff-fade-range': 0.5
         }
     });
 
-    map.setLight({intensity: 0.7});
+    map.showTileBoundaries = true;
+
+    map.setLights([
+        {
+            'type': 'flat',
+            'id': 'flat',
+            'properties': {
+                'intensity': 0.7
+            }
+        }
+    ]);
 });
 
 </script>
