@@ -42,53 +42,46 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                 z = Rurl[0],
                 x = Rurl[1],
                 y = Rurl[2];
-            y = (1 << z) - 1 - y;
 
-            // eslint-disable-next-line no-warning-comments
-            /*
-            todo this won't be the id it wil be the UTM grid reference of the xyz tile url that I need to write a script for
-            Tile numbers to lon./lat.
-                n = 2 ^ zoom
-                lon_deg = xtile / n * 360.0 - 180.0
-                lat_rad = arctan(sinh(π * (1 - 2 * ytile / n)))
-                lat_deg = lat_rad * 180.0 / π
-
-                todo make a lookup for the UTM grid reference from lat long
-             */
-            const database = this.id;
-            if (window.openDatabases[database] === false) {
-                //do nothing because offline DEM database is not available
-                callback(null);
-                return;
-            }
-            if (window.openDatabases[database] === true) {
-                if (window.AppType === "CORDOVA") {
-                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                        name: `${database}.mbtiles`,
-                        location: 2,
-                        createFromLocation: 0,
-                        androidDatabaseImplementation: 1
-                    });
+            const database = getTerrainMbtileFile(z, x, y);
+            try {
+                if (window.openDatabases[database] === undefined) {
+                    //do nothing because offline DEM database is not available
+                    callback(null);
+                    return;
                 }
-            }
-            if (window.AppType === "CORDOVA") {
-                window.openDatabases[database].transaction(function(tx) {
-                    tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                if (window.openDatabases[database] === true) {
+                    if (window.AppType === "CORDOVA") {
+                        window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                            name: `${database}.mbtiles`,
+                            location: 2,
+                            createFromLocation: 0,
+                            androidDatabaseImplementation: 1
+                        });
+                    }
+                }
+                y = (1 << z) - 1 - y;
+                if (window.AppType === "CORDOVA") {
+                    window.openDatabases[database].transaction(function (tx) {
+                        tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
 
-                        let tileData = res.rows.item(0).tile_data64;
-                        if (tileData !== undefined) {
-                            if (!webpSupported.supported) {
-                                //Because Safari doesn't support WEBP we need to convert it tiles PNG
-                                tileData = WEBPtoPNG(tileData);
-                            } else {
-                                tileData = `data:image/png;base64,${tileData}`;
+                            let tileData = res.rows.item(0).tile_data64;
+                            if (tileData !== undefined) {
+                                if (!webpSupported.supported) {
+                                    //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                                    tileData = WEBPtoPNG(tileData);
+                                } else {
+                                    tileData = `data:image/webp;base64,${tileData}`;
+                                }
                             }
-                        }
-                        tile.request = getmbtileImage(tileData, imageLoaded.bind(this));
-                    }.bind(this), function(tx, e) {
-                        console.log(`Database Error: ${e.message}`);
-                    });
-                }.bind(this));
+                            tile.request = getmbtileImage(tileData, imageLoaded.bind(this));
+                        }.bind(this), function (tx, e) {
+                            console.log(`Database Error: ${e.message}`);
+                        });
+                    }.bind(this));
+                }
+            } catch (e) {
+                console.log('Error:', e);
             }
         }
 

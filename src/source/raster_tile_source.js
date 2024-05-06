@@ -26,6 +26,7 @@ import type {
     RasterSourceSpecification,
     RasterDEMSourceSpecification
 } from '../style-spec/types.js';
+import window from "../util/window.js";
 
 /**
  * A source containing raster tiles.
@@ -228,6 +229,11 @@ class RasterTileSource extends Evented implements Source {
             //console.log(Rurl);
             const database = this.id;
             if (window.openDatabases[database] === undefined) {
+                //do nothing because offline raster tile database is not available
+                callback(null);
+                return;
+            }
+            if (window.openDatabases[database] === true) {
                 if (window.AppType === "CORDOVA") {
                     window.openDatabases[database] = window.sqlitePlugin.openDatabase({
                         name: `${database}.mbtiles`,

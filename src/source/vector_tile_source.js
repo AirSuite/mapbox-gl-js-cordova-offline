@@ -23,6 +23,7 @@ import Pako from 'pako';
 import type Actor from '../util/actor.js';
 import type {LoadVectorTileResult} from './vector_tile_worker_source.js';
 import type {WorkerTileResult} from './worker_source.js';
+import window from "../util/window.js";
 
 /**
  * A source containing vector tiles in [Mapbox Vector Tile format](https://docs.mapbox.com/vector-tiles/reference/).
@@ -270,6 +271,11 @@ class VectorTileSource extends Evented implements Source {
                     y = (1 << z) - 1 - y;
                     const database = params.source;
                     if (window.openDatabases[database] === undefined) {
+                        //do nothing because offline vectore tile database is not available
+                        callback(null);
+                        return;
+                    }
+                    if (window.openDatabases[database] === true) {
                         if (window.AppType === "CORDOVA") {
                             window.openDatabases[database] = window.sqlitePlugin.openDatabase({
                                 name: `${database}.mbtiles`,
