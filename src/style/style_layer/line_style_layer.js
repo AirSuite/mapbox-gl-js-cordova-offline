@@ -13,7 +13,7 @@ import {Transitionable, Transitioning, Layout, PossiblyEvaluated, DataDrivenProp
 import ProgramConfiguration from '../../data/program_configuration.js';
 
 import Step from '../../style-spec/expression/definitions/step.js';
-import type {PossiblyEvaluatedValue, PropertyValue, PossiblyEvaluatedPropertyValue} from '../properties.js';
+import type {PossiblyEvaluatedValue, PropertyValue, PossiblyEvaluatedPropertyValue, ConfigOptions} from '../properties.js';
 import type {Feature, FeatureState, ZoomConstantExpression, StylePropertyExpression} from '../../style-spec/expression/index.js';
 import type {Bucket, BucketParameters} from '../../data/bucket.js';
 import type {LayoutProps, PaintProps} from './line_style_layer_properties.js';
@@ -21,6 +21,9 @@ import type Transform from '../../geo/transform.js';
 import type {LayerSpecification} from '../../style-spec/types.js';
 import type {TilespaceQueryGeometry} from '../query_geometry.js';
 import type {IVectorTileFeature} from '@mapbox/vector-tile';
+import {lineDefinesValues} from "../../render/program/line_program.js";
+import type {CreateProgramParams} from "../../render/painter.js";
+import type {DynamicDefinesType} from "../../render/program/program_uniforms.js";
 
 class LineFloorwidthProperty extends DataDrivenProperty<number> {
     useIntegerZoom: ?boolean;
@@ -54,8 +57,8 @@ class LineStyleLayer extends StyleLayer {
     _transitioningPaint: Transitioning<PaintProps>;
     paint: PossiblyEvaluated<PaintProps>;
 
-    constructor(layer: LayerSpecification) {
-        super(layer, properties);
+    constructor(layer: LayerSpecification, scope: string, options?: ?ConfigOptions) {
+        super(layer, properties, scope, options);
         this.gradientVersion = 0;
     }
 
@@ -93,8 +96,13 @@ class LineStyleLayer extends StyleLayer {
         return [programId];
     }
 
-    getProgramConfiguration(zoom: number): ProgramConfiguration {
-        return new ProgramConfiguration(this, zoom);
+    getDefaultProgramParams(name: string, zoom: number): CreateProgramParams | null {
+        const definesValues = ((lineDefinesValues(this): any): DynamicDefinesType[]);
+        return {
+            config: new ProgramConfiguration(this, zoom),
+            defines: definesValues,
+            overrideFog: false
+        };
     }
 
     // $FlowFixMe[method-unbinding]

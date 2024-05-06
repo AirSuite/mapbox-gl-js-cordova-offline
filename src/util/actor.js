@@ -1,7 +1,6 @@
 // @flow
 
-import {bindAll, isWorker, isSafari} from './util.js';
-import window from './window.js';
+import {bindAll, isWorker} from './util.js';
 import {serialize, deserialize} from './web_worker_transfer.js';
 import Scheduler from './scheduler.js';
 
@@ -26,7 +25,6 @@ class Actor {
     callbacks: { number: any };
     name: string;
     cancelCallbacks: { number: Cancelable };
-    globalScope: any;
     scheduler: Scheduler;
 
     constructor(target: any, parent: any, mapId: ?number) {
@@ -38,7 +36,6 @@ class Actor {
         bindAll(['receive'], this);
         // $FlowFixMe[method-unbinding]
         this.target.addEventListener('message', this.receive, false);
-        this.globalScope = isWorker() ? target : window;
         this.scheduler = new Scheduler();
     }
 
@@ -60,7 +57,7 @@ class Actor {
             callback.metadata = callbackMetadata;
             this.callbacks[id] = callback;
         }
-        const buffers: ?Array<Transferable> = isSafari(this.globalScope) ? undefined : [];
+        const buffers: Set<Transferable> = new Set();
         this.target.postMessage({
             id,
             type,
@@ -116,7 +113,8 @@ class Actor {
                 // We're using a MessageChannel object to get throttle the process() flow to one at a time.
                 const callback = this.callbacks[id];
                 const metadata = (callback && callback.metadata) || {type: "message"};
-                this.cancelCallbacks[id] = this.scheduler.add(() => this.processTask(id, data), metadata);
+                const cancel = this.scheduler.add(() => this.processTask(id, data), metadata);
+                if (cancel) this.cancelCallbacks[id] = cancel;
             } else {
                 // In the main thread, process messages immediately so that other work does not slip in
                 // between getting partial data back from workers.
@@ -126,6 +124,8 @@ class Actor {
     }
 
     processTask(id: number, task: any) {
+        // Always delete since we are no longer cancellable
+        delete this.cancelCallbacks[id];
         if (task.type === '<response>') {
             // The done() function in the counterpart has been called, and we are now
             // firing the callback in the originating actor, if there is one.
@@ -140,9 +140,8 @@ class Actor {
                 }
             }
         } else {
-            const buffers: ?Array<Transferable> = isSafari(this.globalScope) ? undefined : [];
+            const buffers: Set<Transferable> = new Set();
             const done = task.hasCallback ? (err: ?Error, data: mixed) => {
-                delete this.cancelCallbacks[id];
                 this.target.postMessage({
                     id,
                     type: '<response>',
@@ -160,7 +159,7 @@ class Actor {
             } else if (this.parent.getWorkerSource) {
                 // task.type == sourcetype.method
                 const keys = task.type.split('.');
-                const scope = (this.parent: any).getWorkerSource(task.sourceMapId, keys[0], params.source);
+                const scope = (this.parent: any).getWorkerSource(task.sourceMapId, keys[0], params.source, params.scope);
                 scope[keys[1]](params, done);
             } else {
                 // No function was found.

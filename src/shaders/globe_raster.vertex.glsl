@@ -1,3 +1,6 @@
+#include "_prelude_fog.vertex.glsl"
+#include "_prelude_terrain.vertex.glsl"
+
 uniform mat4 u_proj_matrix;
 uniform mat4 u_normalize_matrix;
 uniform mat4 u_globe_matrix;
@@ -8,39 +11,13 @@ uniform mat3 u_grid_matrix;
 uniform float u_skirt_height;
 
 #ifdef GLOBE_POLES
-attribute vec3 a_globe_pos;
-attribute vec2 a_uv;
+in vec3 a_globe_pos;
+in vec2 a_uv;
 #else
-attribute vec2 a_pos; // .xy - grid coords, .z - 1 - skirt, 0 - grid
+in vec2 a_pos; // .xy - grid coords, .z - 1 - skirt, 0 - grid
 #endif
 
-varying vec2 v_pos0;
-
-const float wireframeOffset = 1e3;
-
-float mercatorXfromLng(float lng) {
-    return (180.0 + lng) / 360.0;
-}
-
-float mercatorYfromLat(float lat) {
-    return (180.0 - (RAD_TO_DEG* log(tan(QUARTER_PI + lat / 2.0 * DEG_TO_RAD)))) / 360.0;
-}
-
-vec3 latLngToECEF(vec2 latLng) {
-    latLng = DEG_TO_RAD * latLng;
-    
-    float cosLat = cos(latLng[0]);
-    float sinLat = sin(latLng[0]);
-    float cosLng = cos(latLng[1]);
-    float sinLng = sin(latLng[1]);
-
-    // Convert lat & lng to spherical representation. Use zoom=0 as a reference
-    float sx = cosLat * sinLng * GLOBE_RADIUS;
-    float sy = -sinLat * GLOBE_RADIUS;
-    float sz = cosLat * cosLng * GLOBE_RADIUS;
-
-    return vec3(sx, sy, sz);
-}
+out vec2 v_pos0;
 
 void main() {
 #ifdef GLOBE_POLES
@@ -82,10 +59,6 @@ void main() {
 #endif
 
     float height = elevation(tile_pos);
-
-#ifdef TERRAIN_WIREFRAME
-    height += wireframeOffset;
-#endif
 
     globe_pos += up_vector * height;
 

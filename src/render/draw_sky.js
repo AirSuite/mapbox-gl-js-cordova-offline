@@ -4,33 +4,26 @@ import StencilMode from '../gl/stencil_mode.js';
 import DepthMode from '../gl/depth_mode.js';
 import ColorMode from '../gl/color_mode.js';
 import CullFaceMode from '../gl/cull_face_mode.js';
-import Context from '../gl/context.js';
 import Texture from './texture.js';
 import Program from './program.js';
-import {smoothstep} from '../util/util.js';
-import type SourceCache from '../source/source_cache.js';
 import SkyboxGeometry from './skybox_geometry.js';
 import {skyboxUniformValues, skyboxGradientUniformValues} from './program/skybox_program.js';
 import {skyboxCaptureUniformValues} from './program/skybox_capture_program.js';
 import SkyLayer from '../style/style_layer/sky_style_layer.js';
-import type Painter from './painter.js';
 import {mat3, mat4} from 'gl-matrix';
 import assert from 'assert';
+import {globeToMercatorTransition} from '../geo/projection/globe_util.js';
 
+import type SourceCache from '../source/source_cache.js';
+import type Painter from './painter.js';
 import type {Mat4} from 'gl-matrix';
 
 export default drawSky;
 
-const TRANSITION_OPACITY_ZOOM_START = 7;
-const TRANSITION_OPACITY_ZOOM_END = 8;
-
 function drawSky(painter: Painter, sourceCache: SourceCache, layer: SkyLayer) {
     const tr = painter.transform;
-    const globeOrMercator = (tr.projection.name === 'mercator' || tr.projection.name === 'globe');
-    // For non-mercator projection, use a forced opacity transition. This transition is set to be
-    // 1.0 after the sheer adjustment upper bound which ensures to be in the mercator projection.
-    // Note: we only render sky for globe projection during the transition to mercator.
-    const transitionOpacity = globeOrMercator ? 1.0 : smoothstep(TRANSITION_OPACITY_ZOOM_START, TRANSITION_OPACITY_ZOOM_END, tr.zoom);
+    // Note: we render sky for globe projection during the transition to mercator or if atmosphere is disabled.
+    const transitionOpacity = !painter._atmosphere ? 1.0 : globeToMercatorTransition(tr.zoom);
     const opacity = layer.paint.get('sky-opacity') * transitionOpacity;
     if (opacity === 0) {
         return;
@@ -63,7 +56,7 @@ function drawSkyboxGradient(painter: Painter, layer: SkyLayer, depthMode: DepthM
     const context = painter.context;
     const gl = context.gl;
     const transform = painter.transform;
-    const program = painter.useProgram('skyboxGradient');
+    const program = painter.getOrCreateProgram('skyboxGradient');
 
     // Lazily initialize geometry and texture if they havent been created yet.
     if (!layer.skyboxGeometry) {
@@ -83,9 +76,9 @@ function drawSkyboxGradient(painter: Painter, layer: SkyLayer, depthMode: DepthM
         temporalOffset
     );
 
-    painter.prepareDrawProgram(context, program);
+    painter.uploadCommonUniforms(context, program);
 
-    program.draw(context, gl.TRIANGLES, depthMode, StencilMode.disabled,
+    program.draw(painter, gl.TRIANGLES, depthMode, StencilMode.disabled,
         painter.colorModeForRenderPass(), CullFaceMode.backCW,
         uniformValues, 'skyboxGradient', layer.skyboxGeometry.vertexBuffer,
         layer.skyboxGeometry.indexBuffer, layer.skyboxGeometry.segment);
@@ -95,7 +88,7 @@ function drawSkyboxFromCapture(painter: Painter, layer: SkyLayer, depthMode: Dep
     const context = painter.context;
     const gl = context.gl;
     const transform = painter.transform;
-    const program = painter.useProgram('skybox');
+    const program = painter.getOrCreateProgram('skybox');
 
     context.activeTexture.set(gl.TEXTURE0);
 
@@ -103,15 +96,16 @@ function drawSkyboxFromCapture(painter: Painter, layer: SkyLayer, depthMode: Dep
 
     const uniformValues = skyboxUniformValues(transform.skyboxMatrix, layer.getCenter(painter, false), 0, opacity, temporalOffset);
 
-    painter.prepareDrawProgram(context, program);
+    painter.uploadCommonUniforms(context, program);
 
-    program.draw(context, gl.TRIANGLES, depthMode, StencilMode.disabled,
+    program.draw(painter, gl.TRIANGLES, depthMode, StencilMode.disabled,
         painter.colorModeForRenderPass(), CullFaceMode.backCW,
         uniformValues, 'skybox', layer.skyboxGeometry.vertexBuffer,
         layer.skyboxGeometry.indexBuffer, layer.skyboxGeometry.segment);
 }
 
-function drawSkyboxFace(context: Context, layer: SkyLayer, program: Program<any>, faceRotate: Mat4, sunDirection: [number, number, number], i: number) {
+function drawSkyboxFace(painter: Painter, layer: SkyLayer, program: Program<any>, faceRotate: Mat4, sunDirection: [number, number, number], i: number) {
+    const context = painter.context;
     const gl = context.gl;
 
     const atmosphereColor = layer.paint.get('sky-atmosphere-color');
@@ -128,7 +122,7 @@ function drawSkyboxFace(context: Context, layer: SkyLayer, program: Program<any>
     const glFace = gl.TEXTURE_CUBE_MAP_POSITIVE_X + i;
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, glFace, layer.skyboxTexture, 0);
 
-    program.draw(context, gl.TRIANGLES, DepthMode.disabled, StencilMode.disabled, ColorMode.unblended, CullFaceMode.frontCW,
+    program.draw(painter, gl.TRIANGLES, DepthMode.disabled, StencilMode.disabled, ColorMode.unblended, CullFaceMode.frontCW,
         uniformValues, 'skyboxCapture', layer.skyboxGeometry.vertexBuffer,
         layer.skyboxGeometry.indexBuffer, layer.skyboxGeometry.segment);
 }
@@ -140,7 +134,7 @@ function captureSkybox(painter: Painter, layer: SkyLayer, width: number, height:
 
     // Using absence of fbo as a signal for lazy initialization of all resources, cache resources in layer object
     if (!fbo) {
-        fbo = layer.skyboxFbo = context.createFramebuffer(width, height, false);
+        fbo = layer.skyboxFbo = context.createFramebuffer(width, height, true, null);
         layer.skyboxGeometry = new SkyboxGeometry(context);
         layer.skyboxTexture = context.gl.createTexture();
 
@@ -162,32 +156,32 @@ function captureSkybox(painter: Painter, layer: SkyLayer, width: number, height:
     context.viewport.set([0, 0, width, height]);
 
     const sunDirection = layer.getCenter(painter, true);
-    const program = painter.useProgram('skyboxCapture');
+    const program = painter.getOrCreateProgram('skyboxCapture');
     const faceRotate = new Float64Array(16);
 
     // +x;
     mat4.identity(faceRotate);
     mat4.rotateY(faceRotate, faceRotate, -Math.PI * 0.5);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 0);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 0);
     // -x
     mat4.identity(faceRotate);
     mat4.rotateY(faceRotate, faceRotate, Math.PI * 0.5);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 1);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 1);
     // +y
     mat4.identity(faceRotate);
     mat4.rotateX(faceRotate, faceRotate, -Math.PI * 0.5);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 2);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 2);
     // -y
     mat4.identity(faceRotate);
     mat4.rotateX(faceRotate, faceRotate, Math.PI * 0.5);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 3);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 3);
     // +z
     mat4.identity(faceRotate);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 4);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 4);
     // -z
     mat4.identity(faceRotate);
     mat4.rotateY(faceRotate, faceRotate, Math.PI);
-    drawSkyboxFace(context, layer, program, faceRotate, sunDirection, 5);
+    drawSkyboxFace(painter, layer, program, faceRotate, sunDirection, 5);
 
     context.viewport.set([0, 0, painter.width, painter.height]);
 }

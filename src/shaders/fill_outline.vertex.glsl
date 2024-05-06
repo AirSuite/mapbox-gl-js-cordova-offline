@@ -1,9 +1,11 @@
-attribute vec2 a_pos;
+#include "_prelude_fog.vertex.glsl"
+
+in vec2 a_pos;
 
 uniform mat4 u_matrix;
 uniform vec2 u_world;
 
-varying vec2 v_pos;
+out highp vec2 v_pos;
 
 #pragma mapbox: define highp vec4 outline_color
 #pragma mapbox: define lowp float opacity

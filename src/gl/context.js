@@ -9,6 +9,7 @@ import ColorMode from './color_mode.js';
 import CullFaceMode from './cull_face_mode.js';
 import {deepEqual} from '../util/util.js';
 import {ClearColor, ClearDepth, ClearStencil, ColorMask, DepthMask, StencilMask, StencilFunc, StencilOp, StencilTest, DepthRange, DepthTest, DepthFunc, Blend, BlendFunc, BlendColor, BlendEquation, CullFace, CullFaceSide, FrontFace, Program, ActiveTextureUnit, Viewport, BindFramebuffer, BindRenderbuffer, BindTexture, BindVertexBuffer, BindElementBuffer, BindVertexArrayOES, PixelStoreUnpack, PixelStoreUnpackPremultiplyAlpha, PixelStoreUnpackFlipY} from './value.js';
+import type {DepthBufferType, ColorMaskType} from './types.js';
 
 import type {TriangleIndexArray, LineIndexArray, LineStripIndexArray} from '../data/index_array_type.js';
 import type {
@@ -20,13 +21,18 @@ import type Color from '../style-spec/util/color.js';
 type ClearArgs = {
     color?: Color,
     depth?: number,
-    stencil?: number
+    stencil?: number,
+    colorMask?: ColorMaskType
+};
+
+export type ContextOptions = {
+    extTextureFilterAnisotropicForceOff?: boolean;
+    extTextureFloatLinearForceOff?: boolean;
+    extStandardDerivativesForceOff?: boolean;
 };
 
 class Context {
-    gl: WebGLRenderingContext;
-    isWebGL2: boolean;
-    extVertexArrayObject: any;
+    gl: WebGL2RenderingContext;
     currentNumAttributes: ?number;
     maxTextureSize: number;
 
@@ -68,27 +74,14 @@ class Context {
     extTextureFilterAnisotropicMax: any;
     extTextureHalfFloat: any;
     extRenderToTextureHalfFloat: any;
-    extStandardDerivatives: any;
     extDebugRendererInfo: any;
     extTimerQuery: any;
+    extTextureFloatLinear: any;
+    options: ContextOptions;
+    maxPointSize: number;
 
-    extTextureFilterAnisotropicForceOff: boolean;
-    extStandardDerivativesForceOff: boolean;
-
-    constructor(gl: WebGLRenderingContext, isWebGL2: boolean = false) {
+    constructor(gl: WebGL2RenderingContext, options?: ContextOptions) {
         this.gl = gl;
-        this.isWebGL2 = isWebGL2;
-        this.extVertexArrayObject = this.gl.getExtension('OES_vertex_array_object');
-
-        if (isWebGL2) {
-            /* $FlowFixMe[cannot-resolve-name] */ // Not adding dependency to webgl2 yet.
-            const gl2 = (gl: WebGL2RenderingContext);
-            this.extVertexArrayObject = {
-                createVertexArrayOES: gl2.createVertexArray.bind(gl),
-                deleteVertexArrayOES: gl2.deleteVertexArray.bind(gl),
-                bindVertexArrayOES: gl2.bindVertexArray.bind(gl)
-            };
-        }
 
         this.clearColor = new ClearColor(this);
         this.clearDepth = new ClearDepth(this);
@@ -117,21 +110,22 @@ class Context {
         this.bindTexture = new BindTexture(this);
         this.bindVertexBuffer = new BindVertexBuffer(this);
         this.bindElementBuffer = new BindElementBuffer(this);
-        this.bindVertexArrayOES = this.extVertexArrayObject && new BindVertexArrayOES(this);
+        this.bindVertexArrayOES = new BindVertexArrayOES(this);
         this.pixelStoreUnpack = new PixelStoreUnpack(this);
         this.pixelStoreUnpackPremultiplyAlpha = new PixelStoreUnpackPremultiplyAlpha(this);
         this.pixelStoreUnpackFlipY = new PixelStoreUnpackFlipY(this);
+        this.options = options ? {...options} : {};
 
-        this.extTextureFilterAnisotropic = (
-            gl.getExtension('EXT_texture_filter_anisotropic') ||
+        if (!this.options.extTextureFilterAnisotropicForceOff) {
+            this.extTextureFilterAnisotropic = (
+                gl.getExtension('EXT_texture_filter_anisotropic') ||
             gl.getExtension('MOZ_EXT_texture_filter_anisotropic') ||
             gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic')
-        );
-        if (this.extTextureFilterAnisotropic) {
-            this.extTextureFilterAnisotropicMax = gl.getParameter(this.extTextureFilterAnisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+            );
+            if (this.extTextureFilterAnisotropic) {
+                this.extTextureFilterAnisotropicMax = gl.getParameter(this.extTextureFilterAnisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+            }
         }
-        this.extTextureFilterAnisotropicForceOff = false;
-        this.extStandardDerivativesForceOff = false;
 
         this.extDebugRendererInfo = gl.getExtension('WEBGL_debug_renderer_info');
         if (this.extDebugRendererInfo) {
@@ -139,14 +133,14 @@ class Context {
             this.vendor = gl.getParameter(this.extDebugRendererInfo.UNMASKED_VENDOR_WEBGL);
         }
 
-        if (!isWebGL2) this.extTextureHalfFloat = gl.getExtension('OES_texture_half_float');
-        if (isWebGL2 || (this.extTextureHalfFloat && gl.getExtension('OES_texture_half_float_linear'))) {
-            this.extRenderToTextureHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
+        if (!this.options.extTextureFloatLinearForceOff) {
+            this.extTextureFloatLinear = gl.getExtension('OES_texture_float_linear');
         }
-        this.extStandardDerivatives = isWebGL2 || gl.getExtension('OES_standard_derivatives');
+        this.extRenderToTextureHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
 
-        this.extTimerQuery = gl.getExtension('EXT_disjoint_timer_query');
+        this.extTimerQuery = gl.getExtension('EXT_disjoint_timer_query_webgl2');
         this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        this.maxPointSize = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1];
     }
 
     setDefault() {
@@ -207,20 +201,18 @@ class Context {
         this.bindTexture.dirty = true;
         this.bindVertexBuffer.dirty = true;
         this.bindElementBuffer.dirty = true;
-        if (this.extVertexArrayObject) {
-            this.bindVertexArrayOES.dirty = true;
-        }
+        this.bindVertexArrayOES.dirty = true;
         this.pixelStoreUnpack.dirty = true;
         this.pixelStoreUnpackPremultiplyAlpha.dirty = true;
         this.pixelStoreUnpackFlipY.dirty = true;
     }
 
-    createIndexBuffer(array: TriangleIndexArray | LineIndexArray | LineStripIndexArray, dynamicDraw?: boolean): IndexBuffer {
-        return new IndexBuffer(this, array, dynamicDraw);
+    createIndexBuffer(array: TriangleIndexArray | LineIndexArray | LineStripIndexArray, dynamicDraw?: boolean, noDestroy?: boolean): IndexBuffer {
+        return new IndexBuffer(this, array, dynamicDraw, noDestroy);
     }
 
-    createVertexBuffer(array: StructArray, attributes: $ReadOnlyArray<StructArrayMember>, dynamicDraw?: boolean): VertexBuffer {
-        return new VertexBuffer(this, array, attributes, dynamicDraw);
+    createVertexBuffer(array: StructArray, attributes: $ReadOnlyArray<StructArrayMember>, dynamicDraw?: boolean, noDestroy?: boolean, instanceCount?: number): VertexBuffer {
+        return new VertexBuffer(this, array, attributes, dynamicDraw, noDestroy, instanceCount);
     }
 
     createRenderbuffer(storageFormat: number, width: number, height: number): ?WebGLRenderbuffer {
@@ -234,18 +226,22 @@ class Context {
         return rbo;
     }
 
-    createFramebuffer(width: number, height: number, hasDepth: boolean): Framebuffer {
-        return new Framebuffer(this, width, height, hasDepth);
+    createFramebuffer(width: number, height: number, hasColor: boolean, depthType: ?DepthBufferType): Framebuffer {
+        return new Framebuffer(this, width, height, hasColor, depthType);
     }
 
-    clear({color, depth, stencil}: ClearArgs) {
+    clear({color, depth, stencil, colorMask}: ClearArgs) {
         const gl = this.gl;
         let mask = 0;
 
         if (color) {
             mask |= gl.COLOR_BUFFER_BIT;
             this.clearColor.set(color);
-            this.colorMask.set([true, true, true, true]);
+            if (colorMask) {
+                this.colorMask.set(colorMask);
+            } else {
+                this.colorMask.set([true, true, true, true]);
+            }
         }
 
         if (typeof depth !== 'undefined') {
@@ -311,6 +307,11 @@ class Context {
             this.blend.set(true);
             this.blendFunc.set(colorMode.blendFunction);
             this.blendColor.set(colorMode.blendColor);
+            if (colorMode.blendEquation) {
+                this.blendEquation.set(colorMode.blendEquation);
+            } else {
+                this.blendEquation.setDefault();
+            }
         }
 
         this.colorMask.set(colorMode.mask);
@@ -319,9 +320,7 @@ class Context {
     unbindVAO() {
         // Unbinding the VAO prevents other things (custom layers, new buffer creation) from
         // unintentionally changing the state of the last VAO used.
-        if (this.extVertexArrayObject) {
-            this.bindVertexArrayOES.set(null);
-        }
+        this.bindVertexArrayOES.set(null);
     }
 }
 

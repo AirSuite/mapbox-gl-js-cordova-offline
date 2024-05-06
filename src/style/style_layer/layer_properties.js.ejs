@@ -1,26 +1,28 @@
 <%
-  const type = locals.type;
-  const layoutProperties = locals.layoutProperties;
-  const paintProperties = locals.paintProperties;
+  const type = locals.layer.type;
+  const layoutProperties = locals.layer.layoutProperties;
+  const paintProperties = locals.layer.paintProperties;
+  const srcDir = locals.srcDir;
+  const styleDir =  locals.styleDir;
 -%>
-// This file is generated. Edit build/generate-style-code.js, then run `yarn run codegen`.
+// This file is generated. Edit build/generate-style-code.js, then run `npm run codegen`.
 // @flow
 /* eslint-disable */
 
-import styleSpec from '../../style-spec/reference/latest.js';
+import styleSpec from '<%= srcDir -%>/style-spec/reference/latest.js';
 
 import {
     Properties,
     DataConstantProperty,
     DataDrivenProperty,
     ColorRampProperty
-} from '../properties.js';
+} from '<%= styleDir -%>/properties.js';
 
-import type Color from '../../style-spec/util/color.js';
+import type Color from '<%= srcDir -%>/style-spec/util/color.js';
 
-import type Formatted from '../../style-spec/expression/types/formatted.js';
+import type Formatted from '<%= srcDir %>/style-spec/expression/types/formatted.js';
 
-import type ResolvedImage from '../../style-spec/expression/types/resolved_image.js';
+import type ResolvedImage from '<%= srcDir -%>/style-spec/expression/types/resolved_image.js';
 <%
 const overridables = paintProperties.filter(p => p.overridable)
 if (overridables.length) { -%>
@@ -34,20 +36,20 @@ import {
 <% if (layoutProperties.length) { -%>
 export type LayoutProps = {|
 <% for (const property of layoutProperties) { -%>
-    "<%= property.name %>": <%- propertyType(property) %>,
+    "<%= property.name %>": <%- propertyType(type, property) %>,
 <% } -%>
 |};
 
 const layout: Properties<LayoutProps> = new Properties({
 <% for (const property of layoutProperties) { -%>
-    "<%= property.name %>": <%- propertyValue(property, 'layout') %>,
+    "<%= property.name %>": <%- propertyValue(type, property, 'layout') %>,
 <% } -%>
 });
 <% } -%>
 <% if(paintProperties.length){ %>
 export type PaintProps = {|
 <% for (const property of paintProperties) { -%>
-    "<%= property.name %>": <%- propertyType(property) %>,
+    "<%= property.name %>": <%- propertyType(type, property) %>,
 <% } -%>
 |};
 <% } else{ %>
@@ -55,7 +57,7 @@ export type PaintProps = {};
 <% } %>
 const paint: Properties<PaintProps> = new Properties({
 <% for (const property of paintProperties) { -%>
-    "<%= property.name %>": <%- propertyValue(property, 'paint') %>,
+    "<%= property.name %>": <%- propertyValue(type, property, 'paint') %>,
 <% } -%>
 });
 

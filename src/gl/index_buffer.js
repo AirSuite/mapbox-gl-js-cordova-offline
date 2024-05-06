@@ -9,8 +9,13 @@ class IndexBuffer {
     context: Context;
     buffer: ?WebGLBuffer;
     dynamicDraw: boolean;
+    id: number; // Unique ID, iterated on construction and data upload
 
-    constructor(context: Context, array: TriangleIndexArray | LineIndexArray | LineStripIndexArray, dynamicDraw?: boolean) {
+    static uniqueIdxCounter: number;
+    constructor(context: Context, array: TriangleIndexArray | LineIndexArray | LineStripIndexArray, dynamicDraw?: boolean, noDestroy?: boolean) {
+        this.id = IndexBuffer.uniqueIdxCounter;
+        IndexBuffer.uniqueIdxCounter++;
+
         this.context = context;
         const gl = context.gl;
         this.buffer = gl.createBuffer();
@@ -24,7 +29,7 @@ class IndexBuffer {
         context.bindElementBuffer.set(this.buffer);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, array.arrayBuffer, this.dynamicDraw ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
 
-        if (!this.dynamicDraw) {
+        if (!this.dynamicDraw && !noDestroy) {
             array.destroy();
         }
     }
@@ -34,6 +39,9 @@ class IndexBuffer {
     }
 
     updateData(array: StructArray) {
+        this.id = IndexBuffer.uniqueIdxCounter;
+        IndexBuffer.uniqueIdxCounter++;
+
         const gl = this.context.gl;
         assert(this.dynamicDraw);
         // The right VAO will get this buffer re-bound later in VertexArrayObject#bind
@@ -51,5 +59,7 @@ class IndexBuffer {
         }
     }
 }
+
+IndexBuffer.uniqueIdxCounter = 0;
 
 export default IndexBuffer;

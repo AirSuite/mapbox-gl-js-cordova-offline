@@ -16,7 +16,7 @@ import localizeURLs from './localize-urls.js';
 export function generateFixtureJson(rootDirectory, suiteDirectory, outputDirectory = 'test/integration/dist', includeImages = false, stylePaths = []) {
     if (!stylePaths.length) {
         const pathGlob = getAllFixtureGlobs(rootDirectory, suiteDirectory)[0];
-        stylePaths = globSync(pathGlob);
+        stylePaths = globSync(pathGlob).sort((a, b) => a.localeCompare(b, 'en'));
         if (!stylePaths.length) {
             console.error(`Found no tests matching the pattern ${pathGlob}`);
         }
@@ -81,8 +81,10 @@ export function getAllFixtureGlobs(rootDirectory, suiteDirectory) {
     const basePath = path.join(rootDirectory, suiteDirectory);
     const jsonPaths = path.join(basePath, '/**/*.json');
     const imagePaths = path.join(basePath, '/**/*.png');
+    const modelPaths = path.join(basePath, '/**/*.gltf');
+    const landmarkPaths = path.join(basePath, '/**/*.b3dm');
 
-    return [jsonPaths, imagePaths];
+    return [jsonPaths, imagePaths, modelPaths, landmarkPaths];
 }
 
 function parseJsonFromFile(filePath) {

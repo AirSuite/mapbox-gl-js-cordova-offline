@@ -1,11 +1,13 @@
+#include "_prelude_fog.vertex.glsl"
+
 uniform mat4 u_matrix;
 uniform vec2 u_pixel_coord_upper;
 uniform vec2 u_pixel_coord_lower;
 uniform float u_tile_units_to_pixels;
 
-attribute vec2 a_pos;
+in vec2 a_pos;
 
-varying vec2 v_pos;
+out vec2 v_pos;
 
 #pragma mapbox: define lowp float opacity
 #pragma mapbox: define lowp vec4 pattern

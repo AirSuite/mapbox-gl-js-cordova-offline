@@ -1,8 +1,10 @@
+/* eslint-disable flowtype/require-valid-file-annotation */
 import fs from 'fs';
-import sourcemaps from 'rollup-plugin-sourcemaps';
+import {fileURLToPath} from 'url';
+import {readFile} from 'node:fs/promises';
+
 import {plugins} from './build/rollup_plugins.js';
 import banner from './build/banner.js';
-import {fileURLToPath} from 'url';
 
 const {BUILD, MINIFY} = process.env;
 const minified = MINIFY === 'true';
@@ -11,15 +13,15 @@ const production = BUILD === 'production' || bench;
 
 function buildType(build, minified) {
     switch (build) {
-        case 'production':
-            if (minified) return 'dist/mapbox-gl.js';
-            return 'dist/mapbox-gl-unminified.js';
-        case 'bench':
-            return 'dist/mapbox-gl-bench.js';
-        case 'dev':
-            return 'dist/mapbox-gl-dev.js';
-        default:
-            return 'dist/mapbox-gl-dev.js';
+    case 'production':
+        if (minified) return 'dist/mapbox-gl.js';
+        return 'dist/mapbox-gl-unminified.js';
+    case 'bench':
+        return 'dist/mapbox-gl-bench.js';
+    case 'dev':
+        return 'dist/mapbox-gl-dev.js';
+    default:
+        return 'dist/mapbox-gl-dev.js';
     }
 }
 const outputFile = buildType(BUILD, MINIFY);
@@ -39,8 +41,10 @@ export default [{
         format: 'amd',
         sourcemap: 'inline',
         indent: false,
-        chunkFileNames: 'shared.js'
+        chunkFileNames: 'shared.js',
+        minifyInternalExports: production
     },
+    onwarn: production ? onwarn : false,
     treeshake: production,
     plugins: plugins({minified, production, bench})
 }, {
@@ -64,3 +68,31 @@ export default [{
         sourcemaps()
     ],
 }];
+
+function sourcemaps() {
+    const base64SourceMapRegExp = /\/\/# sourceMappingURL=data:[^,]+,([^ ]+)/;
+
+    return {
+        name: 'sourcemaps',
+        async load(id) {
+            const code = await readFile(id, {encoding: 'utf8'});
+            const match = base64SourceMapRegExp.exec(code);
+            if (!match) return;
+
+            const base64EncodedSourceMap = match[1];
+            const decodedSourceMap = Buffer.from(base64EncodedSourceMap, 'base64').toString('utf-8');
+            const map = JSON.parse(decodedSourceMap);
+
+            return {code, map};
+        }
+    };
+}
+
+function onwarn(warning) {
+    if (warning.code === 'CIRCULAR_DEPENDENCY') {
+        // Ignore circular dependencies in style-spec and throw on all others
+        if (!warning.ids[0].includes('/src/style-spec')) throw new Error(warning.message);
+    } else {
+        console.error(`(!) ${warning.message}`);
+    }
+}

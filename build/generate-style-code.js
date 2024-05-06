@@ -5,6 +5,10 @@ import ejs from 'ejs';
 import spec from '../src/style-spec/reference/v8.json';
 import Color from '../src/style-spec/util/color.js';
 
+const customTypeBindings = {
+    "directional.direction": "DirectionProperty",
+};
+
 global.camelize = function (str) {
     return str.replace(/(?:^|-)(.)/g, function (_, x) {
         return x.toUpperCase();
@@ -43,7 +47,10 @@ global.flowType = function (property) {
     }
 };
 
-global.propertyType = function (property) {
+global.propertyType = function (type, property) {
+    if (customTypeBindings[`${type}.${property.name}`]) {
+        return `${customTypeBindings[`${type}.${property.name}`]}`;
+    }
     switch (property['property-type']) {
         case 'data-driven':
             return `DataDrivenProperty<${flowType(property)}>`;
@@ -105,40 +112,46 @@ global.overrides = function (property) {
     return `{ runtimeType: ${runtimeType(property)}, getOverride: (o) => o.${camelizeWithLeadingLowercase(property.name)}, hasOverride: (o) => !!o.${camelizeWithLeadingLowercase(property.name)} }`;
 }
 
-global.propertyValue = function (property, type) {
+global.propertyValue = function (type, property, valueType) {
+    const spec = `styleSpec["${valueType}_${property.type_}"]["${property.name}"]`;
+    if (customTypeBindings[`${type}.${property.name}`]) {
+        return `new ${customTypeBindings[`${type}.${property.name}`]}(${spec})`;
+    }
     switch (property['property-type']) {
         case 'data-driven':
             if (property.overridable) {
-                return `new DataDrivenProperty(styleSpec["${type}_${property.layerType}"]["${property.name}"], ${overrides(property)})`;
+                return `new DataDrivenProperty(${spec}, ${overrides(property)})`;
             } else {
-                return `new DataDrivenProperty(styleSpec["${type}_${property.layerType}"]["${property.name}"])`;
+                return `new DataDrivenProperty(${spec})`;
             }
         case 'color-ramp':
-            return `new ColorRampProperty(styleSpec["${type}_${property.layerType}"]["${property.name}"])`;
+            return `new ColorRampProperty(${spec})`;
         case 'data-constant':
         case 'constant':
-            return `new DataConstantProperty(styleSpec["${type}_${property.layerType}"]["${property.name}"])`;
+            return `new DataConstantProperty(${spec})`;
         default:
             throw new Error(`unknown property-type "${property['property-type']}" for ${property.name}`);
     }
 };
 
-const propertiesJs = ejs.compile(fs.readFileSync('src/style/style_layer/layer_properties.js.ejs', 'utf8'), {strict: true});
+const layerPropertiesJs = ejs.compile(fs.readFileSync('src/style/style_layer/layer_properties.js.ejs', 'utf8'), {strict: true});
+const layerPropertiesJs3Dstyle = ejs.compile(fs.readFileSync('src/style/style_layer/layer_properties.js.ejs', 'utf8'), {strict: true});
+
 
 const layers = Object.keys(spec.layer.type.values).map((type) => {
-    const layoutProperties = Object.keys(spec[`layout_${type}`]).reduce((memo, name) => {
-        if (name !== 'visibility') {
-            spec[`layout_${type}`][name].name = name;
-            spec[`layout_${type}`][name].layerType = type;
-            memo.push(spec[`layout_${type}`][name]);
-        }
+    const layoutSpec = spec[`layout_${type}`] ?? {};
+    const paintSpec = spec[`paint_${type}`] ?? {};
+    const layoutProperties = Object.keys(layoutSpec).reduce((memo, name) => {
+        layoutSpec[name].name = name;
+        layoutSpec[name].type_ = type;
+        memo.push(layoutSpec[name]);
         return memo;
     }, []);
 
-    const paintProperties = Object.keys(spec[`paint_${type}`]).reduce((memo, name) => {
-        spec[`paint_${type}`][name].name = name;
-        spec[`paint_${type}`][name].layerType = type;
-        memo.push(spec[`paint_${type}`][name]);
+    const paintProperties = Object.keys(paintSpec).reduce((memo, name) => {
+        paintSpec[name].name = name;
+        paintSpec[name].type_ = type;
+        memo.push(paintSpec[name]);
         return memo;
     }, []);
 
@@ -146,5 +159,33 @@ const layers = Object.keys(spec.layer.type.values).map((type) => {
 });
 
 for (const layer of layers) {
-    fs.writeFileSync(`src/style/style_layer/${layer.type.replace('-', '_')}_style_layer_properties.js`, propertiesJs(layer))
+    let srcDir = '../..'
+    let styleDir = '..'
+    let outputDir = `src/style/style_layer`;
+    let properties = layerPropertiesJs;
+    if (layer.type === 'model')
+    {
+        srcDir = '../../../src'
+        styleDir = '../../../src/style'
+        outputDir = `3d-style/style/style_layer`;
+        properties = layerPropertiesJs3Dstyle;
+    }
+    fs.writeFileSync(`${outputDir}/${layer.type.replace('-', '_')}_style_layer_properties.js`, properties({layer: layer, srcDir: srcDir, styleDir: styleDir}));
+}
+
+const lightPropertiesJs = ejs.compile(fs.readFileSync('3d-style/style/light_properties.js.ejs', 'utf8'), {strict: true});
+
+const lights = Object.keys(spec['light-3d'].type.values).map((type) => {
+    const properties = Object.keys(spec[`properties_light_${type}`]).reduce((memo, name) => {
+        spec[`properties_light_${type}`][name].name = name;
+        spec[`properties_light_${type}`][name].type_ = 'light_' + type;
+        memo.push(spec[`properties_light_${type}`][name]);
+        return memo;
+    }, []);
+
+    return { type, properties };
+});
+
+for (const light of lights) {
+    fs.writeFileSync(`3d-style/style/${light.type}_light_properties.js`, lightPropertiesJs(light))
 }

@@ -1,6 +1,6 @@
 // @flow
 
-import ValidationError from '../error/validation_error.js';
+import {default as ValidationError, ValidationWarning} from '../error/validation_error.js';
 import validate from './validate.js';
 import getType from '../util/get_type.js';
 import {unbundle} from '../util/unbundle_jsonlint.js';
@@ -17,6 +17,8 @@ export default function validateTerrain(options: ValidationOptions): Array<Valid
 
     const rootType = getType(terrain);
     if (terrain === undefined) {
+        return errors;
+    } else if (rootType === 'null') {
         return errors;
     } else if (rootType !== 'object') {
         errors = errors.concat([new ValidationError('terrain', terrain, `object expected, ${rootType} found`)]);
@@ -43,7 +45,7 @@ export default function validateTerrain(options: ValidationOptions): Array<Valid
                 styleSpec
             }));
         } else {
-            errors = errors.concat([new ValidationError(key, terrain[key], `unknown property "${key}"`)]);
+            errors = errors.concat([new ValidationWarning(key, terrain[key], `unknown property "${key}"`)]);
         }
     }
 

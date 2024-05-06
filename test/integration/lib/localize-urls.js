@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import colors from 'chalk';
+import chalk from 'chalk';
 
 import {fileURLToPath} from 'url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -10,13 +10,20 @@ const require = createRequire(import.meta.url);
 
 export default function localizeURLs(style, port) {
     localizeStyleURLs(style, port);
+
+    if (style.imports) {
+        for (const importSpec of style.imports) {
+            localizeURLs(importSpec.data, port);
+        }
+    }
+
     if (style.metadata && style.metadata.test && style.metadata.test.operations) {
         style.metadata.test.operations.forEach((op) => {
             if (op[0] === 'addSource') {
                 localizeSourceURLs(op[2], port);
             } else if (op[0] === 'setStyle') {
                 if (typeof op[1] === 'object') {
-                    localizeStyleURLs(op[1], port);
+                    localizeURLs(op[1], port);
                     return;
                 }
                 if (op[1].startsWith('mapbox://')) return;
@@ -30,14 +37,14 @@ export default function localizeURLs(style, port) {
                         styleJSON = fs.readFileSync(path.join(__dirname, '..', relativePath));
                     }
                 } catch (error) {
-                    console.log(colors.blue(`* ${error}`));
+                    console.log(chalk.blue(`* ${error}`));
                     return;
                 }
 
                 try {
                     styleJSON = JSON.parse(styleJSON);
                 } catch (error) {
-                    console.log(colors.blue(`* Error while parsing ${op[1]}: ${error}`));
+                    console.log(chalk.blue(`* Error while parsing ${op[1]}: ${error}`));
                     return;
                 }
 
@@ -89,13 +96,21 @@ function localizeSourceURLs(source, port) {
     if (source.data && typeof source.data == 'string') {
         source.data = localizeURL(source.data, port);
     }
+
+    for (const model in source.models) {
+        source.models[model].uri = localizeURL(source.models[model].uri, port);
+    }
 }
 
 function localizeStyleURLs (style, port) {
     for (const source in style.sources) {
         localizeSourceURLs(style.sources[source], port);
     }
-
+    if (style.models) {
+        for (const modelId in style.models) {
+            style.models[modelId] = localizeURL(style.models[modelId], port);
+        }
+    }
     if (style.sprite) {
         style.sprite = localizeMapboxSpriteURL(style.sprite, port);
         style.sprite = localizeURL(style.sprite, port);

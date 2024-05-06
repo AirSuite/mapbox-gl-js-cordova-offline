@@ -43,7 +43,7 @@ function patternUniformValues(painter: Painter, tile: Tile): UniformValues<Patte
 
     return {
         'u_image': 0,
-        'u_texsize': tile.imageAtlasTexture.size,
+        'u_texsize': tile.imageAtlasTexture ? tile.imageAtlasTexture.size : [0, 0],
         'u_tile_units_to_pixels': 1 / pixelsToTileUnits(tile, 1, painter.transform.tileZoom),
         // split the pixel coord into two pairs of 16 bit numbers. The glsl spec only guarantees 16 bits of precision.
         'u_pixel_coord_upper': [pixelX >> 16, pixelY >> 16],
@@ -51,13 +51,15 @@ function patternUniformValues(painter: Painter, tile: Tile): UniformValues<Patte
     };
 }
 
-function bgPatternUniformValues(image: ResolvedImage, painter: Painter,
-        tile: {tileID: OverscaledTileID, tileSize: number}
+function bgPatternUniformValues(
+    image: ResolvedImage,
+    scope: string,
+    painter: Painter,
+    tile: {tileID: OverscaledTileID, tileSize: number}
 ): UniformValues<BackgroundPatternUniformsType> {
-
-    const imagePos = painter.imageManager.getPattern(image.toString());
+    const imagePos = painter.imageManager.getPattern(image.toString(), scope);
     assert(imagePos);
-    const {width, height} = painter.imageManager.getPixelSize();
+    const {width, height} = painter.imageManager.getPixelSize(scope);
 
     const numTiles = Math.pow(2, tile.tileID.overscaledZ);
     const tileSizeAtNearestZoom = tile.tileSize * Math.pow(2, painter.transform.tileZoom) / numTiles;

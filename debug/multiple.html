@@ -49,7 +49,12 @@ var style = {
         "type": "line",
         "source": "streets",
         "source-layer": "road",
-        "paint": {"line-color": "rgb(55,89,144)",  "line-width": 4}
+        "paint": {
+            "line-color": "rgb(55,89,144)",
+            "line-width": 10,
+            "line-border-width": 3,
+            "line-border-color": "red"
+        }
     }]
 };
 
@@ -61,7 +66,8 @@ function addMap (container) {
         center: [-122.514426, 37.562984],
         bearing: -96,
         style,
-        hash: false
+        hash: false,
+        devtools: true,
     });
 
     map.addControl(new mapboxgl.GeolocateControl({

@@ -44,7 +44,7 @@ const generateResultHTML = template(`
 const pageCss = `
 body { font: 18px/1.2 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 10px; background: #ecf0f1 }
 h1 { font-size: 32px; margin-bottom: 0; }
-img { margin: 0 10px 10px 0; border: 1px dotted #ccc; }
+img { margin: 0 10px 10px 0; border: 1px dotted #ccc; image-rendering: pixelated; }
 input { position: absolute; opacity: 0; z-index: -1;}
 .tests { border-top: 1px dotted #bbb; margin-top: 10px; padding-top: 15px; overflow: hidden; }
 .status-container { margin: 0; }
@@ -81,7 +81,7 @@ const counterDom = {
 
 let resultsContainer;
 
-export function setupHTML(options = {}) {
+export function setupHTML() {
     // Add CSS to the page
     const style = document.createElement('style');
     document.head.appendChild(style);
@@ -89,10 +89,6 @@ export function setupHTML(options = {}) {
 
     //Create a container to hold test stats
     const statsContainer = document.createElement('div');
-
-    const webgl2Container = document.createElement('div');
-    webgl2Container.innerHTML = options.useWebGL2 ? 'WebGL2 is enabled.' : 'WebGL2 is disabled.';
-    statsContainer.appendChild(webgl2Container);
 
     const failedTestContainer = document.createElement('h1');
     failedTestContainer.style.color = 'red';

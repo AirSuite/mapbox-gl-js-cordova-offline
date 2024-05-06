@@ -37,24 +37,25 @@ class VertexBuffer {
     dynamicDraw: ?boolean;
     context: Context;
     buffer: ?WebGLBuffer;
+    instanceCount: ?number;
 
     /**
      * @param dynamicDraw Whether this buffer will be repeatedly updated.
      * @private
      */
-    constructor(context: Context, array: StructArray, attributes: $ReadOnlyArray<StructArrayMember>, dynamicDraw?: boolean) {
+    constructor(context: Context, array: StructArray, attributes: $ReadOnlyArray<StructArrayMember>, dynamicDraw?: boolean, noDestroy?: boolean, instanceCount?: number) {
         this.length = array.length;
         this.attributes = attributes;
         this.itemSize = array.bytesPerElement;
         this.dynamicDraw = dynamicDraw;
-
+        this.instanceCount = instanceCount;
         this.context = context;
         const gl = context.gl;
         this.buffer = gl.createBuffer();
         context.bindVertexBuffer.set(this.buffer);
         gl.bufferData(gl.ARRAY_BUFFER, array.arrayBuffer, this.dynamicDraw ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
 
-        if (!this.dynamicDraw) {
+        if (!this.dynamicDraw && !noDestroy) {
             array.destroy();
         }
     }
@@ -70,7 +71,7 @@ class VertexBuffer {
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, array.arrayBuffer);
     }
 
-    enableAttributes(gl: WebGLRenderingContext, program: Program<*>) {
+    enableAttributes(gl: WebGL2RenderingContext, program: Program<*>) {
         for (let j = 0; j < this.attributes.length; j++) {
             const member = this.attributes[j];
             const attribIndex: number | void = program.attributes[member.name];
@@ -86,7 +87,7 @@ class VertexBuffer {
      * @param program The active WebGL program.
      * @param vertexOffset Index of the starting vertex of the segment.
      */
-    setVertexAttribPointers(gl: WebGLRenderingContext, program: Program<*>, vertexOffset: ?number) {
+    setVertexAttribPointers(gl: WebGL2RenderingContext, program: Program<*>, vertexOffset: ?number) {
         for (let j = 0; j < this.attributes.length; j++) {
             const member = this.attributes[j];
             const attribIndex: number | void = program.attributes[member.name];
@@ -100,6 +101,17 @@ class VertexBuffer {
                     this.itemSize,
                     member.offset + (this.itemSize * (vertexOffset || 0))
                 );
+            }
+        }
+    }
+
+    setVertexAttribDivisor(gl: WebGL2RenderingContext, program: Program<*>, value: number) {
+        for (let j = 0; j < this.attributes.length; j++) {
+            const member = this.attributes[j];
+            const attribIndex: number | void = program.attributes[member.name];
+
+            if (attribIndex !== undefined && this.instanceCount && this.instanceCount > 0) {
+                gl.vertexAttribDivisor(attribIndex, value);
             }
         }
     }

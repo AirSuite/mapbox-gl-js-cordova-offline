@@ -20,8 +20,6 @@ import {vec3, vec4} from 'gl-matrix';
 
 const browserWriteFile = new Worker('../util/browser_write_file.js');
 
-const useWebGL2 = process.env.USE_WEBGL2 ? process.env.USE_WEBGL2 !== 'false' : true;
-
 // We are self-hosting test files.
 config.REQUIRE_ACCESS_TOKEN = false;
 window._suiteName = 'render-tests';
@@ -45,7 +43,7 @@ fakeCanvasContainer.style.top = '10px';
 fakeCanvasContainer.style.left = '10px';
 document.body.appendChild(fakeCanvasContainer);
 
-setupHTML({useWebGL2});
+setupHTML();
 
 const {canvas: expectedCanvas, ctx: expectedCtx} = createCanvas();
 const {canvas: diffCanvas, ctx: diffCtx} = createCanvas();
@@ -137,6 +135,7 @@ function parseOptions(currentFixture, style) {
         height: 512,
         pixelRatio: 1,
         allowed: 0.00015,
+        'diff-calculation-threshold': 0.1285,
         ...((style.metadata && style.metadata.test) || {})
     };
 
@@ -193,18 +192,27 @@ async function renderMap(style, options) {
         attributionControl: false,
         preserveDrawingBuffer: true,
         axonometric: options.axonometric || false,
-        useWebGL2,
         skew: options.skew || [0, 0],
         fadeDuration: options.fadeDuration || 0,
-        optimizeForTerrain: options.optimizeForTerrain || false,
         localIdeographFontFamily: options.localIdeographFontFamily || false,
         projection: options.projection,
         crossSourceCollisions: typeof options.crossSourceCollisions === "undefined" ? true : options.crossSourceCollisions,
         performanceMetricsCollection: false,
+        contextCreateOptions: {
+            // Anisotropic filtering is disabled
+            extTextureFilterAnisotropicForceOff: true,
+            // By default standard derivatives are disabled for testing
+            extStandardDerivativesForceOff: !options.standardDerivatives,
+            // OES_texture_float_linear is enabled by default
+            extTextureFloatLinearForceOff: options.textureFloatLinear === undefined ? false : !options.textureFloatLinear,
+        }
     });
 
     map.on('error', (e) => {
         errors.push({error: e.error.message, stack: e.error.stack});
+
+        // Log errors immediately in case test times out and doesn't have a chance to output the error messages
+        console.error(e.error.message);
     });
 
     map._authenticate = () => {};
@@ -213,17 +221,17 @@ async function renderMap(style, options) {
     window._renderTestNow = 0;
     mapboxgl.setNow(window._renderTestNow);
 
-    if (options.debug) map.showTileBoundaries = true;
+    if (options.debug) {
+        map.showTileBoundaries = true;
+        map.showParseStatus = false;
+    }
     if (options.showOverdrawInspector) map.showOverdrawInspector = true;
     if (options.showTerrainWireframe) map.showTerrainWireframe = true;
+    if (options.showLayers2DWireframe) map.showLayers2DWireframe = true;
+    if (options.showLayers3DWireframe) map.showLayers3DWireframe = true;
     if (options.showPadding) map.showPadding = true;
     if (options.collisionDebug) map.showCollisionBoxes = true;
     if (options.fadeDuration) map._isInitialLoad = false;
-
-    // Disable anisotropic filtering on render tests
-    map.painter.context.extTextureFilterAnisotropicForceOff = true;
-    // Disable globe antialiasing on render tests expect for antialiasing test
-    map.painter.context.extStandardDerivativesForceOff = !options.standardDerivatives;
 
     map.repaint = true;
     await map.once('load');
@@ -236,9 +244,9 @@ async function renderMap(style, options) {
     // 3. Run the operations on the map
     await applyOperations(map, options);
 
-    // 4. Wait until the map is idle
+    // 4. Wait until the map is idle and ensure that call stack is empty
     map.repaint = true;
-    await new Promise(resolve => map._requestDomTask(resolve));
+    await new Promise(resolve => requestAnimationFrame(map._requestDomTask.bind(map, resolve)));
 
     return map;
 }
@@ -281,7 +289,7 @@ function getActualImageDataURL(actualImageData, map, {w, h}, options) {
     return map.getCanvas().toDataURL();
 }
 
-function calculateDiff(actualImageData, expectedImages, {w, h}) {
+function calculateDiff(actualImageData, expectedImages, {w, h}, threshold) {
     // 2. draw expected.png into a canvas and extract ImageData
     let minImageSrc;
     let minDiffImage;
@@ -294,8 +302,7 @@ function calculateDiff(actualImageData, expectedImages, {w, h}) {
 
         // 4. Use pixelmatch to compare actual and expected images and write diff
         // all inputs must be Uint8Array or Uint8ClampedArray
-        const currentDiff = pixelmatch(actualImageData, expectedImages[i].data, diffImage, w, h, {threshold: 0.1285}) / (w * h);
-
+        const currentDiff = pixelmatch(actualImageData, expectedImages[i].data, diffImage, w, h, {threshold}) / (w * h);
         if (currentDiff < minDiff) {
             minDiff = currentDiff;
             minDiffImage = diffImage;
@@ -337,8 +344,7 @@ async function runTest(t) {
 
             return;
         }
-
-        const {minDiff, minDiffImage, minExpectedCanvas, minImageSrc} = calculateDiff(actualImageData, expectedImages, {w, h});
+        const {minDiff, minDiffImage, minExpectedCanvas, minImageSrc} = calculateDiff(actualImageData, expectedImages, {w, h}, options['diff-calculation-threshold']);
         const pass = minDiff <= options.allowed;
         const testMetaData = {
             name: currentTestName,

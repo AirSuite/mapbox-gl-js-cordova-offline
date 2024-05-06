@@ -3,7 +3,6 @@
 import UnitBezier from '@mapbox/unitbezier';
 
 import Point from '@mapbox/point-geometry';
-import window from './window.js';
 import assert from 'assert';
 
 import type {Callback} from '../types/callback.js';
@@ -571,7 +570,71 @@ export function calculateSignedArea(ring: Array<Point>): number {
     return sum;
 }
 
-/* global self, WorkerGlobalScope */
+export type Position = {
+    x: number,
+    y: number,
+    z: number,
+    azimuthal: number,
+    polar: number,
+};
+
+export type Direction = {
+    x: number,
+    y: number,
+    z: number
+};
+
+/**
+ * Converts spherical coordinates to cartesian position coordinates.
+ *
+ * @private
+ * @param spherical Spherical coordinates, in [radial, azimuthal, polar]
+ * @return Position cartesian coordinates
+ */
+export function sphericalPositionToCartesian([r, azimuthal, polar]: [number, number, number]): Position {
+    // We abstract "north"/"up" (compass-wise) to be 0° when really this is 90° (π/2):
+    // correct for that here
+    const a = degToRad(azimuthal + 90), p = degToRad(polar);
+
+    return {
+        x: r * Math.cos(a) * Math.sin(p),
+        y: r * Math.sin(a) * Math.sin(p),
+        z: r * Math.cos(p),
+        azimuthal, polar
+    };
+}
+
+/**
+ * Converts spherical direction to cartesian coordinates.
+ *
+ * @private
+ * @param spherical Spherical direction, in [azimuthal, polar]
+ * @return Direction cartesian direction
+ */
+export function sphericalDirectionToCartesian([azimuthal, polar]: [number, number, number]): Direction {
+    const position = sphericalPositionToCartesian([1.0, azimuthal, polar]);
+
+    return {
+        x: position.x,
+        y: position.y,
+        z: position.z
+    };
+}
+
+export function cartesianPositionToSpherical(x: number, y: number, z: number): [number, number, number] {
+    const radial = Math.sqrt(x * x + y * y + z * z);
+    const polar = radial > 0.0 ? Math.acos(z / radial) * RAD_TO_DEG : 0.0;
+    // Domain error may occur if x && y are both 0.0
+    let azimuthal = (x !== 0.0 || y !== 0.0) ? Math.atan2(-y, -x) * RAD_TO_DEG + 90.0 : 0.0;
+
+    if (azimuthal < 0.0) {
+        azimuthal += 360.0;
+    }
+
+    return [radial, azimuthal, polar];
+}
+
+/* global WorkerGlobalScope */
 /**
  *  Returns true if run in the web-worker context.
  *
@@ -648,12 +711,12 @@ export function isSafariWithAntialiasingBug(scope: any): ?boolean {
 }
 
 export function isFullscreen(): boolean {
-    return !!window.document.fullscreenElement || !!window.document.webkitFullscreenElement;
+    return !!document.fullscreenElement || !!(document: any).webkitFullscreenElement;
 }
 
 export function storageAvailable(type: string): boolean {
     try {
-        const storage = window[type];
+        const storage = self[type];
         storage.setItem('_mapbox_test_', 1);
         storage.removeItem('_mapbox_test_');
         return true;
@@ -665,7 +728,7 @@ export function storageAvailable(type: string): boolean {
 // The following methods are from https://developer.mozilla.org/en-US/docs/Web/API/WindowBase64/Base64_encoding_and_decoding#The_Unicode_Problem
 //Unicode compliant base64 encoder for strings
 export function b64EncodeUnicode(str: string): string {
-    return window.btoa(
+    return btoa(
         encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
             (match, p1) => {
                 return String.fromCharCode(Number('0x' + p1)); //eslint-disable-line
@@ -676,9 +739,16 @@ export function b64EncodeUnicode(str: string): string {
 
 // Unicode compliant decoder for base64-encoded strings
 export function b64DecodeUnicode(str: string): string {
-    return decodeURIComponent(window.atob(str).split('').map((c) => {
+    return decodeURIComponent(atob(str).split('').map((c) => {
         return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); //eslint-disable-line
     }).join(''));
+}
+
+export function base64DecToArr(sBase64: string): Uint8Array {
+    const str = atob(sBase64);
+    const arr = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) arr[i] = str.codePointAt(i);
+    return arr;
 }
 
 export function getColumn(matrix: Mat4, col: number): Vec4 {
@@ -690,4 +760,48 @@ export function setColumn(matrix: Mat4, col: number, values: Vec4) {
     matrix[col * 4 + 1] = values[1];
     matrix[col * 4 + 2] = values[2];
     matrix[col * 4 + 3] = values[3];
+}
+
+export function sRGBToLinearAndScale(v: [number, number, number, number], s: number): [number, number, number] {
+    return [
+        Math.pow(v[0], 2.2) * s,
+        Math.pow(v[1], 2.2) * s,
+        Math.pow(v[2], 2.2) * s
+    ];
+}
+
+export function linearVec3TosRGB(v: [number, number, number]): [number, number, number] {
+    return [
+        Math.pow(v[0], 1.0 / 2.2),
+        Math.pow(v[1], 1.0 / 2.2),
+        Math.pow(v[2], 1.0 / 2.2)
+    ];
+}
+
+export function lowerBound(array: number[], startIndex: number, finishIndex: number, target: number): number {
+    while (startIndex < finishIndex) {
+        const middleIndex = (startIndex + finishIndex) >> 1;
+
+        if (array[middleIndex] < target) {
+            startIndex = middleIndex + 1;
+        } else {
+            finishIndex = middleIndex;
+        }
+    }
+
+    return startIndex;
+}
+
+export function upperBound(array: number[], startIndex: number, finishIndex: number, target: number): number {
+    while (startIndex < finishIndex) {
+        const middleIndex = (startIndex + finishIndex) >> 1;
+
+        if (array[middleIndex] <= target) {
+            startIndex = middleIndex + 1;
+        } else {
+            finishIndex = middleIndex;
+        }
+    }
+
+    return startIndex;
 }

@@ -1,11 +1,12 @@
 // @flow
 
 type ExpressionType = 'data-driven' | 'color-ramp' | 'data-constant' | 'constant';
-type ExpressionParameters = Array<'zoom' | 'feature' | 'feature-state' | 'heatmap-density' | 'line-progress' | 'sky-radial-progress' | 'pitch' | 'distance-from-center'>;
+type ExpressionParameters = Array<'zoom' | 'feature' | 'feature-state' | 'heatmap-density' | 'line-progress' | 'raster-value' | 'sky-radial-progress' | 'pitch' | 'distance-from-center' | 'measure-light' | 'raster-particle-speed'>;
 
-type ExpressionSpecification = {
+export type ExpressionSpecification = {
     interpolated: boolean,
-    parameters: ExpressionParameters
+    parameters: ExpressionParameters,
+    relaxZoomRestriction: boolean
 }
 
 export type StylePropertySpecification = {

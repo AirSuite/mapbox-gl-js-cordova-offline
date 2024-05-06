@@ -7,11 +7,11 @@ import {
     Uniform1f,
     Uniform2f,
     UniformColor,
-    UniformMatrix4f,
-    Uniform4f
+    UniformMatrix4f
 } from '../uniform_binding.js';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import MercatorCoordinate from '../../geo/mercator_coordinate.js';
+import {cartesianPositionToSpherical, degToRad} from '../../../src/util/util.js';
 
 import type Context from '../../gl/context.js';
 import type {UniformValues} from '../uniform_binding.js';
@@ -28,6 +28,7 @@ export type HillshadeUniformsType = {|
     'u_light': Uniform2f,
     'u_shadow': UniformColor,
     'u_highlight': UniformColor,
+    'u_emissive_strength': Uniform1f,
     'u_accent': UniformColor
 |};
 
@@ -35,9 +36,10 @@ export type HillshadePrepareUniformsType = {|
     'u_matrix': UniformMatrix4f,
     'u_image': Uniform1i,
     'u_dimension': Uniform2f,
-    'u_zoom': Uniform1f,
-    'u_unpack': Uniform4f
+    'u_zoom': Uniform1f
 |};
+
+export type HillshadeDefinesType = 'TERRAIN_DEM_FLOAT_FORMAT';
 
 const hillshadeUniforms = (context: Context): HillshadeUniformsType => ({
     'u_matrix': new UniformMatrix4f(context),
@@ -46,6 +48,7 @@ const hillshadeUniforms = (context: Context): HillshadeUniformsType => ({
     'u_light': new Uniform2f(context),
     'u_shadow': new UniformColor(context),
     'u_highlight': new UniformColor(context),
+    'u_emissive_strength': new Uniform1f(context),
     'u_accent': new UniformColor(context)
 });
 
@@ -53,8 +56,7 @@ const hillshadePrepareUniforms = (context: Context): HillshadePrepareUniformsTyp
     'u_matrix': new UniformMatrix4f(context),
     'u_image': new Uniform1i(context),
     'u_dimension': new Uniform2f(context),
-    'u_zoom': new Uniform1f(context),
-    'u_unpack': new Uniform4f(context)
+    'u_zoom': new Uniform1f(context)
 });
 
 const hillshadeUniformValues = (
@@ -66,11 +68,19 @@ const hillshadeUniformValues = (
     const shadow = layer.paint.get("hillshade-shadow-color");
     const highlight = layer.paint.get("hillshade-highlight-color");
     const accent = layer.paint.get("hillshade-accent-color");
+    const emissiveStrength = layer.paint.get("hillshade-emissive-strength");
 
-    let azimuthal = layer.paint.get('hillshade-illumination-direction') * (Math.PI / 180);
+    let azimuthal = degToRad(layer.paint.get('hillshade-illumination-direction'));
     // modify azimuthal angle by map rotation if light is anchored at the viewport
     if (layer.paint.get('hillshade-illumination-anchor') === 'viewport') {
         azimuthal -= painter.transform.angle;
+    } else if (painter.style && painter.style.enable3dLights()) {
+        // hillshade-illumination-anchor = map & 3d lights enabled
+        if (painter.style.directionalLight) {
+            const direction = painter.style.directionalLight.properties.get('direction');
+            const spherical = cartesianPositionToSpherical(direction.x, direction.y, direction.z);
+            azimuthal = degToRad(spherical[1]);
+        }
     }
     const align = !painter.options.moving;
     return {
@@ -80,6 +90,7 @@ const hillshadeUniformValues = (
         'u_light': [layer.paint.get('hillshade-exaggeration'), azimuthal],
         'u_shadow': shadow,
         'u_highlight': highlight,
+        'u_emissive_strength': emissiveStrength,
         'u_accent': accent
     };
 };
@@ -98,8 +109,7 @@ const hillshadeUniformPrepareValues = (
         'u_matrix': matrix,
         'u_image': 1,
         'u_dimension': [stride, stride],
-        'u_zoom': tileID.overscaledZ,
-        'u_unpack': dem.unpackVector
+        'u_zoom': tileID.overscaledZ
     };
 };
 

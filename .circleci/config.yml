@@ -1,12 +1,10 @@
 version: 2.1
 orbs:
-  aws-cli: circleci/aws-cli@3.1.4
-  browser-tools: circleci/browser-tools@1.4.1
-  macos: circleci/macos@2.3.4
-  win: circleci/windows@4.1.1
+  aws-cli: circleci/aws-cli@4.1.3
+  browser-tools: circleci/browser-tools@1.4.8
+  win: circleci/windows@5.0.0
 
 workflows:
-  version: 2
   default:
     jobs:
       - prepare-linux:
@@ -68,12 +66,6 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - test-browser:
-          requires:
-            - prepare-linux
-          filters:
-            tags:
-              only: /.*/
       - test-webpack:
           requires:
             - build
@@ -86,26 +78,12 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - collect-stats:
+      - verify-codegen:
           requires:
-            - build
-            - install-mbx-ci
+            - prepare-linux
           filters:
             tags:
-              ignore: /.*/
-            branches:
-              only: main
-      - deploy-benchmarks:
-          requires:
-            - install-mbx-ci
-            - build
-          filters:
-            tags:
-              only: /v[0-9]+.[0-9]+.[0-9]+(-.+)?/
-            branches:
-              only:
-                - main
-                - /release-.*/
+              only: /.*/
       - deploy-release:
           requires:
             - install-mbx-ci
@@ -116,12 +94,6 @@ workflows:
             branches:
               ignore: /.*/
       - test-render-linux-chrome-dev:
-          requires:
-            - prepare-linux
-          filters:
-            tags:
-              only: /.*/
-      - test-render-linux-chrome-webgl1-dev:
           requires:
             - prepare-linux
           filters:
@@ -145,12 +117,6 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - test-render-linux-firefox-webgl1-dev:
-          requires:
-            - prepare-linux
-          filters:
-            tags:
-              only: /.*/
       - prepare-mac:
           filters:
             tags:
@@ -161,19 +127,7 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - test-render-mac-chrome-webgl1-dev:
-          requires:
-            - prepare-mac
-          filters:
-            tags:
-              only: /.*/
       - test-render-mac-safari-dev:
-          requires:
-            - prepare-mac
-          filters:
-            tags:
-              only: /.*/
-      - test-render-mac-safari-webgl1-dev:
           requires:
             - prepare-mac
           filters:
@@ -189,23 +143,32 @@ workflows:
           filters:
             tags:
               only: /.*/
+      - trigger-performance-tests:
+          context:
+            - "sdk-cicd/circleci-api"
+          filters:
+            branches:
+              only:
+                  - internal
 
 linux-defaults: &linux-defaults
   docker:
-    - image: cimg/node:18.16-browsers
+    - image: cimg/node:18.19-browsers
   working_directory: ~/mapbox-gl-js
 
 mac-defaults: &mac-defaults
-  resource_class: macos.x86.medium.gen2
+  resource_class: macos.m1.medium.gen1
   macos:
-    # https://circleci.com/docs/using-macos/#supported-xcode-versions
-    xcode: 14.3.0 # macOS 13.2 (Ventura)
+    # https://circleci.com/docs/using-macos/#supported-xcode-versions-silicon
+    xcode: 14.3.1 # macOS 13.2.1 (Ventura)
   environment:
     HOMEBREW_NO_AUTO_UPDATE: 1
   working_directory: ~/mapbox-gl-js
 
 windows-defaults: &windows-defaults
   executor:
+    # windows-server-2022-gui:current
+    # https://circleci.com/developer/machine/image/windows-server-2022-gui
     name: win/default
   working_directory: ~/mapbox-gl-js
 
@@ -216,15 +179,15 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - v0-linux-yarn-{{ .Branch }}-{{ checksum "yarn.lock" }}
-            - v0-linux-yarn-{{ .Branch }}-
-            - v0-linux-yarn-
-      - run: yarn --frozen-lockfile --cache-folder ~/.cache/yarn
-      - run: yarn run build-dev
+            - v0-linux-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
+            - v0-linux-npm-{{ .Branch }}-
+            - v0-linux-npm-
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build-dev
       - save_cache:
-          key: v0-linux-yarn-{{ .Branch }}-{{ checksum "yarn.lock" }}
+          key: v0-linux-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
           paths:
-           - ~/.cache/yarn
+            - ~/.npm
       - persist_to_workspace:
           root: ~/
           paths:
@@ -257,8 +220,8 @@ jobs:
           keys:
             - v2-lint-{{ .Branch }}
             - v2-lint
-      - run: yarn run lint
-      - run: yarn run lint-css
+      - run: npm run lint
+      - run: npm run lint-css
       - save_cache:
           key: v2-lint-{{ .Branch }}-{{ .Revision }}
           paths:
@@ -269,14 +232,20 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run build-prod-min
-      - run: yarn run build-prod
-      - run: yarn run build-csp
-      - run: yarn run build-css
-      - run: yarn run build-style-spec
-      - run: yarn run build-flow-types
-      - run: yarn run test-build
+      - run: npm run build-prod-min
+      - run: npm run build-prod
+      - run: npm run build-csp
+      - run: npm run build-css
+      - run: npm run build-style-spec
+      - run: npm run build-flow-types
+      - run: npm run test-build
       - run: while read l; do cp debug/$l test/release/$l; done < test/release/local_release_page_list.txt
+      - run:
+          name: Create mapbox-gl.tar.gz
+          command: |
+            TAR_PATH=mapbox-gl-${CIRCLE_TAG:-${CIRCLE_SHA1:0:6}}.tar.gz
+            tar -czvf $TAR_PATH test/release dist
+            mv $TAR_PATH test/release
       - store_artifacts:
           path: "dist"
       - store_artifacts:
@@ -293,21 +262,30 @@ jobs:
           at: ~/
       - run:
           name: Check bundle size
-          command: yarn check-bundle-size
+          command: npm run check-bundle-size
 
   test-flow:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-flow
+      - run: npm run test-flow
 
   test-unit:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-unit
+      - restore_cache:
+          keys:
+            - v0-playwright
+      - run:
+          command: npm run test-unit
+          no_output_timeout: 5m
+      - save_cache:
+          key: v0-playwright
+          paths:
+           - ~/.cache
 
   test-query:
     <<: *linux-defaults
@@ -315,7 +293,7 @@ jobs:
       - attach_workspace:
           at: ~/
       - browser-tools/install-chrome
-      - run: yarn run test-query
+      - run: npm run test-query
       - store_test_results:
           path: test/integration/query-tests
       - store_artifacts:
@@ -330,7 +308,7 @@ jobs:
           name: Build Webpack
           command: |
             cd ./test/build/transpilation &&
-            yarn &&
+            npm ci &&
             npm run build &&
             rm -rf node_modules
       - store_artifacts:
@@ -341,64 +319,27 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-style-spec
+      - run: npm run test-style-spec
 
-  collect-stats:
+  verify-codegen:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - browser-tools/install-chrome
       - run:
-          name: Collect performance stats
-          command: node bench/gl-stats.js
-      - aws-cli/install
-      - run:
-          name: Upload performance stats
-          command: aws s3 cp data.json.gz s3://mapbox-loading-dock/raw/gl_js.perf_metrics_staging/ci/`git show -s --date=short --format=%cd-%h HEAD`.json.gz
-
-  test-browser:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-browser-tools
-      - run: yarn run build-token
-      - run:
-          name: Test Chrome
-          environment:
-            SELENIUM_BROWSER: chrome
-            TAP_COLORS: 1
-          command: yarn run test-browser
-      - run:
-          name: Test Firefox
-          environment:
-            SELENIUM_BROWSER: firefox
-            TAP_COLORS: 1
-          command: yarn run test-browser
+          name: Verify codegen output
+          command: |
+            npm run codegen
+            git add -A && git diff --staged --exit-code | tee check.patch
+      - store_artifacts:
+          path: "check.patch"
 
   test-expressions:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-expressions
-
-  deploy-benchmarks:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - run:
-          name: Build
-          command: BENCHMARK_VERSION="${CIRCLE_TAG:-$CIRCLE_BRANCH} $(git rev-parse --short=7 HEAD)" yarn run build-benchmarks
-      - aws-cli/install
-      - run:
-          name: Upload benchmark
-          command: aws s3 cp --acl public-read --content-type application/javascript bench/versions/benchmarks_generated.js s3://mapbox-gl-js/${CIRCLE_TAG:-$CIRCLE_BRANCH}/benchmarks.js
-      - run:
-          name: Upload source maps
-          command: aws s3 cp --acl public-read --content-type application/javascript bench/versions/benchmarks_generated.js.map s3://mapbox-gl-js/${CIRCLE_TAG:-$CIRCLE_BRANCH}/benchmarks.js.map
+      - run: npm run test-expressions
 
   deploy-release:
     <<: *linux-defaults
@@ -429,22 +370,7 @@ jobs:
       - run:
           name: Running tests in parallel
           command: |
-            yarn run test-render
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-linux-chrome-webgl1-dev:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-chrome
-      - run:
-          name: Running tests in parallel
-          command: |
-            USE_WEBGL2=false yarn run test-render
+            npm run test-render
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -456,7 +382,7 @@ jobs:
       - attach_workspace:
           at: ~/
       - browser-tools/install-chrome
-      - run: yarn run test-render-prod
+      - run: npm run test-render-prod
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -468,7 +394,7 @@ jobs:
       - attach_workspace:
           at: ~/
       - browser-tools/install-chrome
-      - run: yarn run test-render-csp
+      - run: npm run test-render-csp
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -480,19 +406,7 @@ jobs:
       - attach_workspace:
           at: ~/
       - browser-tools/install-firefox
-      - run: yarn run test-render-firefox
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-linux-firefox-webgl1-dev:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-firefox
-      - run: USE_WEBGL2=false yarn run test-render-firefox
+      - run: npm run test-render-firefox
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -504,16 +418,16 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - v0-mac-yarn-{{ .Branch }}-{{ checksum "yarn.lock" }}
-            - v0-mac-yarn-{{ .Branch }}-
-            - v0-mac-yarn-
+            - v0-mac-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
+            - v0-mac-npm-{{ .Branch }}-
+            - v0-mac-npm-
       - run: nvm install && cat .nvmrc | nvm alias default `xargs`
-      - run: yarn --frozen-lockfile --cache-folder ~/.cache/yarn
+      - run: npm ci --no-audit --no-fund
       - save_cache:
-          key: v0-mac-yarn-{{ .Branch }}-{{ checksum "yarn.lock" }}
+          key: v0-mac-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
           paths:
-           - ~/.cache/yarn
-      - run: yarn run build-dev
+           - ~/.npm
+      - run: npm run build-dev
       - persist_to_workspace:
           root: ~/
           paths:
@@ -530,24 +444,7 @@ jobs:
           name: Creating test list
           command: |
             circleci tests glob "test/integration/render-tests/**/*.json" | circleci tests split --split-by=timings > tests-to-run.txt
-      - run: yarn run test-render
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-mac-chrome-webgl1-dev:
-    <<: *mac-defaults
-    parallelism: 3
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-chrome
-      - run:
-          name: Creating test list
-          command: |
-            circleci tests glob "test/integration/render-tests/**/*.json" | circleci tests split --split-by=timings > tests-to-run.txt
-      - run: USE_WEBGL2=false yarn run test-render
+      - run: npm run test-render
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -555,23 +452,10 @@ jobs:
 
   test-render-mac-safari-dev:
     <<: *mac-defaults
-    resource_class: macos.m1.large.gen1
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-render-safari
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-mac-safari-webgl1-dev:
-    <<: *mac-defaults
-    resource_class: macos.m1.large.gen1
-    steps:
-      - attach_workspace:
-          at: ~/
-      - run: USE_WEBGL2=false yarn run test-render-safari
+      - run: npm run test-render-safari
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -581,25 +465,31 @@ jobs:
     <<: *windows-defaults
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v2-windows-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
+            - v2-windows-npm-{{ .Branch }}-
+            - v2-windows-npm-
       - run:
-          name: Setup Node.js and Yarn
+          name: Setup Node.js
           command: |
-            choco uninstall nvm.portable
             $nodeVersion = Get-Content .nvmrc
-            choco install nodejs --version $nodeVersion
-            npm install -g yarn
-            refreshenv
-      - run: yarn --frozen-lockfile
-      - run: yarn run build-dev
+            nvm install $nodeVersion
+            nvm use $nodeVersion
+      - run: npm ci --no-audit --no-fund --cache ~/.npm
+      - save_cache:
+          key: v2-windows-npm-{{ .Branch }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/log.txt
+      - store_artifacts:
+          path: "test/integration/render-tests/index.html"
+      - run: npm run build-dev
       - run:
           name: Clean up workspace to persist faster
           command: |
             Remove-Item .git -Recurse -Force;
             Remove-Item node_modules/flow-bin -Recurse -Force;
-            Remove-Item node_modules/tap -Recurse -Force;
-            Remove-Item node_modules/gl -Recurse -Force;
             Remove-Item node_modules/@mapbox/mvt-fixtures/real-world/osm-qa-* -Recurse -Force;
-            Remove-Item node_modules/react-devtools-core -Recurse -Force;
             Remove-Item node_modules/@octokit -Recurse -Force;
             Remove-Item node_modules/puppeteer-core -Recurse -Force;
             Remove-Item node_modules/lodash -Recurse -Force;
@@ -615,13 +505,11 @@ jobs:
       - attach_workspace:
           at: ~/
       - run:
-          name: Setup Node.js and Yarn
+          name: Setup Node.js
           command: |
-            choco uninstall nvm.portable
             $nodeVersion = Get-Content .nvmrc
-            choco install nodejs --version $nodeVersion
-            npm install -g yarn
-            refreshenv
+            nvm install $nodeVersion
+            nvm use $nodeVersion
       # The browser-tools orb doesn't work on Windows, so we install chrome manually.
       - run:
           name: Installing Chrome on Windows
@@ -640,8 +528,25 @@ jobs:
           name: Creating test list
           command: |
             circleci tests glob "test/integration/render-tests/**/*.json" | circleci tests split | Out-File -Encoding utf8 -FilePath tests-to-run.txt
-      - run: yarn run test-render
+      - run: npm run test-render
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
           path: "test/integration/render-tests/index.html"
+
+  trigger-performance-tests:
+    <<: *linux-defaults
+    steps:
+      - checkout
+      - run:
+          name: Trigger SLA performance tests
+          command: |
+            sha=$(git rev-parse HEAD)
+            response_code=$(curl --location --write-out "%{http_code}" --output /dev/stderr --request POST 'https://circleci.com/api/v2/project/github/mapbox/mapbox-gl-js-performance-internal/pipeline' --header 'Content-Type: application/json' -u $CIRCLECI_API_TOKEN: -d "{ \"parameters\": { \"setup_sha\": \"$sha\", \"setup_source_branch\": \"internal\" } }")
+
+            if [[ "$response_code" =~ ^2 ]]; then
+                echo "Success: HTTP 2xx response"
+            else
+                echo "Error: Non-2xx response code - $response_code"
+                exit 1
+            fi

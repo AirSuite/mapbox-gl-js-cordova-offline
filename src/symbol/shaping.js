@@ -14,7 +14,6 @@ import {warnOnce} from '../util/util.js';
 import type {StyleGlyph, GlyphMetrics} from '../style/style_glyph.js';
 import {GLYPH_PBF_BORDER} from '../style/parse_glyph_pbf.js';
 import type {ImagePosition} from '../render/image_atlas.js';
-import {IMAGE_PADDING} from '../render/image_atlas.js';
 import type {GlyphRect, GlyphPositions} from '../render/glyph_atlas.js';
 import Formatted, {FormattedSection} from '../style-spec/expression/types/formatted.js';
 
@@ -204,7 +203,7 @@ class TaggedString {
     }
 
     addImageSection(section: FormattedSection) {
-        const imageName = section.image ? section.image.name : '';
+        const imageName = section.image ? section.image.namePrimary : '';
         if (imageName.length === 0) {
             warnOnce(`Can't add FormattedSection with an empty image.`);
             return;
@@ -683,7 +682,7 @@ function shapeLines(shaping: Shaping,
 
                 metrics = {width: size[0],
                     height: size[1],
-                    left: IMAGE_PADDING,
+                    left: 0,
                     top: -GLYPH_PBF_BORDER,
                     advance: vertical ? size[1] : size[0],
                     localGlyph: false};
@@ -789,7 +788,8 @@ function align(positionedLines: Array<PositionedLine>,
 }
 
 export type PositionedIcon = {
-    image: ImagePosition,
+    imagePrimary: ImagePosition,
+    imageSecondary: ?ImagePosition,
     top: number,
     bottom: number,
     left: number,
@@ -797,15 +797,15 @@ export type PositionedIcon = {
     collisionPadding?: [number, number, number, number]
 };
 
-function shapeIcon(image: ImagePosition, iconOffset: [number, number], iconAnchor: SymbolAnchor): PositionedIcon {
+function shapeIcon(imagePrimary: ImagePosition, imageSecondary: ?ImagePosition, iconOffset: [number, number], iconAnchor: SymbolAnchor): PositionedIcon {
     const {horizontalAlign, verticalAlign} = getAnchorAlignment(iconAnchor);
     const dx = iconOffset[0];
     const dy = iconOffset[1];
-    const x1 = dx - image.displaySize[0] * horizontalAlign;
-    const x2 = x1 + image.displaySize[0];
-    const y1 = dy - image.displaySize[1] * verticalAlign;
-    const y2 = y1 + image.displaySize[1];
-    return {image, top: y1, bottom: y2, left: x1, right: x2};
+    const x1 = dx - imagePrimary.displaySize[0] * horizontalAlign;
+    const x2 = x1 + imagePrimary.displaySize[0];
+    const y1 = dy - imagePrimary.displaySize[1] * verticalAlign;
+    const y2 = y1 + imagePrimary.displaySize[1];
+    return {imagePrimary, imageSecondary, top: y1, bottom: y2, left: x1, right: x2};
 }
 
 function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
@@ -816,7 +816,7 @@ function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
     assert(Array.isArray(padding) && padding.length === 4);
     assert(Array.isArray(iconOffset) && iconOffset.length === 2);
 
-    const image = shapedIcon.image;
+    const image = shapedIcon.imagePrimary;
 
     let collisionPadding;
     if (image.content) {
@@ -860,5 +860,5 @@ function fitIconToText(shapedIcon: PositionedIcon, shapedText: Shaping,
         bottom = top + image.displaySize[1];
     }
 
-    return {image, top, right, bottom, left, collisionPadding};
+    return {imagePrimary: image, imageSecondary: undefined, top, right, bottom, left, collisionPadding};
 }

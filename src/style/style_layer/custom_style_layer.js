@@ -4,10 +4,12 @@ import StyleLayer from '../style_layer.js';
 import MercatorCoordinate from '../../geo/mercator_coordinate.js';
 import type Map from '../../ui/map.js';
 import assert from 'assert';
+
 import type {ValidationErrors} from '../validate_style.js';
 import type {ProjectionSpecification} from '../../style-spec/types.js';
+import type SourceCache from '../../source/source_cache.js';
 
-type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, projection: ?ProjectionSpecification, projectionToMercatorMatrix: ?Array<number>, projectionToMercatorTransition: ?number, centerInMercator: ?Array<number>, pixelsPerMeterRatio: ?number) => void;
+type CustomRenderMethod = (gl: WebGL2RenderingContext, matrix: Array<number>, projection: ?ProjectionSpecification, projectionToMercatorMatrix: ?Array<number>, projectionToMercatorTransition: ?number, centerInMercator: ?Array<number>, pixelsPerMeterRatio: ?number) => void;
 
 /**
  * Interface for custom style layers. This is a specification for
@@ -89,7 +91,7 @@ type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, pro
  * @instance
  * @name onAdd
  * @param {Map} map The Map this custom layer was just added to.
- * @param {WebGLRenderingContext} gl The gl context for the map.
+ * @param {WebGL2RenderingContext} gl The gl context for the map.
  */
 
 /**
@@ -101,7 +103,7 @@ type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, pro
  * @instance
  * @name onRemove
  * @param {Map} map The Map this custom layer was just added to.
- * @param {WebGLRenderingContext} gl The gl context for the map.
+ * @param {WebGL2RenderingContext} gl The gl context for the map.
  */
 
 /**
@@ -113,7 +115,7 @@ type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, pro
  * @memberof CustomLayerInterface
  * @instance
  * @name prerender
- * @param {WebGLRenderingContext} gl The map's gl context.
+ * @param {WebGL2RenderingContext} gl The map's gl context.
  * @param {Array<number>} matrix The map's camera matrix. It projects spherical mercator
  * coordinates to gl coordinates. The mercator coordinate `[0, 0]` represents the
  * top left corner of the mercator world and `[1, 1]` represents the bottom right corner. When
@@ -142,7 +144,7 @@ type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, pro
  * @memberof CustomLayerInterface
  * @instance
  * @name render
- * @param {WebGLRenderingContext} gl The map's gl context.
+ * @param {WebGL2RenderingContext} gl The map's gl context.
  * @param {Array<number>} matrix The map's camera matrix. It projects spherical mercator
  * coordinates to gl coordinates. The spherical mercator coordinate `[0, 0]` represents the
  * top left corner of the mercator world and `[1, 1]` represents the bottom right corner. When
@@ -153,13 +155,14 @@ type CustomRenderMethod = (gl: WebGLRenderingContext, matrix: Array<number>, pro
 export type CustomLayerInterface = {
     id: string,
     type: "custom",
+    slot: ?string;
     renderingMode: "2d" | "3d",
     render: CustomRenderMethod,
     prerender: ?CustomRenderMethod,
-    renderToTile: ?(gl: WebGLRenderingContext, tileId: MercatorCoordinate) => void,
+    renderToTile: ?(gl: WebGL2RenderingContext, tileId: MercatorCoordinate) => void,
     shouldRerenderTiles: ?() => boolean,
-    onAdd: ?(map: Map, gl: WebGLRenderingContext) => void,
-    onRemove: ?(map: Map, gl: WebGLRenderingContext) => void
+    onAdd: ?(map: Map, gl: WebGL2RenderingContext) => void,
+    onRemove: ?(map: Map, gl: WebGL2RenderingContext) => void
 }
 
 export function validateCustomStyleLayer(layerObject: CustomLayerInterface): ValidationErrors {
@@ -193,9 +196,10 @@ class CustomStyleLayer extends StyleLayer {
 
     implementation: CustomLayerInterface;
 
-    constructor(implementation: CustomLayerInterface) {
-        super(implementation, {});
+    constructor(implementation: CustomLayerInterface, scope: string) {
+        super(implementation, {}, scope);
         this.implementation = implementation;
+        if (implementation.slot) this.slot = implementation.slot;
     }
 
     is3D(): boolean {
@@ -206,7 +210,8 @@ class CustomStyleLayer extends StyleLayer {
         return this.implementation.prerender !== undefined;
     }
 
-    isLayerDraped(): boolean {
+    // $FlowFixMe[method-unbinding]
+    isLayerDraped(_: ?SourceCache): boolean {
         return this.implementation.renderToTile !== undefined;
     }
 

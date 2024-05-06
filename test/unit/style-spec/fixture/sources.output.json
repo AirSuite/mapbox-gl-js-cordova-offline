@@ -4,7 +4,7 @@
     "line": 4
   },
   {
-    "message": "sources.invalid-type.type: expected one of [vector, raster, raster-dem, geojson, video, image], \"invalid\" found",
+    "message": "sources.invalid-type.type: expected one of [vector, raster, raster-dem, raster-array, geojson, video, image, model, batched-model], \"invalid\" found",
     "line": 7
   },
   {
@@ -20,11 +20,11 @@
     "line": 34
   },
   {
-    "message": "sources.video-wrong-coordinates.coordinates[2][1]: number expected, string found",
+    "message": "sources.video-wrong-coordinates.coordinates[2]: Expected number but found string.",
     "line": 34
   },
   {
-    "message": "sources.video-wrong-coordinates.coordinates[3]: array length 2 expected, length 0 found",
+    "message": "sources.video-wrong-coordinates.coordinates[3]: Expected an array with at least one element. If you wanted a literal array, use [\"literal\", []].",
     "line": 34
   },
   {
@@ -38,5 +38,9 @@
   {
     "message": "sources.cluster-properties.state.map: \"zoom\" and \"feature-state\" expressions are not supported with cluster properties.",
     "line": 50
+  },
+  {
+    "message": "sources.missing-url: Either \"url\" or \"tiles\" is required.",
+    "line": 53
   }
 ]

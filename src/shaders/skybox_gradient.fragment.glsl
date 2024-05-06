@@ -1,4 +1,6 @@
-varying highp vec3 v_uv;
+#include "_prelude_fog.fragment.glsl"
+
+in highp vec3 v_uv;
 
 uniform lowp sampler2D u_color_ramp;
 uniform highp vec3 u_center_direction;
@@ -8,7 +10,7 @@ uniform highp float u_temporal_offset;
 
 void main() {
     float progress = acos(dot(normalize(v_uv), u_center_direction)) / u_radius;
-    vec4 color = texture2D(u_color_ramp, vec2(progress, 0.5));
+    vec4 color = texture(u_color_ramp, vec2(progress, 0.5));
 
 #ifdef FOG
     // Apply fog contribution if enabled, make sure to un/post multiply alpha before/after
@@ -22,9 +24,9 @@ void main() {
     // Dither
     color.rgb = dither(color.rgb, gl_FragCoord.xy + u_temporal_offset);
 
-    gl_FragColor = color;
+    glFragColor = color;
 
 #ifdef OVERDRAW_INSPECTOR
-    gl_FragColor = vec4(1.0);
+    glFragColor = vec4(1.0);
 #endif
 }

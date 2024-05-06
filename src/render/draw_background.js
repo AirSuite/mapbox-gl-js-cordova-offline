@@ -19,6 +19,7 @@ export default drawBackground;
 function drawBackground(painter: Painter, sourceCache: SourceCache, layer: BackgroundStyleLayer, coords: Array<OverscaledTileID>) {
     const color = layer.paint.get('background-color');
     const opacity = layer.paint.get('background-opacity');
+    const emissiveStrength = layer.paint.get('background-emissive-strength');
 
     if (opacity === 0) return;
 
@@ -27,16 +28,15 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
     const transform = painter.transform;
     const tileSize = transform.tileSize;
     const image = layer.paint.get('background-pattern');
-    if (painter.isPatternMissing(image)) return;
+    if (painter.isPatternMissing(image, layer.scope)) return;
 
     const pass = (!image && color.a === 1 && opacity === 1 && painter.opaquePassEnabledForLayer()) ? 'opaque' : 'translucent';
     if (painter.renderPass !== pass) return;
 
     const stencilMode = StencilMode.disabled;
     const depthMode = painter.depthModeForSublayer(0, pass === 'opaque' ? DepthMode.ReadWrite : DepthMode.ReadOnly);
-    const colorMode = painter.colorModeForRenderPass();
-
-    const program = painter.useProgram(image ? 'backgroundPattern' : 'background');
+    const colorMode = painter.colorModeForDrapableLayerRenderPass(emissiveStrength);
+    const programName = image ? 'backgroundPattern' : 'background';
 
     let tileIDs = coords;
     let backgroundTiles;
@@ -47,10 +47,12 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
 
     if (image) {
         context.activeTexture.set(gl.TEXTURE0);
-        painter.imageManager.bind(painter.context);
+        painter.imageManager.bind(painter.context, layer.scope);
     }
 
     for (const tileID of tileIDs) {
+        const affectedByFog = painter.isTileAffectedByFog(tileID);
+        const program = painter.getOrCreateProgram(programName, {overrideFog: affectedByFog});
         const unwrappedTileID = tileID.toUnwrapped();
         const matrix = coords ? tileID.projMatrix : painter.transform.calculateProjMatrix(unwrappedTileID);
         painter.prepareDrawTile();
@@ -59,14 +61,14 @@ function drawBackground(painter: Painter, sourceCache: SourceCache, layer: Backg
             backgroundTiles ? backgroundTiles[tileID.key] : new Tile(tileID, tileSize, transform.zoom, painter);
 
         const uniformValues = image ?
-            backgroundPatternUniformValues(matrix, opacity, painter, image, {tileID, tileSize}) :
-            backgroundUniformValues(matrix, opacity, color);
+            backgroundPatternUniformValues(matrix, emissiveStrength, opacity, painter, image, layer.scope, {tileID, tileSize}) :
+            backgroundUniformValues(matrix, emissiveStrength, opacity, color);
 
-        painter.prepareDrawProgram(context, program, unwrappedTileID);
+        painter.uploadCommonUniforms(context, program, unwrappedTileID);
 
         const {tileBoundsBuffer, tileBoundsIndexBuffer, tileBoundsSegments} = painter.getTileBoundsBuffers(tile);
 
-        program.draw(context, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
+        program.draw(painter, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
             uniformValues, layer.id, tileBoundsBuffer,
                 tileBoundsIndexBuffer, tileBoundsSegments);
     }

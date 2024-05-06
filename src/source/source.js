@@ -11,6 +11,22 @@ import type {Callback} from '../types/callback.js';
 import type {MapEvent} from '../ui/events.js';
 import {CanonicalTileID} from './tile_id.js';
 
+export type SourceRasterLayer = {
+    id: string;
+    maxzoom?: number;
+    minzoom?: number;
+    fields?: {
+        bands?: Array<string | number>;
+        range?: [number, number];
+    };
+};
+
+export type SourceVectorLayer = {
+    id: string;
+    maxzoom?: number;
+    minzoom?: number;
+};
+
 /**
  * The `Source` interface must be implemented by each source type, including "core" types like `vector`, `raster`,
  * or `video`) and all custom, third-party types.
@@ -39,6 +55,7 @@ import {CanonicalTileID} from './tile_id.js';
 export interface Source {
     +type: string;
     id: string;
+    scope: string;
     minzoom: number,
     maxzoom: number,
     tileSize: number,
@@ -54,6 +71,12 @@ export interface Source {
     maxTileCacheSize?: ?number;
     language?: ?string;
     worldview?: ?string;
+    +usedInConflation?: boolean;
+
+    vectorLayers?: Array<SourceVectorLayer>;
+    vectorLayerIds?: Array<string>;
+    rasterLayers?: Array<SourceRasterLayer>;
+    rasterLayerIds?: Array<string>;
 
     hasTransition(): boolean;
     loaded(): boolean;
@@ -99,21 +122,26 @@ export type SourceClass = Class<Source> & SourceStatics;
 import vector from '../source/vector_tile_source.js';
 import raster from '../source/raster_tile_source.js';
 import rasterDem from '../source/raster_dem_tile_source.js';
+import rasterArray from '../source/raster_array_tile_source.js';
 import geojson from '../source/geojson_source.js';
 import video from '../source/video_source.js';
 import image from '../source/image_source.js';
 import canvas from '../source/canvas_source.js';
 import custom from '../source/custom_source.js';
-
+import model from '../../3d-style/source/model_source.js';
+import tiled3DModel from '../../3d-style/source/tiled_3d_model_source.js';
 import type {SourceSpecification} from '../style-spec/types.js';
 
 const sourceTypes: {[string]: Class<Source>} = {
     vector,
     raster,
     'raster-dem': rasterDem,
+    'raster-array': rasterArray,
     geojson,
     video,
     image,
+    model,
+    'batched-model': tiled3DModel,
     canvas,
     custom
 };
@@ -130,7 +158,7 @@ const sourceTypes: {[string]: Class<Source>} = {
  */
 export const create = function(id: string, specification: SourceSpecification, dispatcher: Dispatcher, eventedParent: Evented): Source {
     // $FlowFixMe[prop-missing]
-    const source = new sourceTypes[specification.type](id, (specification: any), dispatcher, eventedParent);
+    const source = new sourceTypes[specification.type](id, specification, dispatcher, eventedParent);
 
     if (source.id !== id) {
         throw new Error(`Expected Source id to be ${id} instead of ${source.id}`);

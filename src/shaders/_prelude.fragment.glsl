@@ -1,23 +1,6 @@
 // NOTE: This prelude is injected in the fragment shader only
 
-#if __VERSION__ >= 300
-#define varying in
-#define gl_FragColor glFragColor
-#define texture2D texture
-#define textureCube texture
 out vec4 glFragColor;
-#endif
-
-highp vec3 hash(highp vec2 p) {
-    highp vec3 p3 = fract(p.xyx * vec3(443.8975, 397.2973, 491.1871));
-    p3 += dot(p3, p3.yxz + 19.19);
-    return fract((p3.xxy + p3.yzz) * p3.zyx);
-}
-
-vec3 dither(vec3 color, highp vec2 seed) {
-    vec3 rnd = hash(seed) + hash(seed + 0.59374) - 0.5;
-    return color + rnd / 255.0;
-}
 
 highp float unpack_depth(highp vec4 rgba_depth)
 {
@@ -35,4 +18,55 @@ highp vec4 pack_depth(highp float ndc_z) {
     highp vec4 res = fract(depth * bit_shift);
     res -= res.xxyz * bit_mask;
     return res;
+}
+
+#ifdef INDICATOR_CUTOUT
+uniform vec2 u_indicator_cutout_centers;
+uniform vec4 u_indicator_cutout_params;
+#endif
+
+// TODO: could be moved to a separate prelude
+vec4 applyCutout(vec4 color) {
+#ifdef INDICATOR_CUTOUT
+    float holeMinOpacity = u_indicator_cutout_params.x;
+    float holeRadius = max(u_indicator_cutout_params.y, 0.0);
+    float holeAspectRatio = u_indicator_cutout_params.z;
+    float fadeStart = u_indicator_cutout_params.w;
+    float distA = distance(vec2(gl_FragCoord.x, gl_FragCoord.y * holeAspectRatio), vec2(u_indicator_cutout_centers[0], u_indicator_cutout_centers[1] * holeAspectRatio));
+    return color * min(smoothstep(fadeStart, holeRadius, distA) + holeMinOpacity, 1.0);
+#else
+    return color;
+#endif
+}
+
+#ifdef DEBUG_WIREFRAME
+    // Debug wireframe uses premultiplied alpha blending (alpha channel is left unchanged)
+    #define HANDLE_WIREFRAME_DEBUG \
+        glFragColor = vec4(0.7, 0.0, 0.0, 0.7); \
+        gl_FragDepth = gl_FragCoord.z - 0.0001; // Apply depth for wireframe overlay to reduce z-fighting
+#else
+    #define HANDLE_WIREFRAME_DEBUG
+#endif
+
+#ifdef RENDER_CUTOFF
+uniform highp vec4 u_cutoff_params;
+in float v_cutoff_opacity;
+#endif
+
+// This function should be used in cases where mipmap usage is expected and
+// the sampling coordinates are not continous. The lod_parameter should be 
+// a continous function derived from the sampling coordinates. 
+vec4 textureLodCustom(sampler2D image, vec2 pos, vec2 lod_coord) {
+    vec2 size = vec2(textureSize(image, 0));
+    vec2 dx = dFdx(lod_coord.xy * size);
+    vec2 dy = dFdy(lod_coord.xy * size);
+    float delta_max_sqr = max(dot(dx, dx), dot(dy, dy));
+    float lod = 0.5 * log2(delta_max_sqr); 
+    // Note: textureLod doesn't support anisotropic filtering
+    // We could use textureGrad instead which supports it, but it's discouraged 
+    // in the ARM Developer docs:
+    // "Do not use textureGrad() unless absolutely necessary. 
+    // It is much slower that texture() and textureLod()..."
+    // https://developer.arm.com/documentation/101897/0301/Buffers-and-textures/Texture-sampling-performance
+    return textureLod(image, pos, lod);
 }

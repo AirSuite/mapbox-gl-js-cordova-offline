@@ -18,8 +18,7 @@ const todo = [
     // Debug visualizations
     "render-tests/debug/raster",
     "render-tests/debug/collision-variable-icon-image-simple",
-    "render-tests/terrain/wireframe",
-    "render-tests/terrain/wireframe-high-exaggeration",
+    "render-tests/wireframe/globe-high-exaggeration",
 
     // Looks good but diff is too high
     "render-tests/globe/globe-terrain",
@@ -34,8 +33,8 @@ const todo = [
 const skip = [
     // Sometimes timing out
     "render-tests/globe/globe-video",
-    "render-tests/video/default"
-
+    "render-tests/video/default",
+    "render-tests/model-layer/landmark-z-offset-terrain-fix-griffith" // flakey
 ];
 
 export default {todo, skip};

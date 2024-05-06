@@ -1,32 +1,30 @@
 // @flow
 
-import {extend, pick} from '../util/util';
+import {extend, pick} from '../util/util.js';
 
-import {getImage, getmbtileImage, getUint8ArrayImage, ResourceType} from '../util/ajax';
+import {getImage, getmbtileImage, getUint8ArrayImage, ResourceType} from '../util/ajax.js';
 import webpSupported from '../util/webp_supported.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
 import loadTileJSON from './load_tilejson.js';
 import {postTurnstileEvent} from '../util/mapbox.js';
 import TileBounds from './tile_bounds.js';
 import browser from '../util/browser.js';
-
 import {cacheEntryPossiblyAdded} from '../util/tile_request_cache.js';
+import {makeFQID} from '../util/fqid.js';
 
 import type {Source} from './source.js';
 import type {OverscaledTileID} from './tile_id.js';
 import type Map from '../ui/map.js';
-import type Painter from '../render/painter.js';
 import type Dispatcher from '../util/dispatcher.js';
 import type Tile from './tile.js';
 import type {Callback} from '../types/callback.js';
 import type {Cancelable} from '../types/cancelable.js';
-
-import type {TextureImage} from '../render/texture.js';
 import type {
     RasterSourceSpecification,
-    RasterDEMSourceSpecification
+    RasterDEMSourceSpecification,
+    RasterArraySourceSpecification
 } from '../style-spec/types.js';
-import window from "../util/window.js";
+import Texture from '../render/texture.js';
 
 /**
  * A source containing raster tiles.
@@ -50,8 +48,9 @@ import window from "../util/window.js";
  * @see [Example: Add a WMS source](https://docs.mapbox.com/mapbox-gl-js/example/wms/)
  */
 class RasterTileSource extends Evented implements Source {
-    type: 'raster' | 'raster-dem';
+    type: 'raster' | 'raster-dem' | 'raster-array';
     id: string;
+    scope: string;
     minzoom: number;
     maxzoom: number;
     url: string;
@@ -66,10 +65,10 @@ class RasterTileSource extends Evented implements Source {
     tiles: Array<string>;
 
     _loaded: boolean;
-    _options: RasterSourceSpecification | RasterDEMSourceSpecification;
+    _options: RasterSourceSpecification | RasterDEMSourceSpecification | RasterArraySourceSpecification;
     _tileJSONRequest: ?Cancelable;
 
-    constructor(id: string, options: RasterSourceSpecification | RasterDEMSourceSpecification, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: RasterSourceSpecification | RasterDEMSourceSpecification | RasterArraySourceSpecification, dispatcher: Dispatcher, eventedParent: Evented) {
         super();
         this.id = id;
         this.dispatcher = dispatcher;
@@ -101,7 +100,7 @@ class RasterTileSource extends Evented implements Source {
 
                 postTurnstileEvent(tileJSON.tiles);
 
-                // `content` is included here to prevent a race condition where `Style#_updateSources` is called
+                // `content` is included here to prevent a race condition where `Style#updateSources` is called
                 // before the TileJSON arrives. this makes sure the tiles needed are loaded once TileJSON arrives
                 // ref: https://github.com/mapbox/mapbox-gl-js/pull/4347#discussion_r104418088
                 this.fire(new Event('data', {dataType: 'source', sourceDataType: 'metadata'}));
@@ -131,7 +130,8 @@ class RasterTileSource extends Evented implements Source {
     // $FlowFixMe[method-unbinding]
     reload() {
         this.cancelTileJSONRequest();
-        this.load(() => this.map.style._clearSource(this.id));
+        const fqid = makeFQID(this.id, this.scope);
+        this.load(() => this.map.style.clearSource(fqid));
     }
 
     /**
@@ -198,28 +198,7 @@ class RasterTileSource extends Evented implements Source {
 
         if (this._options.mbtiles === undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles) {
-            tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), (error, data, cacheControl, expires) => {
-                delete tile.request;
-
-                if (tile.aborted) {
-                    tile.state = 'unloaded';
-                    return callback(null);
-                }
-
-                if (error) {
-                    tile.state = 'errored';
-                    return callback(error);
-                }
-
-                if (!data) return callback(null);
-
-                if (this.map._refreshExpiredTiles) tile.setExpiryData({cacheControl, expires});
-                tile.setTexture(data, this.map.painter);
-                tile.state = 'loaded';
-
-                cacheEntryPossiblyAdded(this.dispatcher);
-                callback(null);
-            });
+        tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), done.bind(this));
         } else {
             let Rurl = url.split('/'),
                 z = Rurl[0],
@@ -288,16 +267,6 @@ class RasterTileSource extends Evented implements Source {
         }
     }
 
-    static loadTileData(tile: Tile, data: TextureImage, painter: Painter) {
-        tile.setTexture(data, painter);
-    }
-
-    static unloadTileData(tile: Tile, painter: Painter) {
-        if (tile.texture) {
-            painter.saveTileTexture(tile.texture);
-        }
-    }
-
     // $FlowFixMe[method-unbinding]
     abortTile(tile: Tile, callback: Callback<void>) {
         if (tile.request) {
@@ -309,7 +278,20 @@ class RasterTileSource extends Evented implements Source {
 
     // $FlowFixMe[method-unbinding]
     unloadTile(tile: Tile, callback: Callback<void>) {
-        if (tile.texture) this.map.painter.saveTileTexture(tile.texture);
+        // Cache the tile texture to avoid re-allocating Textures if they'll just be reloaded
+        if (tile.texture && tile.texture instanceof Texture) {
+            // Clean everything else up owned by the tile, but preserve the texture.
+            // Destroy first to prevent racing with the texture cache being popped.
+            tile.destroy(true);
+
+            // Save the texture to the cache
+            if (tile.texture && tile.texture instanceof Texture) {
+                this.map.painter.saveTileTexture(tile.texture);
+            }
+        } else {
+            tile.destroy();
+        }
+
         callback();
     }
 

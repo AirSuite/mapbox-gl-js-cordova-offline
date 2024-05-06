@@ -13,7 +13,7 @@ import ProgramConfiguration from '../../data/program_configuration.js';
 import {Ray} from '../../util/primitives.js';
 import assert from 'assert';
 import {latFromMercatorY, mercatorZfromAltitude} from '../../geo/mercator_coordinate.js';
-import EXTENT from '../../data/extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 
 import type {FeatureState} from '../../style-spec/expression/index.js';
 import type Transform from '../../geo/transform.js';
@@ -23,6 +23,10 @@ import type {LayerSpecification} from '../../style-spec/types.js';
 import type {TilespaceQueryGeometry} from '../query_geometry.js';
 import type {DEMSampler} from '../../terrain/elevation.js';
 import type {IVectorTileFeature} from '@mapbox/vector-tile';
+import {circleDefinesValues} from '../../render/program/circle_program.js';
+import type {CreateProgramParams} from "../../render/painter.js";
+import type {DynamicDefinesType} from "../../render/program/program_uniforms.js";
+import type {ConfigOptions} from '../properties.js';
 
 class CircleStyleLayer extends StyleLayer {
     _unevaluatedLayout: Layout<LayoutProps>;
@@ -32,8 +36,8 @@ class CircleStyleLayer extends StyleLayer {
     _transitioningPaint: Transitioning<PaintProps>;
     paint: PossiblyEvaluated<PaintProps>;
 
-    constructor(layer: LayerSpecification) {
-        super(layer, properties);
+    constructor(layer: LayerSpecification, scope: string, options?: ?ConfigOptions) {
+        super(layer, properties, scope, options);
     }
 
     createBucket(parameters: BucketParameters<CircleStyleLayer>): CircleBucket<CircleStyleLayer> {
@@ -75,8 +79,13 @@ class CircleStyleLayer extends StyleLayer {
         return ['circle'];
     }
 
-    getProgramConfiguration(zoom: number): ProgramConfiguration {
-        return new ProgramConfiguration(this, zoom);
+    getDefaultProgramParams(_: string, zoom: number): CreateProgramParams | null {
+        const definesValues = ((circleDefinesValues(this): any): DynamicDefinesType[]);
+        return {
+            config: new ProgramConfiguration(this, zoom),
+            defines: definesValues,
+            overrideFog: false
+        };
     }
 }
 

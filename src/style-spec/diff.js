@@ -2,7 +2,7 @@
 
 import isEqual from './util/deep_equal.js';
 
-import type {StyleSpecification, SourceSpecification, LayerSpecification} from './types.js';
+import type {StyleSpecification, ImportSpecification, SourceSpecification, LayerSpecification} from './types.js';
 
 type Sources = { [string]: SourceSpecification };
 
@@ -37,6 +37,11 @@ export const operations: {[_: string]: string} = {
      * { command: 'setLayoutProperty', args: ['layerId', 'prop', value] }
      */
     setLayoutProperty: 'setLayoutProperty',
+
+    /*
+     * { command: 'setSlot', args: ['layerId', slot] }
+     */
+    setSlot: 'setSlot',
 
     /*
      * { command: 'setFilter', args: ['layerId', filter] }
@@ -119,9 +124,34 @@ export const operations: {[_: string]: string} = {
     setFog: 'setFog',
 
     /*
+     *  { command: 'setCamera', args: [cameraProperties] }
+     */
+    setCamera: 'setCamera',
+
+    /*
+     *  { command: 'setLights', args: [{light-3d},...] }
+     */
+    setLights: 'setLights',
+
+    /*
      *  { command: 'setProjection', args: [projectionProperties] }
      */
-    setProjection: 'setProjection'
+    setProjection: 'setProjection',
+
+    /*
+     *  { command: 'addImport', args: [import] }
+     */
+    addImport: 'addImport',
+
+    /*
+     *  { command: 'removeImport', args: [importId] }
+     */
+    removeImport: 'removeImport',
+
+    /**
+     * { command: 'updateImport', args: [importId, importSpecification | styleUrl] }
+     */
+    updateImport: 'updateImport'
 };
 
 function addSource(sourceId: string, after: Sources, commands: Array<Command>) {
@@ -206,12 +236,12 @@ function diffLayerPropertyChanges(before: any, after: any, commands: Array<Comma
     }
 }
 
-function pluckId(layer: LayerSpecification) {
-    return layer.id;
+function pluckId<T: {id: string}>(item: T): string {
+    return item.id;
 }
 
-function indexById(group: {[string]: LayerSpecification}, layer: LayerSpecification) {
-    group[layer.id] = layer;
+function indexById<T: {id: string}>(group: {[string]: T}, item: T): {[id: string]: T} {
+    group[item.id] = item;
     return group;
 }
 
@@ -294,6 +324,9 @@ function diffLayers(before: Array<LayerSpecification>, after: Array<LayerSpecifi
         // layout, paint, filter, minzoom, maxzoom
         diffLayerPropertyChanges(beforeLayer.layout, afterLayer.layout, commands, layerId, null, operations.setLayoutProperty);
         diffLayerPropertyChanges(beforeLayer.paint, afterLayer.paint, commands, layerId, null, operations.setPaintProperty);
+        if (!isEqual(beforeLayer.slot, afterLayer.slot)) {
+            commands.push({command: operations.setSlot, args: [layerId, afterLayer.slot]});
+        }
         if (!isEqual(beforeLayer.filter, afterLayer.filter)) {
             commands.push({command: operations.setFilter, args: [layerId, afterLayer.filter]});
         }
@@ -305,7 +338,7 @@ function diffLayers(before: Array<LayerSpecification>, after: Array<LayerSpecifi
         for (prop in beforeLayer) {
             if (!beforeLayer.hasOwnProperty(prop)) continue;
             if (prop === 'layout' || prop === 'paint' || prop === 'filter' ||
-                prop === 'metadata' || prop === 'minzoom' || prop === 'maxzoom') continue;
+                prop === 'metadata' || prop === 'minzoom' || prop === 'maxzoom' || prop === 'slot') continue;
             if (prop.indexOf('paint.') === 0) {
                 diffLayerPropertyChanges(beforeLayer[prop], afterLayer[prop], commands, layerId, prop.slice(6), operations.setPaintProperty);
             } else if (!isEqual(beforeLayer[prop], afterLayer[prop])) {
@@ -315,13 +348,73 @@ function diffLayers(before: Array<LayerSpecification>, after: Array<LayerSpecifi
         for (prop in afterLayer) {
             if (!afterLayer.hasOwnProperty(prop) || beforeLayer.hasOwnProperty(prop)) continue;
             if (prop === 'layout' || prop === 'paint' || prop === 'filter' ||
-                prop === 'metadata' || prop === 'minzoom' || prop === 'maxzoom') continue;
+                prop === 'metadata' || prop === 'minzoom' || prop === 'maxzoom' || prop === 'slot') continue;
             if (prop.indexOf('paint.') === 0) {
                 diffLayerPropertyChanges(beforeLayer[prop], afterLayer[prop], commands, layerId, prop.slice(6), operations.setPaintProperty);
             } else if (!isEqual(beforeLayer[prop], afterLayer[prop])) {
                 commands.push({command: operations.setLayerProperty, args: [layerId, prop, afterLayer[prop]]});
             }
         }
+    }
+}
+
+export function diffImports(before: Array<ImportSpecification> = [], after: Array<ImportSpecification> = [], commands: Array<Command>) {
+    before = before || [];
+    after = after || [];
+
+    // order imports by id
+    const beforeOrder = before.map(pluckId);
+    const afterOrder = after.map(pluckId);
+
+    // index imports by id
+    const beforeIndex = before.reduce(indexById, {});
+    const afterIndex = after.reduce(indexById, {});
+
+    // track order of imports as if they have been mutated
+    const tracker = beforeOrder.slice();
+
+    let i, d, importId, insertBefore;
+
+    // remove imports
+    for (i = 0, d = 0; i < beforeOrder.length; i++) {
+        importId = beforeOrder[i];
+        if (!afterIndex.hasOwnProperty(importId)) {
+            commands.push({command: operations.removeImport, args: [importId]});
+            tracker.splice(tracker.indexOf(importId, d), 1);
+        } else {
+            // limit where in tracker we need to look for a match
+            d++;
+        }
+    }
+
+    // add/reorder imports
+    for (i = 0, d = 0; i < afterOrder.length; i++) {
+        // work backwards as insert is before an existing import
+        importId = afterOrder[afterOrder.length - 1 - i];
+
+        if (tracker[tracker.length - 1 - i] === importId) continue;
+
+        if (beforeIndex.hasOwnProperty(importId)) {
+            // remove the import before we insert at the correct position
+            commands.push({command: operations.removeImport, args: [importId]});
+            tracker.splice(tracker.lastIndexOf(importId, tracker.length - d), 1);
+        } else {
+            // limit where in tracker we need to look for a match
+            d++;
+        }
+
+        // add import at correct position
+        insertBefore = tracker[tracker.length - i];
+        commands.push({command: operations.addImport, args: [afterIndex[importId], insertBefore]});
+        tracker.splice(tracker.length - i, 0, importId);
+    }
+
+    // update imports
+    for (const afterImport of after) {
+        const beforeImport = beforeIndex[afterImport.id];
+        if (!beforeImport || isEqual(beforeImport, afterImport)) continue;
+
+        commands.push({command: operations.updateImport, args: [afterImport.id, afterImport]});
     }
 }
 
@@ -346,7 +439,7 @@ function diffLayers(before: Array<LayerSpecification>, after: Array<LayerSpecifi
 export default function diffStyles(before: StyleSpecification, after: StyleSpecification): Array<Command> {
     if (!before) return [{command: operations.setStyle, args: [after]}];
 
-    let commands = [];
+    let commands: Array<Command> = [];
 
     try {
         // Handle changes to top-level properties
@@ -371,6 +464,10 @@ export default function diffStyles(before: StyleSpecification, after: StyleSpeci
         if (!isEqual(before.glyphs, after.glyphs)) {
             commands.push({command: operations.setGlyphs, args: [after.glyphs]});
         }
+        // Handle changes to `imports` before other mergable top-level properties
+        if (!isEqual(before.imports, after.imports)) {
+            diffImports(before.imports, after.imports, commands);
+        }
         if (!isEqual(before.transition, after.transition)) {
             commands.push({command: operations.setTransition, args: [after.transition]});
         }
@@ -382,6 +479,12 @@ export default function diffStyles(before: StyleSpecification, after: StyleSpeci
         }
         if (!isEqual(before.projection, after.projection)) {
             commands.push({command: operations.setProjection, args: [after.projection]});
+        }
+        if (!isEqual(before.lights, after.lights)) {
+            commands.push({command: operations.setLights, args: [after.lights]});
+        }
+        if (!isEqual(before.camera, after.camera)) {
+            commands.push({command: operations.setCamera, args: [after.camera]});
         }
 
         // Handle changes to `sources`
@@ -428,7 +531,6 @@ export default function diffStyles(before: StyleSpecification, after: StyleSpeci
 
         // Handle changes to `layers`
         diffLayers(beforeLayers, after.layers, commands);
-
     } catch (e) {
         // fall back to setStyle
         console.warn('Unable to compute style diff:', e);
