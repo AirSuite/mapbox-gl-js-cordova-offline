@@ -198,15 +198,18 @@ class RasterTileSource extends Evented implements Source {
 
         if (this._options.mbtiles === undefined) this._options.mbtiles = false;
         if (!this._options.mbtiles) {
-        tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), done.bind(this));
+            tile.request = getImage(this.map._requestManager.transformRequest(url, ResourceType.Tile), done.bind(this));
         } else {
             let Rurl = url.split('/'),
                 z = Rurl[0],
                 x = Rurl[1],
                 y = Rurl[2];
             y = (1 << z) - 1 - y;
-            //console.log(Rurl);
-            const database = this.id;
+            //VFR_ hack is because 3D Terrain layers what have an id starting with a number get sent to the bottom layer
+            let database = this.id;
+            if (database.substring(0, 4) === 'VFR_') {
+                database = database.slice(4);
+            }
             if (window.openDatabases[database] === undefined) {
                 //do nothing because offline raster tile database is not available
                 callback(null);
@@ -223,8 +226,8 @@ class RasterTileSource extends Evented implements Source {
                 }
             }
             if (window.AppType === "CORDOVA") {
-                window.openDatabases[database].transaction(function(tx) {
-                    tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function(tx, res) {
+                window.openDatabases[database].transaction(function (tx) {
+                    tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
 
                         let tileData = res.rows.item(0).tile_data64;
                         if (tileData !== undefined) {
@@ -236,7 +239,7 @@ class RasterTileSource extends Evented implements Source {
                             }
                         }
                         tile.request = getmbtileImage(tileData, done.bind(this));
-                    }.bind(this), function(tx, e) {
+                    }.bind(this), function (tx, e) {
                         console.log(`Database Error: ${e.message}`);
                     });
                 }.bind(this));
