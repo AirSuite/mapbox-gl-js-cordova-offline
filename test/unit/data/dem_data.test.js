@@ -133,7 +133,8 @@ test('DEMData#backfillBorder', (t) => {
     t.test('DEMData is correctly serialized', (t) => {
         const imageData0 = createMockImage(4, 4);
         const dem0 = new DEMData(0, imageData0);
-        const serialized = serialize(dem0);
+        // eslint-disable-next-line no-unused-vars
+        const {_modifiedForSources, _timestamp, ...serialized} = serialize(dem0);
 
         t.deepEqual(serialized, {
             $name: 'DEMData',
@@ -141,13 +142,14 @@ test('DEMData#backfillBorder', (t) => {
             dim: 4,
             stride: 6,
             pixels: dem0.pixels,
-            encoding: 'mapbox',
+            floatView: dem0.floatView,
             borderReady: false
         }, 'serializes DEM');
 
-        const transferrables = [];
+        const transferrables = new Set();
         serialize(dem0, transferrables);
-        t.deepEqual(new Uint8Array(transferrables[0]), dem0.pixels, 'populates transferrables with correct data');
+        t.assert(transferrables.has(dem0.pixels.buffer), 'populates transferrables with correct data');
+        t.assert(transferrables.has(dem0.floatView.buffer), 'populates transferrables with correct data');
 
         t.end();
     });

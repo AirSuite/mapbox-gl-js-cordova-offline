@@ -1841,6 +1841,37 @@ test('SourceCache loads tiles recursively', (t) => {
         sourceCache.getSource().onAdd();
     });
 
+    t.test('fires `data` event with `error` sourceDataType if all tiles are 404', (t) => {
+        const transform = new Transform();
+        transform.resize(511, 511);
+        transform.zoom = 1;
+
+        const {sourceCache, eventedParent} = createSourceCache({
+            loadTile (tile, callback) {
+                setTimeout(() => callback({status: 404}), 0);
+            }
+        });
+
+        eventedParent.on('data', (e) => {
+            if (e.dataType === 'source' && e.sourceDataType === 'metadata') {
+                sourceCache.update(transform);
+                return;
+            }
+
+            if (e.dataType === 'source' && e.sourceDataType === 'error') {
+                t.equal(sourceCache.loaded(), true, 'source is loaded');
+                t.deepEqual(sourceCache.getRenderableIds(), [], 'all tiles are empty');
+
+                const tileStates = Object.values(sourceCache._tiles).map(t => t.state);
+                t.deepEqual(tileStates, Array(5).fill('errored'), 'all tiles are errored');
+
+                t.end();
+            }
+        });
+
+        sourceCache.getSource().onAdd();
+    });
+
     t.end();
 });
 
@@ -1920,3 +1951,134 @@ test('SourceCache#_preloadTiles', (t) => {
 
     t.end();
 });
+
+test('Visible coords with shadows', (t) => {
+    const transform = new Transform();
+    transform.resize(512, 512);
+    transform.center = new LngLat(40.7125638, -74.0052634);
+    transform.zoom = 19.7;
+    transform.pitch = 69;
+    transform.bearing = 39.2;
+
+    const {sourceCache, eventedParent} = createSourceCache({
+        reparseOverscaled: true,
+        loadTile(tile, callback) {
+            tile.state = 'loaded';
+            callback(null);
+        }
+    });
+
+    sourceCache.updateCacheSize(transform);
+    sourceCache.castsShadows = true;
+    t.test('getVisibleCoordinates', (t) => {
+        eventedParent.on('data', (e) => {
+            if (e.sourceDataType === 'metadata') {
+                sourceCache.update(transform, 512, false, [0.25, -0.433, -0.866]);
+                t.equal(sourceCache.getVisibleCoordinates().length, 2);
+                t.deepEqual(sourceCache.getRenderableIds(false, false), [
+                    new OverscaledTileID(19, 0, 14, 10044, 8192).key,
+                    new OverscaledTileID(19, 0, 14, 10044, 8191).key,
+                ]);
+                t.end();
+            }
+        });
+        sourceCache.getSource().onAdd();
+    });
+
+    t.end();
+});
+
+test('sortCoordinatesByDistance', (t) => {
+    const transform = new Transform();
+    transform.resize(512, 512);
+    transform.center = new LngLat(0, 0);
+    transform.zoom = 2;
+    transform.pitch = 75;
+    transform.bearing = 45.1;
+
+    const {sourceCache, eventedParent} = createSourceCache({
+        reparseOverscaled: true,
+        loadTile(tile, callback) {
+            tile.state = 'loaded';
+            callback(null);
+        }
+    });
+
+    eventedParent.on('data', (e) => {
+        if (e.sourceDataType === 'metadata') {
+            sourceCache.update(transform, 512, false);
+            const coords = sourceCache.getVisibleCoordinates();
+
+            const defaultOrder = [
+                {wrap: 1, canonical: {z: 2, x: 0, y: 1}},
+                {wrap: 1, canonical: {z: 2, x: 0, y: 0}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 2}},
+                {wrap: 0, canonical: {z: 2, x: 1, y: 2}},
+                {wrap: 0, canonical: {z: 2, x: 3, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 1, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 3, y: 0}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 0}}
+            ];
+
+            t.hasStrict(coords, defaultOrder);
+
+            const sortedOrder = [
+                {wrap: 0, canonical: {z: 2, x: 1, y: 2}},
+                {wrap: 0, canonical: {z: 2, x: 1, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 2}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 2, y: 0}},
+                {wrap: 0, canonical: {z: 2, x: 3, y: 1}},
+                {wrap: 0, canonical: {z: 2, x: 3, y: 0}},
+                {wrap: 1, canonical: {z: 2, x: 0, y: 1}},
+                {wrap: 1, canonical: {z: 2, x: 0, y: 0}}
+            ];
+
+            t.hasStrict(sourceCache.sortCoordinatesByDistance(coords), sortedOrder);
+            t.end();
+        }
+    });
+    sourceCache.getSource().onAdd();
+});
+
+test('shadow caster tiles', (t) => {
+    const transform = new Transform();
+    transform.resize(512, 512);
+    transform.center = new LngLat(40.7125638, -74.0052634);
+    transform.zoom = 19.7;
+    transform.pitch = 69;
+    transform.bearing = 39.2;
+
+    const {sourceCache, eventedParent} = createSourceCache({
+        reparseOverscaled: true,
+        loadTile(tile, callback) {
+            tile.state = 'loaded';
+            callback(null);
+        }
+    });
+
+    sourceCache.updateCacheSize(transform);
+    sourceCache.castsShadows = true;
+    t.test('getShadowCasterCoordinates', (t) => {
+        eventedParent.on('data', (e) => {
+            if (e.sourceDataType === 'metadata') {
+                sourceCache.update(transform, 512, false, [0.25, -0.433, -0.866]);
+                t.equal(sourceCache.getShadowCasterCoordinates().length, 6);
+                t.deepEqual(sourceCache.getRenderableIds(false, true), [
+                    new OverscaledTileID(19, 0, 14, 10044, 8193).key,
+                    new OverscaledTileID(19, 0, 14, 10043, 8193).key,
+                    new OverscaledTileID(19, 0, 14, 10044, 8192).key,
+                    new OverscaledTileID(19, 0, 14, 10043, 8192).key,
+                    new OverscaledTileID(19, 0, 14, 10044, 8191).key,
+                    new OverscaledTileID(19, 0, 14, 10043, 8191).key,
+                ]);
+                t.end();
+            }
+        });
+        sourceCache.getSource().onAdd();
+    });
+
+    t.end();
+});
+

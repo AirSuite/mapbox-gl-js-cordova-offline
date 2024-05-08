@@ -8,7 +8,7 @@ import {ProgramConfigurationSet} from '../program_configuration.js';
 import {TriangleIndexArray} from '../index_array_type.js';
 import loadGeometry from '../load_geometry.js';
 import toEvaluationFeature from '../evaluation_feature.js';
-import EXTENT from '../extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import {register} from '../../util/web_worker_transfer.js';
 import EvaluationParameters from '../../style/evaluation_parameters.js';
 
@@ -81,7 +81,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.hasPattern = false;
         this.projection = options.projection;
@@ -148,14 +148,16 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
             const {geometry, index, sourceLayerIndex} = bucketFeature;
             const feature = features[index].feature;
 
-            this.addFeature(bucketFeature, geometry, index, options.availableImages, canonical, globeProjection);
+            this.addFeature(bucketFeature, geometry, index, options.availableImages, canonical, globeProjection, options.brightness);
             options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
         }
     }
 
-    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
     }
 
     isEmpty(): boolean {
@@ -190,7 +192,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
         }
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, availableImages: Array<string>, canonical: CanonicalTileID, projection?: ?Projection) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, availableImages: Array<string>, canonical: CanonicalTileID, projection?: ?Projection, brightness: ?number) {
         for (const ring of geometry) {
             for (const point of ring) {
                 const x = point.x;
@@ -234,7 +236,7 @@ class CircleBucket<Layer: CircleStyleLayer | HeatmapStyleLayer> implements Bucke
             }
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {}, availableImages, canonical);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {}, availableImages, canonical, brightness);
     }
 }
 

@@ -25,7 +25,8 @@ const ResourceType = {
     Glyphs: 'Glyphs',
     SpriteImage: 'SpriteImage',
     SpriteJSON: 'SpriteJSON',
-    Image: 'Image'
+    Image: 'Image',
+    Model: 'Model'
 };
 export {ResourceType};
 
@@ -199,9 +200,7 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
 
 function makeXMLHttpRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     const xhr: XMLHttpRequest = new window.XMLHttpRequest();
-    var url = requestParameters.url;
-    if (url.indexOf(' ') >= 0) url = encodeURI(url);
-    xhr.open(requestParameters.method || 'GET', url, true);
+    xhr.open(requestParameters.method || 'GET', requestParameters.url, true);
     if (requestParameters.type === 'arrayBuffer') {
         xhr.responseType = 'arraybuffer';
     }

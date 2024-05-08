@@ -3,12 +3,12 @@
 import {CanonicalTileID} from './tile_id.js';
 import {Event, ErrorEvent, Evented} from '../util/evented.js';
 import {getImage, ResourceType} from '../util/ajax.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import {RasterBoundsArray} from '../data/array_types.js';
 import boundsAttributes from '../data/bounds_attributes.js';
 import SegmentVector from '../data/segment.js';
-import Texture from '../render/texture.js';
-import MercatorCoordinate from '../geo/mercator_coordinate.js';
+import Texture, {UserManagedTexture} from '../render/texture.js';
+import MercatorCoordinate, {MAX_MERCATOR_LATITUDE} from '../geo/mercator_coordinate.js';
 import browser from '../util/browser.js';
 import tileTransform, {getTilePoint} from '../geo/projection/tile_transform.js';
 import {mat3, vec3} from 'gl-matrix';
@@ -27,8 +27,13 @@ import type {
     VideoSourceSpecification
 } from '../style-spec/types.js';
 import type Context from '../gl/context.js';
+import assert from "assert";
 
 type Coordinates = [[number, number], [number, number], [number, number], [number, number]];
+type ImageSourceTexture = {|
+    dimensions: [number, number],
+    handle: WebGLTexture
+|};
 
 // perspective correction for texture mapping, see https://github.com/mapbox/mapbox-gl-js/issues/9158
 // adapted from https://math.stackexchange.com/a/339033/48653
@@ -95,10 +100,11 @@ function getPerspectiveTransform(w: number, h: number, x1: number, y1: number, x
 class ImageSource extends Evented implements Source {
     type: string;
     id: string;
+    scope: string;
     minzoom: number;
     maxzoom: number;
     tileSize: number;
-    url: string;
+    url: ?string;
     width: number;
     height: number;
 
@@ -107,10 +113,12 @@ class ImageSource extends Evented implements Source {
     options: any;
     dispatcher: Dispatcher;
     map: Map;
-    texture: Texture | null;
+    texture: Texture | UserManagedTexture | null;
     image: HTMLImageElement | ImageBitmap | ImageData;
     // $FlowFixMe
-    tileID: CanonicalTileID;
+    tileID: ?CanonicalTileID;
+    onNorthPole: boolean;
+    onSouthPole: boolean;
     _boundsArray: ?RasterBoundsArray;
     boundsBuffer: ?VertexBuffer;
     boundsSegments: ?SegmentVector;
@@ -134,6 +142,8 @@ class ImageSource extends Evented implements Source {
         this.tileSize = 512;
         this.tiles = {};
         this._loaded = false;
+        this.onNorthPole = false;
+        this.onSouthPole = false;
 
         this.setEventedParent(eventedParent);
 
@@ -146,6 +156,14 @@ class ImageSource extends Evented implements Source {
         this.fire(new Event('dataloading', {dataType: 'source'}));
 
         this.url = this.options.url;
+        if (!this.url) {
+            if (newCoordinates) {
+                this.coordinates = newCoordinates;
+            }
+            this._loaded = true;
+            this._finishLoading();
+            return;
+        }
 
         this._imageRequest = getImage(this.map._requestManager.transformRequest(this.url, ResourceType.Image), (err, image) => {
             this._imageRequest = null;
@@ -209,7 +227,7 @@ class ImageSource extends Evented implements Source {
      * });
      */
     updateImage(options: {url: string, coordinates?: Coordinates}): this {
-        if (!this.image || !options.url) {
+        if (!options.url) {
             return this;
         }
         if (this._imageRequest && options.url !== this.options.url) {
@@ -218,6 +236,20 @@ class ImageSource extends Evented implements Source {
         }
         this.options.url = options.url;
         this.load(options.coordinates, this._loaded);
+        return this;
+    }
+
+    setTexture(texture: ImageSourceTexture): this {
+        if (!(texture.handle instanceof WebGLTexture)) {
+            throw new Error(`The provided handle is not a WebGLTexture instance`);
+        }
+        const context = this.map.painter.context;
+        this.texture = new UserManagedTexture(context, texture.handle);
+        this.width = texture.dimensions[0];
+        this.height = texture.dimensions[1];
+        this._dirty = false;
+        this._loaded = true;
+        this._finishLoading();
         return this;
     }
 
@@ -240,7 +272,7 @@ class ImageSource extends Evented implements Source {
             this._imageRequest.cancel();
             this._imageRequest = null;
         }
-        if (this.texture) this.texture.destroy();
+        if (this.texture && !(this.texture instanceof UserManagedTexture)) this.texture.destroy();
     }
 
     /**
@@ -275,22 +307,47 @@ class ImageSource extends Evented implements Source {
         this.coordinates = coordinates;
         this._boundsArray = undefined;
 
-        // Calculate which mercator tile is suitable for rendering the video in
-        // and create a buffer with the corner coordinates. These coordinates
-        // may be outside the tile, because raster tiles aren't clipped when rendering.
+        if (!coordinates.length) {
+            assert(false);
+            return this;
+        }
+        this.onNorthPole = false;
+        this.onSouthPole = false;
+        let minLat = coordinates[0][1];
+        let maxLat = coordinates[0][1];
+        for (const coord of coordinates) {
+            if (coord[1] > maxLat) {
+                maxLat = coord[1];
+            }
+            if (coord[1] < minLat) {
+                minLat = coord[1];
+            }
+        }
+        const midLat = (maxLat + minLat) / 2.0;
+        if (midLat > MAX_MERCATOR_LATITUDE) {
+            this.onNorthPole = true;
+        } else if (midLat < -MAX_MERCATOR_LATITUDE) {
+            this.onSouthPole = true;
+        }
 
-        // transform the geo coordinates into (zoom 0) tile space coordinates
-        // $FlowFixMe[method-unbinding]
-        const cornerCoords = coordinates.map(MercatorCoordinate.fromLngLat);
+        if (!this.onNorthPole && !this.onSouthPole) {
+            // Calculate which mercator tile is suitable for rendering the video in
+            // and create a buffer with the corner coordinates. These coordinates
+            // may be outside the tile, because raster tiles aren't clipped when rendering.
 
-        // Compute the coordinates of the tile we'll use to hold this image's
-        // render data
-        this.tileID = getCoordinatesCenterTileID(cornerCoords);
+            // transform the geo coordinates into (zoom 0) tile space coordinates
+            // $FlowFixMe[method-unbinding]
+            const cornerCoords = coordinates.map(MercatorCoordinate.fromLngLat);
 
-        // Constrain min/max zoom to our tile's zoom level in order to force
-        // SourceCache to request this tile (no matter what the map's zoom
-        // level)
-        this.minzoom = this.maxzoom = this.tileID.z;
+            // Compute the coordinates of the tile we'll use to hold this image's
+            // render data
+            this.tileID = getCoordinatesCenterTileID(cornerCoords);
+
+            // Constrain min/max zoom to our tile's zoom level in order to force
+            // SourceCache to request this tile (no matter what the map's zoom
+            // level)
+            this.minzoom = this.maxzoom = this.tileID.z;
+        }
 
         this.fire(new Event('data', {dataType:'source', sourceDataType: 'content'}));
         return this;
@@ -338,12 +395,13 @@ class ImageSource extends Evented implements Source {
 
     // $FlowFixMe[method-unbinding]
     prepare() {
-        if (Object.keys(this.tiles).length === 0 || !this.image) return;
+        const hasTiles = Object.keys(this.tiles).length !== 0;
+        if (this.tileID && !hasTiles) return;
 
         const context = this.map.painter.context;
         const gl = context.gl;
 
-        if (this._dirty) {
+        if (this._dirty && !(this.texture instanceof UserManagedTexture)) {
             if (!this.texture) {
                 this.texture = new Texture(context, this.image, gl.RGBA);
                 this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
@@ -353,6 +411,7 @@ class ImageSource extends Evented implements Source {
             this._dirty = false;
         }
 
+        if (!hasTiles) return;
         this._prepareData(context);
     }
 

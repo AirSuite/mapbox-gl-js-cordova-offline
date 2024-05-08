@@ -1,3 +1,5 @@
+#include "_prelude_fog.vertex.glsl"
+
 // floor(127 / 2) == 63.0
 // the maximum allowed miter limit is 2.0 at the moment. the extrude normal is
 // stored in a byte (-128..127). we scale regular normals up to length 63, but
@@ -6,20 +8,20 @@
 // #define scale 63.0
 #define scale 0.015873016
 
-attribute vec2 a_pos_normal;
-attribute vec4 a_data;
-attribute float a_linesofar;
+in vec2 a_pos_normal;
+in vec4 a_data;
+in float a_linesofar;
 
 uniform mat4 u_matrix;
 uniform vec2 u_units_to_pixels;
 uniform mat2 u_pixels_to_tile_units;
 uniform lowp float u_device_pixel_ratio;
 
-varying vec2 v_normal;
-varying vec2 v_width2;
-varying float v_linesofar;
-varying float v_gamma_scale;
-varying float v_width;
+out vec2 v_normal;
+out vec2 v_width2;
+out float v_linesofar;
+out float v_gamma_scale;
+out float v_width;
 
 #pragma mapbox: define lowp float blur
 #pragma mapbox: define lowp float opacity

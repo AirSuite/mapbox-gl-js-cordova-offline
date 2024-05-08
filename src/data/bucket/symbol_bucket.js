@@ -5,7 +5,9 @@ import {symbolLayoutAttributes,
     collisionVertexAttributes,
     collisionVertexAttributesExt,
     collisionBoxLayout,
-    dynamicLayoutAttributes
+    dynamicLayoutAttributes,
+    iconTransitioningAttributes,
+    zOffsetAttributes
 } from './symbol_attributes.js';
 
 import {SymbolLayoutArray,
@@ -18,7 +20,9 @@ import {SymbolLayoutArray,
     PlacedSymbolArray,
     SymbolInstanceArray,
     GlyphOffsetArray,
-    SymbolLineVertexArray
+    SymbolLineVertexArray,
+    SymbolIconTransitioningArray,
+    ZOffsetVertexArray
 } from '../array_types.js';
 
 import ONE_EM from '../../symbol/one_em.js';
@@ -50,6 +54,7 @@ import type {ProjectionSpecification} from '../../style-spec/types.js';
 import {getProjection} from '../../geo/projection/index.js';
 import type Projection from '../../geo/projection/projection.js';
 import {mat4, vec3} from 'gl-matrix';
+import assert from 'assert';
 
 import type {CanonicalTileID, OverscaledTileID} from '../../source/tile_id.js';
 import type {
@@ -58,7 +63,7 @@ import type {
     IndexedFeature,
     PopulateParameters
 } from '../bucket.js';
-import type {CollisionBoxArray, CollisionBox, SymbolInstance} from '../array_types.js';
+import type {CollisionBoxArray, CollisionBox, SymbolInstance, StructArrayLayout1f4} from '../array_types.js';
 import type {StructArray, StructArrayMember} from '../../util/struct_array.js';
 import SymbolStyleLayer from '../../style/style_layer/symbol_style_layer.js';
 import type Context from '../../gl/context.js';
@@ -155,6 +160,10 @@ function addVertex(array: SymbolLayoutArray, tileAnchorX: number, tileAnchorY: n
     );
 }
 
+function addTransitioningVertex(array: SymbolIconTransitioningArray, tx: number, ty: number) {
+    array.emplaceBack(tx, ty);
+}
+
 function addGlobeVertex(array: SymbolGlobeExtArray, projAnchorX: number, projAnchorY: number, projAnchorZ: number, normX: number, normY: number, normZ: number) {
     array.emplaceBack(
         // a_globe_anchor
@@ -209,8 +218,14 @@ export class SymbolBuffers {
     opacityVertexArray: SymbolOpacityArray;
     opacityVertexBuffer: VertexBuffer;
 
+    zOffsetVertexArray: ZOffsetVertexArray;
+    zOffsetVertexBuffer: VertexBuffer;
+
+    iconTransitioningVertexArray: SymbolIconTransitioningArray;
+    iconTransitioningVertexBuffer: ?VertexBuffer;
+
     globeExtVertexArray: SymbolGlobeExtArray;
-    globeExtVertexBuffer: VertexBuffer;
+    globeExtVertexBuffer: ?VertexBuffer;
 
     placedSymbolArray: PlacedSymbolArray;
 
@@ -222,17 +237,20 @@ export class SymbolBuffers {
         this.dynamicLayoutVertexArray = new SymbolDynamicLayoutArray();
         this.opacityVertexArray = new SymbolOpacityArray();
         this.placedSymbolArray = new PlacedSymbolArray();
+        this.iconTransitioningVertexArray = new SymbolIconTransitioningArray();
         this.globeExtVertexArray = new SymbolGlobeExtArray();
+        this.zOffsetVertexArray = new ZOffsetVertexArray();
     }
 
     isEmpty(): boolean {
         return this.layoutVertexArray.length === 0 &&
             this.indexArray.length === 0 &&
             this.dynamicLayoutVertexArray.length === 0 &&
-            this.opacityVertexArray.length === 0;
+            this.opacityVertexArray.length === 0 &&
+            this.iconTransitioningVertexArray.length === 0;
     }
 
-    upload(context: Context, dynamicIndexBuffer: boolean, upload?: boolean, update?: boolean) {
+    upload(context: Context, dynamicIndexBuffer: boolean, upload?: boolean, update?: boolean, createZOffsetBuffer?: boolean) {
         if (this.isEmpty()) {
             return;
         }
@@ -242,8 +260,14 @@ export class SymbolBuffers {
             this.indexBuffer = context.createIndexBuffer(this.indexArray, dynamicIndexBuffer);
             this.dynamicLayoutVertexBuffer = context.createVertexBuffer(this.dynamicLayoutVertexArray, dynamicLayoutAttributes.members, true);
             this.opacityVertexBuffer = context.createVertexBuffer(this.opacityVertexArray, shaderOpacityAttributes, true);
+            if (this.iconTransitioningVertexArray.length > 0) {
+                this.iconTransitioningVertexBuffer = context.createVertexBuffer(this.iconTransitioningVertexArray, iconTransitioningAttributes.members, true);
+            }
             if (this.globeExtVertexArray.length > 0) {
                 this.globeExtVertexBuffer = context.createVertexBuffer(this.globeExtVertexArray, symbolGlobeExtAttributes.members, true);
+            }
+            if (!this.zOffsetVertexBuffer && (this.zOffsetVertexArray.length > 0 || !!createZOffsetBuffer)) {
+                this.zOffsetVertexBuffer = context.createVertexBuffer(this.zOffsetVertexArray, zOffsetAttributes.members, true);
             }
             // This is a performance hack so that we can write to opacityVertexArray with uint32s
             // even though the shaders read uint8s
@@ -262,8 +286,14 @@ export class SymbolBuffers {
         this.segments.destroy();
         this.dynamicLayoutVertexBuffer.destroy();
         this.opacityVertexBuffer.destroy();
+        if (this.iconTransitioningVertexBuffer) {
+            this.iconTransitioningVertexBuffer.destroy();
+        }
         if (this.globeExtVertexBuffer) {
             this.globeExtVertexBuffer.destroy();
+        }
+        if (this.zOffsetVertexBuffer) {
+            this.zOffsetVertexBuffer.destroy();
         }
     }
 }
@@ -405,19 +435,25 @@ class SymbolBucket implements Bucket {
     hasRTLText: boolean;
     projection: ProjectionSpecification;
     projectionInstance: ?Projection;
+    hasAnyIconTextFit: boolean;
+    hasAnyZOffset: boolean;
+    symbolInstanceIndexesSortedZOffset: Array<number>;
+    zOffsetSortDirty: boolean;
+    zOffsetBuffersNeedUpload: boolean;
 
     constructor(options: BucketParameters<SymbolStyleLayer>) {
         this.collisionBoxArray = options.collisionBoxArray;
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.pixelRatio = options.pixelRatio;
         this.sourceLayerIndex = options.sourceLayerIndex;
         this.hasPattern = false;
         this.hasRTLText = false;
         this.fullyClipped = false;
+        this.hasAnyIconTextFit = false;
         this.sortKeyRanges = [];
 
         this.collisionCircleArray = [];
@@ -448,6 +484,9 @@ class SymbolBucket implements Bucket {
 
         this.sourceID = options.sourceID;
         this.projection = options.projection;
+        this.hasAnyZOffset = false;
+        this.zOffsetSortDirty = false;
+        this.zOffsetBuffersNeedUpload = layout.get('symbol-z-elevate');
     }
 
     createArrays() {
@@ -587,7 +626,10 @@ class SymbolBucket implements Bucket {
             this.features.push(symbolFeature);
 
             if (icon) {
-                icons[icon.name] = true;
+                icons[icon.namePrimary] = true;
+                if (icon.nameSecondary) {
+                    icons[icon.nameSecondary] = true;
+                }
             }
 
             if (text) {
@@ -602,7 +644,7 @@ class SymbolBucket implements Bucket {
                         this.calculateGlyphDependencies(section.text, sectionStack, textAlongLine, this.allowVerticalPlacement, doesAllowVerticalWritingMode);
                     } else {
                         // Add section image to the list of dependencies.
-                        icons[section.image.name] = true;
+                        icons[section.image.namePrimary] = true;
                     }
                 }
             }
@@ -622,10 +664,76 @@ class SymbolBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.text.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, availableImages, imagePositions);
-        this.icon.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.text.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
+        this.icon.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
+    }
+
+    updateZOffset() {
+        // z offset is expected to change less frequently than the placement opacity and, if values are the same,
+        // avoid uploading arrays to buffers.
+        const addZOffsetTextVertex = (array: StructArrayLayout1f4, numVertices: number, value: number) => {
+            currentTextZOffsetVertex += numVertices;
+            if (currentTextZOffsetVertex > array.length) {
+                array.resize(currentTextZOffsetVertex);
+            }
+            for (let i = -numVertices; i < 0; i++) {
+                array.emplace(i + currentTextZOffsetVertex, value);
+            }
+        };
+        const addZOffsetIconVertex = (array: StructArrayLayout1f4, numVertices: number, value: number) => {
+            currentIconZOffsetVertex += numVertices;
+            if (currentIconZOffsetVertex > array.length) {
+                array.resize(currentIconZOffsetVertex);
+            }
+            for (let i = -numVertices; i < 0; i++) {
+                array.emplace(i + currentIconZOffsetVertex, value);
+            }
+        };
+
+        const updateZOffset = this.zOffsetBuffersNeedUpload;
+        if (!updateZOffset) return;
+        this.zOffsetBuffersNeedUpload = false;
+        let currentTextZOffsetVertex = 0;
+        let currentIconZOffsetVertex = 0;
+        for (let s = 0; s < this.symbolInstances.length; s++) {
+            const symbolInstance = this.symbolInstances.get(s);
+            const {
+                numHorizontalGlyphVertices,
+                numVerticalGlyphVertices,
+                numIconVertices
+            } = symbolInstance;
+            const zOffset = symbolInstance.zOffset;
+            const hasText = numHorizontalGlyphVertices > 0 || numVerticalGlyphVertices > 0;
+            const hasIcon = numIconVertices > 0;
+            if (hasText) {
+                addZOffsetTextVertex(this.text.zOffsetVertexArray, numHorizontalGlyphVertices, zOffset);
+                addZOffsetTextVertex(this.text.zOffsetVertexArray, numVerticalGlyphVertices, zOffset);
+            }
+            if (hasIcon) {
+                const {placedIconSymbolIndex, verticalPlacedIconSymbolIndex} = symbolInstance;
+                if (placedIconSymbolIndex >= 0) {
+                    addZOffsetIconVertex(this.icon.zOffsetVertexArray, numIconVertices, zOffset);
+                }
+
+                if (verticalPlacedIconSymbolIndex >= 0) {
+                    addZOffsetIconVertex(this.icon.zOffsetVertexArray, symbolInstance.numVerticalIconVertices, zOffset);
+                }
+            }
+        }
+
+        if (this.text.zOffsetVertexBuffer) {
+            this.text.zOffsetVertexBuffer.updateData(this.text.zOffsetVertexArray);
+            assert(this.text.zOffsetVertexBuffer.length === this.text.layoutVertexArray.length);
+        }
+        if (this.icon.zOffsetVertexBuffer) {
+            this.icon.zOffsetVertexBuffer.updateData(this.icon.zOffsetVertexArray);
+            assert(this.icon.zOffsetVertexBuffer.length === this.icon.layoutVertexArray.length);
+        }
+
     }
 
     isEmpty(): boolean {
@@ -643,8 +751,8 @@ class SymbolBucket implements Bucket {
             this.textCollisionBox.upload(context);
             this.iconCollisionBox.upload(context);
         }
-        this.text.upload(context, this.sortFeaturesByY, !this.uploaded, this.text.programConfigurations.needsUpload);
-        this.icon.upload(context, this.sortFeaturesByY, !this.uploaded, this.icon.programConfigurations.needsUpload);
+        this.text.upload(context, this.sortFeaturesByY, !this.uploaded, this.text.programConfigurations.needsUpload, this.zOffsetBuffersNeedUpload);
+        this.icon.upload(context, this.sortFeaturesByY, !this.uploaded, this.icon.programConfigurations.needsUpload, this.zOffsetBuffersNeedUpload);
         this.uploaded = true;
     }
 
@@ -695,7 +803,9 @@ class SymbolBucket implements Bucket {
                lineLength: number,
                associatedIconIndex: number,
                availableImages: Array<string>,
-               canonical: CanonicalTileID) {
+               canonical: CanonicalTileID,
+               brightness: ?number,
+               hasAnySecondaryIcon: boolean) {
         const indexArray = arrays.indexArray;
         const layoutVertexArray = arrays.layoutVertexArray;
         const globeExtVertexArray = arrays.globeExtVertexArray;
@@ -709,14 +819,14 @@ class SymbolBucket implements Bucket {
         const sections = feature.text && feature.text.sections;
 
         for (let i = 0; i < quads.length; i++) {
-            const {tl, tr, bl, br, tex, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY, glyphOffset, isSDF, sectionIndex} = quads[i];
+            const {tl, tr, bl, br, texPrimary, texSecondary, pixelOffsetTL, pixelOffsetBR, minFontScaleX, minFontScaleY, glyphOffset, isSDF, sectionIndex} = quads[i];
             const index = segment.vertexLength;
 
             const y = glyphOffset[1];
-            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tl.x, y + tl.y, tex.x, tex.y, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tr.x, y + tr.y, tex.x + tex.w, tex.y, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, bl.x, y + bl.y, tex.x, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
-            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, br.x, y + br.y, tex.x + tex.w, tex.y + tex.h, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tl.x, y + tl.y, texPrimary.x, texPrimary.y, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, tr.x, y + tr.y, texPrimary.x + texPrimary.w, texPrimary.y, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetTL.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, bl.x, y + bl.y, texPrimary.x, texPrimary.y + texPrimary.h, sizeVertex, isSDF, pixelOffsetTL.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
+            addVertex(layoutVertexArray, tileAnchor.x, tileAnchor.y, br.x, y + br.y, texPrimary.x + texPrimary.w, texPrimary.y + texPrimary.h, sizeVertex, isSDF, pixelOffsetBR.x, pixelOffsetBR.y, minFontScaleX, minFontScaleY);
 
             if (globe) {
                 const {x, y, z} = globe.anchor;
@@ -731,6 +841,16 @@ class SymbolBucket implements Bucket {
                 addDynamicAttributes(arrays.dynamicLayoutVertexArray, tileAnchor.x, tileAnchor.y, tileAnchor.z, angle);
             }
 
+            // For data-driven cases if at least of one the icon has a transitionable variant
+            // we have to load the main variant in cases where the secondary image is not specified
+            if (hasAnySecondaryIcon) {
+                const tex = texSecondary ? texSecondary : texPrimary;
+                addTransitioningVertex(arrays.iconTransitioningVertexArray, tex.x, tex.y);
+                addTransitioningVertex(arrays.iconTransitioningVertexArray, tex.x + tex.w, tex.y);
+                addTransitioningVertex(arrays.iconTransitioningVertexArray, tex.x, tex.y + tex.h);
+                addTransitioningVertex(arrays.iconTransitioningVertexArray, tex.x + tex.w, tex.y + tex.h);
+            }
+
             indexArray.emplaceBack(index, index + 1, index + 2);
             indexArray.emplaceBack(index + 1, index + 2, index + 3);
 
@@ -740,7 +860,7 @@ class SymbolBucket implements Bucket {
             this.glyphOffsetArray.emplaceBack(glyphOffset[0]);
 
             if (i === quads.length - 1 || sectionIndex !== quads[i + 1].sectionIndex) {
-                arrays.programConfigurations.populatePaintArrays(layoutVertexArray.length, feature, feature.index, {}, availableImages, canonical, sections && sections[sectionIndex]);
+                arrays.programConfigurations.populatePaintArrays(layoutVertexArray.length, feature, feature.index, {}, availableImages, canonical, brightness, sections && sections[sectionIndex]);
             }
         }
 
@@ -787,10 +907,7 @@ class SymbolBucket implements Bucket {
             arrays.collisionVertexArray.emplaceBack(0, 0, 0, 0);
         }
 
-        arrays.collisionVertexArrayExt.emplaceBack(scale, -box.padding, -box.padding);
-        arrays.collisionVertexArrayExt.emplaceBack(scale,  box.padding, -box.padding);
-        arrays.collisionVertexArrayExt.emplaceBack(scale,  box.padding,  box.padding);
-        arrays.collisionVertexArrayExt.emplaceBack(scale, -box.padding,  box.padding);
+        this._commitDebugCollisionVertexUpdate(arrays.collisionVertexArrayExt, scale, box.padding, symbolInstance.zOffset);
 
         this._commitLayoutVertex(arrays.layoutVertexArray, boxTileAnchorX, boxTileAnchorY, boxTileAnchorZ, symbolTileAnchorX, symbolTileAnchorY, new Point(box.x1, box.y1));
         this._commitLayoutVertex(arrays.layoutVertexArray, boxTileAnchorX, boxTileAnchorY, boxTileAnchorZ, symbolTileAnchorX, symbolTileAnchorY, new Point(box.x2, box.y1));
@@ -866,11 +983,11 @@ class SymbolBucket implements Bucket {
         return this.tilePixelRatio * featureSize;
     }
 
-    _commitDebugCollisionVertexUpdate(array: StructArray, scale: number, padding: number) {
-        array.emplaceBack(scale, -padding, -padding);
-        array.emplaceBack(scale,  padding, -padding);
-        array.emplaceBack(scale,  padding,  padding);
-        array.emplaceBack(scale, -padding,  padding);
+    _commitDebugCollisionVertexUpdate(array: StructArray, scale: number, padding: number, zOffset: number) {
+        array.emplaceBack(scale, -padding, -padding, zOffset);
+        array.emplaceBack(scale,  padding, -padding, zOffset);
+        array.emplaceBack(scale,  padding,  padding, zOffset);
+        array.emplaceBack(scale, -padding,  padding, zOffset);
     }
 
     _updateTextDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number, instance: SymbolInstance) {
@@ -878,16 +995,16 @@ class SymbolBucket implements Bucket {
             const box: CollisionBox = (collisionBoxArray.get(b): any);
             const scale = this.getSymbolInstanceTextSize(size, instance, zoom, b);
             const array = this.textCollisionBox.collisionVertexArrayExt;
-            this._commitDebugCollisionVertexUpdate(array, scale, box.padding);
+            this._commitDebugCollisionVertexUpdate(array, scale, box.padding, instance.zOffset);
         }
     }
 
-    _updateIconDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number, symbolIndex: number) {
+    _updateIconDebugCollisionBoxes(size: any, zoom: number, collisionBoxArray: CollisionBoxArray, startIndex: number, endIndex: number, instance: SymbolInstance) {
         for (let b = startIndex; b < endIndex; b++) {
             const box = (collisionBoxArray.get(b));
-            const scale = this.getSymbolInstanceIconSize(size, zoom, symbolIndex);
+            const scale = this.getSymbolInstanceIconSize(size, zoom, instance.placedIconSymbolIndex);
             const array = this.iconCollisionBox.collisionVertexArrayExt;
-            this._commitDebugCollisionVertexUpdate(array, scale, box.padding);
+            this._commitDebugCollisionVertexUpdate(array, scale, box.padding, instance.zOffset);
         }
     }
 
@@ -906,8 +1023,8 @@ class SymbolBucket implements Bucket {
             const symbolInstance = this.symbolInstances.get(i);
             this._updateTextDebugCollisionBoxes(textSize, zoom, collisionBoxArray, symbolInstance.textBoxStartIndex, symbolInstance.textBoxEndIndex, symbolInstance);
             this._updateTextDebugCollisionBoxes(textSize, zoom, collisionBoxArray, symbolInstance.verticalTextBoxStartIndex, symbolInstance.verticalTextBoxEndIndex, symbolInstance);
-            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.iconBoxStartIndex, symbolInstance.iconBoxEndIndex, symbolInstance.placedIconSymbolIndex);
-            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.verticalIconBoxStartIndex, symbolInstance.verticalIconBoxEndIndex, symbolInstance.placedIconSymbolIndex);
+            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.iconBoxStartIndex, symbolInstance.iconBoxEndIndex, symbolInstance);
+            this._updateIconDebugCollisionBoxes(iconSize, zoom, collisionBoxArray, symbolInstance.verticalIconBoxStartIndex, symbolInstance.verticalIconBoxEndIndex, symbolInstance);
         }
 
         if (this.hasTextCollisionBoxData() && this.textCollisionBox.collisionVertexBufferExt) {
@@ -989,6 +1106,10 @@ class SymbolBucket implements Bucket {
         return this.hasDebugData() && this.iconCollisionBox.segments.get().length > 0;
     }
 
+    hasIconTextFit(): boolean {
+        return this.hasAnyIconTextFit;
+    }
+
     addIndicesForPlacedSymbol(iconOrText: SymbolBuffers, placedSymbolIndex: number) {
         const placedSymbol = iconOrText.placedSymbolArray.get(placedSymbolIndex);
 
@@ -1019,6 +1140,21 @@ class SymbolBucket implements Bucket {
         result.sort((aIndex, bIndex) => (rotatedYs[aIndex] - rotatedYs[bIndex]) || (featureIndexes[bIndex] - featureIndexes[aIndex]));
 
         return result;
+    }
+
+    getSortedIndexesByZOffset(): Array<number> {
+        if (!this.zOffsetSortDirty) {
+            assert(this.symbolInstanceIndexesSortedZOffset.length === this.symbolInstances.length);
+            return this.symbolInstanceIndexesSortedZOffset;
+        }
+        if (!this.symbolInstanceIndexesSortedZOffset) {
+            this.symbolInstanceIndexesSortedZOffset = [];
+            for (let i = 0; i < this.symbolInstances.length; ++i) {
+                this.symbolInstanceIndexesSortedZOffset.push(i);
+            }
+        }
+        this.zOffsetSortDirty = false;
+        return this.symbolInstanceIndexesSortedZOffset.sort((aIndex, bIndex) => this.symbolInstances.get(bIndex).zOffset - this.symbolInstances.get(aIndex).zOffset);
     }
 
     addToSortKeyRanges(symbolInstanceIndex: number, sortKey: number) {

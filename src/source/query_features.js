@@ -20,6 +20,15 @@ export type RenderedFeatureLayers = Array<{
     queryResults: QueryResult
 }>;
 
+export type QueryRenderedFeaturesParams = {
+    scope?: string;
+    layers?: string[];
+    filter?: FilterSpecification;
+    validate?: boolean;
+    availableImages?: string[];
+    serializedLayers?: {[string]: StyleLayer}
+};
+
 /*
  * Returns a matrix that can be used to convert from tile coordinates to viewport pixel coordinates.
  */
@@ -65,7 +74,7 @@ export function queryRenderedFeatures(sourceCache: SourceCache,
             const feature = featureWrapper.feature;
             const layer = feature.layer;
 
-            if (!layer || layer.type === 'background' || layer.type === 'sky') return;
+            if (!layer || layer.type === 'background' || layer.type === 'sky' || layer.type === 'slot') return;
 
             feature.source = layer.source;
             if (layer['source-layer']) {

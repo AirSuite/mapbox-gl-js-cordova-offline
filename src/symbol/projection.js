@@ -312,7 +312,7 @@ function updateLineLabels(bucket: SymbolBucket,
             continue;
         }
         const cameraToAnchorDistance = anchorPos[3];
-        const perspectiveRatio = getPerspectiveRatio(painter.transform.cameraToCenterDistance, cameraToAnchorDistance);
+        const perspectiveRatio = getPerspectiveRatio(painter.transform.getCameraToCenterDistance(tr.projection), cameraToAnchorDistance);
 
         const fontSize = symbolSize.evaluateSizeForFeature(sizeData, partiallyEvaluatedSize, symbol);
         const pitchScaledFontSize = pitchWithMap ? fontSize / perspectiveRatio : fontSize * perspectiveRatio;
@@ -344,12 +344,12 @@ function updateLineLabels(bucket: SymbolBucket,
 
     if (isText) {
         bucket.text.dynamicLayoutVertexBuffer.updateData(dynamicLayoutVertexArray);
-        if (globeExtVertexArray) {
+        if (globeExtVertexArray && bucket.text.globeExtVertexBuffer) {
             bucket.text.globeExtVertexBuffer.updateData(globeExtVertexArray);
         }
     } else {
         bucket.icon.dynamicLayoutVertexBuffer.updateData(dynamicLayoutVertexArray);
-        if (globeExtVertexArray) {
+        if (globeExtVertexArray && bucket.icon.globeExtVertexBuffer) {
             bucket.icon.globeExtVertexBuffer.updateData(globeExtVertexArray);
         }
     }

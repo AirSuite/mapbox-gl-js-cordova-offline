@@ -34,7 +34,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
     const context = painter.context;
     const gl = context.gl;
     const tr = painter.transform;
-    const program = painter.useProgram('collisionBox');
+    const program = painter.getOrCreateProgram('collisionBox');
     const tileBatches: Array<TileBatch> = [];
     let circleCount = 0;
     let circleOffset = 0;
@@ -77,7 +77,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
         }
         if (!buffers) continue;
         if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
-        program.draw(context, gl.LINES,
+        program.draw(painter, gl.LINES,
             DepthMode.disabled, StencilMode.disabled,
             painter.colorModeForRenderPass(),
             CullFaceMode.disabled,
@@ -92,7 +92,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
     }
 
     // Render collision circles
-    const circleProgram = painter.useProgram('collisionCircle');
+    const circleProgram = painter.getOrCreateProgram('collisionCircle');
 
     // Construct vertex data
     const vertexData = new CollisionCircleLayoutArray();
@@ -128,7 +128,7 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
         const uniforms = collisionCircleUniformValues(batch.transform, batch.invTransform, tr, batch.projection);
 
         circleProgram.draw(
-            context,
+            painter,
             gl.TRIANGLES,
             DepthMode.disabled,
             StencilMode.disabled,

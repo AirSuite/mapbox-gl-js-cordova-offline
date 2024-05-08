@@ -15,7 +15,10 @@ type Config = {|
   TILE_URL_VERSION: string,
   RASTER_URL_PREFIX: string,
   ACCESS_TOKEN: ?string,
-  MAX_PARALLEL_IMAGE_REQUESTS: number
+  MAX_PARALLEL_IMAGE_REQUESTS: number,
+  DRACO_URL: string,
+  DEFAULT_STYLE: string,
+  GLYPHS_URL: string,
 |};
 
 let mapboxHTTPURLRegex;
@@ -74,7 +77,10 @@ const config: Config = {
     RASTER_URL_PREFIX: 'raster/v1',
     REQUIRE_ACCESS_TOKEN: true,
     ACCESS_TOKEN: null,
-    MAX_PARALLEL_IMAGE_REQUESTS: 16
+    DEFAULT_STYLE: 'mapbox://styles/mapbox/standard',
+    MAX_PARALLEL_IMAGE_REQUESTS: 16,
+    DRACO_URL: 'https://api.mapbox.com/mapbox-gl-js/draco_decoder_gltf_v1.5.6.wasm',
+    GLYPHS_URL: 'mapbox://fonts/mapbox/{fontstack}/{range}.pbf'
 };
 
 export default config;

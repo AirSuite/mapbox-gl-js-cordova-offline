@@ -64,7 +64,7 @@ export default function validateLayer(options: Options): Array<ValidationError> 
         } else {
             type = unbundle(parent.type);
         }
-    } else if (!(type === 'background' || type === 'sky')) {
+    } else if (!(type === 'background' || type === 'sky' || type === 'slot')) {
         if (!layer.source) {
             errors.push(new ValidationError(key, layer, 'missing required property "source"'));
         } else {
@@ -138,7 +138,7 @@ export default function validateLayer(options: Options): Array<ValidationError> 
                     styleSpec: options.styleSpec,
                     objectElementValidators: {
                         '*'(options) {
-                            return validatePaintProperty(extend({layerType: type}, options));
+                            return validatePaintProperty(extend({layerType: type, layer}, options));
                         }
                     }
                 });

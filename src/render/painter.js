@@ -5,11 +5,10 @@ import window from '../util/window.js';
 
 import {mat4} from 'gl-matrix';
 import SourceCache from '../source/source_cache.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import pixelsToTileUnits from '../source/pixels_to_tile_units.js';
 import SegmentVector from '../data/segment.js';
 import {PosArray, TileBoundsArray, TriangleIndexArray, LineStripIndexArray} from '../data/array_types.js';
-import {values} from '../util/util.js';
 import {isMapAuthenticated} from '../util/mapbox.js';
 import posAttributes from '../data/pos_attributes.js';
 import boundsAttributes from '../data/bounds_attributes.js';
@@ -39,13 +38,23 @@ import background from './draw_background.js';
 import debug, {drawDebugPadding, drawDebugQueryGeometry} from './draw_debug.js';
 import custom from './draw_custom.js';
 import sky from './draw_sky.js';
-import drawAtmosphere from './draw_atmosphere.js';
+import Atmosphere from './draw_atmosphere.js';
 import {GlobeSharedBuffers, globeToMercatorTransition} from '../geo/projection/globe_util.js';
-import {AtmosphereBuffer} from '../render/atmosphere_buffer.js';
 import {Terrain} from '../terrain/terrain.js';
 import {Debug} from '../util/debug.js';
 import Tile from '../source/tile.js';
 import {RGBAImage} from '../util/image.js';
+import {ReplacementSource} from '../../3d-style/source/replacement_source.js';
+import type {Source} from '../source/source.js';
+import type {CutoffParams} from '../render/cutoff.js';
+
+// 3D-style related
+import model, {upload as modelUpload} from '../../3d-style/render/draw_model.js';
+import {lightsUniformValues} from '../../3d-style/render/lights.js';
+
+import {ShadowRenderer} from '../../3d-style/render/shadow_renderer.js';
+
+import {WireframeDebugCache} from "./wireframe_cache.js";
 
 const draw = {
     symbol,
@@ -59,7 +68,12 @@ const draw = {
     background,
     sky,
     debug,
-    custom
+    custom,
+    model
+};
+
+const upload = {
+    modelUpload
 };
 
 import type Transform from '../geo/transform.js';
@@ -68,22 +82,37 @@ import type Style from '../style/style.js';
 import type StyleLayer from '../style/style_layer.js';
 import type ImageManager from './image_manager.js';
 import type GlyphManager from './glyph_manager.js';
+import type ModelManager from '../../3d-style/render/model_manager.js';
 import type VertexBuffer from '../gl/vertex_buffer.js';
 import type IndexBuffer from '../gl/index_buffer.js';
 import type {DepthRangeType, DepthMaskType, DepthFuncType} from '../gl/types.js';
 import type ResolvedImage from '../style-spec/expression/types/resolved_image.js';
 import type {DynamicDefinesType} from './program/program_uniforms.js';
+import {FOG_OPACITY_THRESHOLD} from '../style/fog_helpers.js';
+import type {ContextOptions} from '../gl/context.js';
 
-export type RenderPass = 'offscreen' | 'opaque' | 'translucent' | 'sky';
+export type RenderPass = 'offscreen' | 'opaque' | 'translucent' | 'sky' | 'shadow' | 'light-beam';
 export type CanvasCopyInstances = {
     canvasCopies: WebGLTexture[],
     timeStamps: number[]
 }
 
+export type CreateProgramParams = {
+    config?: ProgramConfiguration,
+    defines?: DynamicDefinesType[],
+    overrideFog?: boolean,
+    overrideRtt?: boolean
+}
+
+type WireframeOptions = {
+    terrain: boolean,
+    layers2D: boolean,
+    layers3D: boolean,
+};
+
 type PainterOptions = {
     showOverdrawInspector: boolean,
     showTileBoundaries: boolean,
-    showTerrainWireframe: boolean,
     showQueryGeometry: boolean,
     showTileAABBs: boolean,
     showPadding: boolean,
@@ -94,7 +123,8 @@ type PainterOptions = {
     gpuTimingDeferredRender: boolean,
     fadeDuration: number,
     isInitialLoad: boolean,
-    speedIndexTiming: boolean
+    speedIndexTiming: boolean,
+    wireframe: WireframeOptions,
 }
 
 type TileBoundsBuffers = {|
@@ -136,15 +166,18 @@ class Painter {
     options: PainterOptions;
     imageManager: ImageManager;
     glyphManager: GlyphManager;
+    modelManager: ModelManager;
     depthRangeFor3D: DepthRangeType;
     opaquePassCutoff: number;
     frameCounter: number;
     renderPass: RenderPass;
     currentLayer: number;
     currentStencilSource: ?string;
+    currentShadowCascade: number;
     nextStencilID: number;
     id: string;
     _showOverdrawInspector: boolean;
+    _shadowMapDebug: boolean;
     cache: {[_: string]: Program<*> };
     symbolFadeChange: number;
     gpuTimers: GPUTimers;
@@ -155,14 +188,27 @@ class Painter {
     debugOverlayCanvas: HTMLCanvasElement;
     _terrain: ?Terrain;
     globeSharedBuffers: ?GlobeSharedBuffers;
-    atmosphereBuffer: AtmosphereBuffer;
     tileLoaded: boolean;
     frameCopies: Array<WebGLTexture>;
     loadTimeStamps: Array<number>;
     _backgroundTiles: {[key: number]: Tile};
+    _atmosphere: ?Atmosphere;
+    replacementSource: ReplacementSource;
+    conflationActive: boolean;
+    firstLightBeamLayer: number;
+    longestCutoffRange: number;
+    minCutoffZoom: number;
+    renderDefaultNorthPole: boolean;
+    renderDefaultSouthPole: boolean;
+    _fogVisible: boolean;
+    _cachedTileFogOpacities: {[number]: [number, number]};
 
-    constructor(gl: WebGLRenderingContext, transform: Transform, isWebGL2: boolean = false) {
-        this.context = new Context(gl, isWebGL2);
+    _shadowRenderer: ?ShadowRenderer;
+
+    _wireframeDebugCache: WireframeDebugCache;
+
+    constructor(gl: WebGL2RenderingContext, contextCreateOptions: ContextOptions, transform: Transform) {
+        this.context = new Context(gl, contextCreateOptions);
         this.transform = transform;
         this._tileTextures = {};
         this.frameCopies = [];
@@ -179,17 +225,34 @@ class Painter {
         this.gpuTimers = {};
         this.frameCounter = 0;
         this._backgroundTiles = {};
+
+        this.conflationActive = false;
+        this.replacementSource = new ReplacementSource();
+        this.longestCutoffRange = 0.0;
+        this.minCutoffZoom = 0.0;
+        this._fogVisible = false;
+        this._cachedTileFogOpacities = {};
+        this._shadowRenderer = new ShadowRenderer(this);
+
+        this._wireframeDebugCache = new WireframeDebugCache();
+        this.renderDefaultNorthPole = true;
+        this.renderDefaultSouthPole = true;
     }
 
     updateTerrain(style: Style, adaptCameraAltitude: boolean) {
         const enabled = !!style && !!style.terrain && this.transform.projection.supportsTerrain;
         if (!enabled && (!this._terrain || !this._terrain.enabled)) return;
+
         if (!this._terrain) {
             this._terrain = new Terrain(this, style);
         }
         const terrain: Terrain = this._terrain;
         this.transform.elevation = enabled ? terrain : null;
         terrain.update(style, this.transform, adaptCameraAltitude);
+        if (this.transform.elevation && !terrain.enabled) {
+            // for zoom based exaggeration change, terrain.update can disable terrain.
+            this.transform.elevation = null;
+        }
     }
 
     _updateFog(style: Style) {
@@ -222,6 +285,14 @@ class Painter {
         return this.transform._terrainEnabled() && this._terrain && this._terrain.enabled ? this._terrain : null;
     }
 
+    get shadowRenderer(): ?ShadowRenderer {
+        return this._shadowRenderer && this._shadowRenderer.enabled ? this._shadowRenderer : null;
+    }
+
+    get wireframeDebugCache(): WireframeDebugCache {
+        return this._wireframeDebugCache;
+    }
+
     /*
      * Update the GL viewport, projection matrix, and transforms to compensate
      * for a new width and height value.
@@ -233,7 +304,7 @@ class Painter {
 
         if (this.style) {
             for (const layerId of this.style.order) {
-                this.style._layers[layerId].resize();
+                this.style._mergedLayers[layerId].resize();
             }
         }
     }
@@ -290,8 +361,6 @@ class Painter {
         const gl = this.context.gl;
         this.stencilClearMode = new StencilMode({func: gl.ALWAYS, mask: 0}, 0x0, 0xFF, gl.ZERO, gl.ZERO, gl.ZERO);
         this.loadTimeStamps.push(window.performance.now());
-
-        this.atmosphereBuffer = new AtmosphereBuffer(this.context);
     }
 
     getMercatorTileBoundsBuffers(): TileBoundsBuffers {
@@ -330,7 +399,7 @@ class Painter {
         // pending an upstream fix, we draw a fullscreen stencil=0 clipping mask here,
         // effectively clearing the stencil buffer: once an upstream patch lands, remove
         // this function in favor of context.clear({ stencil: 0x0 })
-        this.useProgram('clippingMask').draw(context, gl.TRIANGLES,
+        this.getOrCreateProgram('clippingMask').draw(this, gl.TRIANGLES,
             DepthMode.disabled, this.stencilClearMode, ColorMode.disabled, CullFaceMode.disabled,
             clippingMaskUniformValues(this.identityMat),
             '$clipping', this.viewportBuffer,
@@ -376,7 +445,7 @@ class Painter {
         context.setColorMode(ColorMode.disabled);
         context.setDepthMode(DepthMode.disabled);
 
-        const program = this.useProgram('clippingMask');
+        const program = this.getOrCreateProgram('clippingMask');
 
         this._tileClippingMaskIDs = {};
 
@@ -385,7 +454,7 @@ class Painter {
             const id = this._tileClippingMaskIDs[tileID.key] = this.nextStencilID++;
             const {tileBoundsBuffer, tileBoundsIndexBuffer, tileBoundsSegments} = this.getTileBoundsBuffers(tile);
 
-            program.draw(context, gl.TRIANGLES, DepthMode.disabled,
+            program.draw(this, gl.TRIANGLES, DepthMode.disabled,
             // Tests will always pass, and ref value will be written to stencil buffer.
             new StencilMode({func: gl.ALWAYS, mask: 0}, id, 0xFF, gl.KEEP, gl.KEEP, gl.REPLACE),
             ColorMode.disabled, CullFaceMode.disabled, clippingMaskUniformValues(tileID.projMatrix),
@@ -448,7 +517,7 @@ class Painter {
             const numOverdrawSteps = 8;
             const a = 1 / numOverdrawSteps;
 
-            return new ColorMode([gl.CONSTANT_COLOR, gl.ONE], new Color(a, a, a, 0), [true, true, true, true]);
+            return new ColorMode([gl.CONSTANT_COLOR, gl.ONE, gl.CONSTANT_COLOR, gl.ONE], new Color(a, a, a, 0), [true, true, true, true]);
         } else if (this.renderPass === 'opaque') {
             return ColorMode.unblended;
         } else {
@@ -456,8 +525,22 @@ class Painter {
         }
     }
 
-    depthModeForSublayer(n: number, mask: DepthMaskType, func: ?DepthFuncType): $ReadOnly<DepthMode> {
-        if (!this.opaquePassEnabledForLayer()) return DepthMode.disabled;
+    colorModeForDrapableLayerRenderPass(emissiveStrengthForDrapedLayers?: number): $ReadOnly<ColorMode> {
+        const deferredDrapingEnabled = () => {
+            return this.style && this.style.enable3dLights() && this.terrain && this.terrain.renderingToTexture;
+        };
+
+        const gl = this.context.gl;
+        if (deferredDrapingEnabled() && this.renderPass === 'translucent') {
+            return new ColorMode([gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.CONSTANT_ALPHA, gl.ONE_MINUS_SRC_ALPHA],
+                new Color(0, 0, 0, emissiveStrengthForDrapedLayers === undefined ? 0 : emissiveStrengthForDrapedLayers), [true, true, true, true]);
+        } else {
+            return this.colorModeForRenderPass();
+        }
+    }
+
+    depthModeForSublayer(n: number, mask: DepthMaskType, func: ?DepthFuncType, skipOpaquePassCutoff: boolean = false): $ReadOnly<DepthMode> {
+        if (!this.opaquePassEnabledForLayer() && !skipOpaquePassCutoff) return DepthMode.disabled;
         const depth = 1 - ((1 + this.currentLayer) * this.numSublayers + n) * this.depthEpsilon;
         return new DepthMode(func || this.context.gl.LEQUAL, mask, [depth, depth]);
     }
@@ -474,45 +557,141 @@ class Painter {
     }
 
     render(style: Style, options: PainterOptions) {
+        // Update debug cache, i.e. clear all unused buffers
+        this._wireframeDebugCache.update(this.frameCounter);
+
         this.style = style;
         this.options = options;
 
+        const layers = this.style._mergedLayers;
+        const layerIds = this.style.order;
+        const orderedLayers = layerIds.map(id => layers[id]);
+        const sourceCaches = this.style._mergedSourceCaches;
+
         this.imageManager = style.imageManager;
-        this.glyphManager = style.glyphManager;
+        this.modelManager = style.modelManager;
 
         this.symbolFadeChange = style.placement.symbolFadeChange(browser.now());
 
         this.imageManager.beginFrame();
 
-        const layerIds = this.style.order;
-        const sourceCaches = this.style._sourceCaches;
+        let conflationSourcesInStyle = 0;
+        let conflationActiveThisFrame = false;
 
         for (const id in sourceCaches) {
             const sourceCache = sourceCaches[id];
             if (sourceCache.used) {
                 sourceCache.prepare(this.context);
+
+                if (sourceCache.getSource().usedInConflation) {
+                    ++conflationSourcesInStyle;
+                }
             }
         }
 
         const coordsAscending: {[_: string]: Array<OverscaledTileID>} = {};
         const coordsDescending: {[_: string]: Array<OverscaledTileID>} = {};
         const coordsDescendingSymbol: {[_: string]: Array<OverscaledTileID>} = {};
+        const coordsShadowCasters: {[_: string]: Array<OverscaledTileID>} = {};
+        const coordsSortedByDistance: {[_: string]: Array<OverscaledTileID>} = {};
 
         for (const id in sourceCaches) {
             const sourceCache = sourceCaches[id];
             coordsAscending[id] = sourceCache.getVisibleCoordinates();
             coordsDescending[id] = coordsAscending[id].slice().reverse();
             coordsDescendingSymbol[id] = sourceCache.getVisibleCoordinates(true).reverse();
+            coordsShadowCasters[id] = sourceCache.getShadowCasterCoordinates();
+            coordsSortedByDistance[id] = sourceCache.sortCoordinatesByDistance(coordsAscending[id]);
+        }
+
+        const getLayerSource = (layer: StyleLayer) => {
+            const cache = this.style.getLayerSourceCache(layer);
+            if (!cache || !cache.used) {
+                return null;
+            }
+            return cache.getSource();
+        };
+        if (conflationSourcesInStyle) {
+            const conflationLayersInStyle = [];
+
+            for (const layer of orderedLayers) {
+                if (this.layerUsedInConflation(layer, getLayerSource(layer))) {
+                    conflationLayersInStyle.push(layer);
+                }
+            }
+
+            // Check we have more than one conflation layer
+            if (conflationLayersInStyle && conflationLayersInStyle.length > 1) {
+                // Some layer types such as fill extrusions and models might have interdependencies
+                // where certain features should be replaced by overlapping features from another layer with higher
+                // precedence. A special data structure 'replacementSource' is used to compute regions
+                // on visible tiles where potential overlap might occur between features of different layers.
+                const conflationSources = [];
+
+                for (const layer of conflationLayersInStyle) {
+                    const sourceCache = this.style.getLayerSourceCache(layer);
+
+                    if (!sourceCache || !sourceCache.used || !sourceCache.getSource().usedInConflation) {
+                        continue;
+                    }
+
+                    conflationSources.push({layer: layer.fqid, cache: sourceCache});
+                }
+
+                this.replacementSource.setSources(conflationSources);
+                conflationActiveThisFrame = true;
+            }
+        }
+
+        if (!conflationActiveThisFrame) {
+            this.replacementSource.clear();
+        }
+
+        // Mark conflation as active for one frame after the deactivation to give
+        // consumers of the feature an opportunity to clean up
+        this.conflationActive = conflationActiveThisFrame;
+
+        // Tiles on zoom level lower than the minCutoffZoom will be cut for layers with non-zero cutoffRange
+        this.minCutoffZoom = 0.0;
+        // The longest cutoff range will be used for cutting shadows if any layer has non-zero cutoffRange
+        this.longestCutoffRange = 0.0;
+        for (const layer of orderedLayers) {
+            const cutoffRange = layer.cutoffRange();
+            this.longestCutoffRange = Math.max(cutoffRange, this.longestCutoffRange);
+            if (cutoffRange > 0.0) {
+                const source = getLayerSource(layer);
+                if (source) {
+                    this.minCutoffZoom = Math.max(source.minzoom, this.minCutoffZoom);
+                }
+                if (layer.minzoom) {
+                    this.minCutoffZoom = Math.max(layer.minzoom, this.minCutoffZoom);
+                }
+            }
         }
 
         this.opaquePassCutoff = Infinity;
-        for (let i = 0; i < layerIds.length; i++) {
-            const layerId = layerIds[i];
-            if (this.style._layers[layerId].is3D()) {
+        for (let i = 0; i < orderedLayers.length; i++) {
+            const layer = orderedLayers[i];
+            if (layer.is3D()) {
                 this.opaquePassCutoff = i;
                 break;
             }
         }
+
+        // Disable fog for the frame if it doesn't contribute to the final output at all
+        const fog = this.style && this.style.fog;
+
+        if (fog) {
+            this._fogVisible = fog.getOpacity(this.transform.pitch) !== 0.0;
+
+            if (this._fogVisible && this.transform.projection.name !== 'globe') {
+                this._fogVisible = fog.isVisibleOnFrustum(this.transform.cameraFrustum);
+            }
+        } else {
+            this._fogVisible = false;
+        }
+
+        this._cachedTileFogOpacities = {};
 
         if (this.terrain) {
             this.terrain.updateTileBinding(coordsDescendingSymbol);
@@ -521,8 +700,50 @@ class Painter {
             this.opaquePassCutoff = 0;
         }
 
+        const shadowRenderer = this._shadowRenderer;
+        if (shadowRenderer) {
+            shadowRenderer.updateShadowParameters(this.transform, this.style.directionalLight);
+
+            for (const id in sourceCaches) {
+                for (const coord of coordsAscending[id]) {
+                    let tileHeight = {min: 0, max: 0};
+                    if (this.terrain) {
+                        tileHeight = this.terrain.getMinMaxForTile(coord) || tileHeight;
+                    }
+
+                    // This doesn't consider any 3D layers to have height above the ground.
+                    // It was decided to not compute the real tile height, because all the tiles would need to be
+                    // seperately iterated before any rendering starts. The current code that calculates ShadowReceiver.lastCascade
+                    // doesn't check the Z axis in shadow cascade space. That in combination with missing tile height could in theory
+                    // lead to a situation where a tile is thought to fit in cascade 0, but actually extends into cascade 1.
+                    // The proper fix would be to update ShadowReceiver.lastCascade calculation to consider shadow cascade bounds accurately.
+                    shadowRenderer.addShadowReceiver(coord.toUnwrapped(), tileHeight.min, tileHeight.max);
+                }
+            }
+        }
+
         if (this.transform.projection.name === 'globe' && !this.globeSharedBuffers) {
             this.globeSharedBuffers = new GlobeSharedBuffers(this.context);
+        }
+
+        // upload pass
+        for (const layer of orderedLayers) {
+            if (layer.isHidden(this.transform.zoom)) continue;
+            const sourceCache = style.getLayerSourceCache(layer);
+            this.uploadLayer(this, layer, sourceCache);
+        }
+
+        if (this.style.fog && this.transform.projection.supportsFog) {
+            if (!this._atmosphere) {
+                this._atmosphere = new Atmosphere();
+            }
+
+            this._atmosphere.update(this);
+        } else {
+            if (this._atmosphere) {
+                this._atmosphere.destroy();
+                this._atmosphere = undefined;
+            }
         }
 
         // Following line is billing related code. Do not change. See LICENSE.txt
@@ -534,33 +755,63 @@ class Painter {
         // later: in doing this we avoid doing expensive framebuffer restores.
         this.renderPass = 'offscreen';
 
-        for (const layerId of layerIds) {
-            const layer = this.style._layers[layerId];
-            const sourceCache = style._getLayerSourceCache(layer);
+        for (const layer of orderedLayers) {
+            const sourceCache = style.getLayerSourceCache(layer);
             if (!layer.hasOffscreenPass() || layer.isHidden(this.transform.zoom)) continue;
 
             const coords = sourceCache ? coordsDescending[sourceCache.id] : undefined;
-            if (!(layer.type === 'custom' || layer.isSky()) && !(coords && coords.length)) continue;
+            if (!(layer.type === 'custom' || layer.type === 'raster' || layer.isSky()) && !(coords && coords.length)) continue;
 
             this.renderLayer(this, sourceCache, layer, coords);
         }
 
-        this.depthRangeFor3D = [0, 1 - ((style.order.length + 2) * this.numSublayers * this.depthEpsilon)];
+        this.depthRangeFor3D = [0, 1 - ((orderedLayers.length + 2) * this.numSublayers * this.depthEpsilon)];
 
         // Terrain depth offscreen render pass ==========================
         // With terrain on, renders the depth buffer into a texture.
-        // This texture is used for occlusion testing (labels)
+        // This texture is used for occlusion testing (labels).
+        // When orthographic camera is in use we don't really need the depth occlusion testing (see https://mapbox.atlassian.net/browse/MAPS3D-1132)
+        // Therefore we can safely skip the rendering to the depth texture.
         const terrain = this.terrain;
-        if (terrain && (this.style.hasSymbolLayers() || this.style.hasCircleLayers())) {
+        if (terrain && (this.style.hasSymbolLayers() || this.style.hasCircleLayers()) && !this.transform.isOrthographic) {
             terrain.drawDepth();
+        }
+
+        // Shadow pass ==================================================
+        if (this._shadowRenderer) {
+            this.renderPass = 'shadow';
+            this._shadowRenderer.drawShadowPass(this.style, coordsShadowCasters);
         }
 
         // Rebind the main framebuffer now that all offscreen layers have been rendered:
         this.context.bindFramebuffer.set(null);
         this.context.viewport.set([0, 0, this.width, this.height]);
 
+        const shouldRenderAtmosphere = this.transform.projection.name === "globe" || this.transform.isHorizonVisible();
+
         // Clear buffers in preparation for drawing to the main framebuffer
-        this.context.clear({color: options.showOverdrawInspector ? Color.black : Color.transparent, depth: 1});
+        const clearColor = (() => {
+            if (options.showOverdrawInspector) {
+                return Color.black;
+            }
+
+            if (this.style.fog && this.transform.projection.supportsFog && !shouldRenderAtmosphere) {
+                const fogColor = this.style.fog.properties.get('color').toArray01();
+
+                return new Color(...fogColor);
+            }
+
+            if (this.style.fog && this.transform.projection.supportsFog && shouldRenderAtmosphere) {
+                const spaceColor = this.style.fog.properties.get('space-color').toArray01();
+
+                return new Color(...spaceColor);
+            }
+
+            return Color.transparent;
+        })();
+
+        this.context.clear({color: clearColor, depth: 1});
+
         this.clearStencil();
 
         this._showOverdrawInspector = options.showOverdrawInspector;
@@ -569,20 +820,23 @@ class Painter {
         // Draw opaque layers top-to-bottom first.
         this.renderPass = 'opaque';
 
+        if (this.style.fog && this.transform.projection.supportsFog && this._atmosphere && !this._showOverdrawInspector && shouldRenderAtmosphere) {
+            this._atmosphere.drawStars(this, this.style.fog);
+        }
+
         if (!this.terrain) {
             for (this.currentLayer = layerIds.length - 1; this.currentLayer >= 0; this.currentLayer--) {
-                const layer = this.style._layers[layerIds[this.currentLayer]];
-                const sourceCache = style._getLayerSourceCache(layer);
+                const layer = orderedLayers[this.currentLayer];
+                const sourceCache = style.getLayerSourceCache(layer);
                 if (layer.isSky()) continue;
-                const coords = sourceCache ? coordsDescending[sourceCache.id] : undefined;
-
+                const coords = sourceCache ? (layer.is3D() ? coordsSortedByDistance : coordsDescending)[sourceCache.id] : undefined;
                 this._renderTileClippingMasks(layer, sourceCache, coords);
                 this.renderLayer(this, sourceCache, layer, coords);
             }
         }
 
-        if (this.style.fog && this.transform.projection.supportsFog) {
-            drawAtmosphere(this, this.style.fog);
+        if (this.style.fog && this.transform.projection.supportsFog && this._atmosphere && !this._showOverdrawInspector && shouldRenderAtmosphere) {
+            this._atmosphere.drawAtmosphereGlow(this, this.style.fog);
         }
 
         // Sky pass ======================================================
@@ -590,11 +844,11 @@ class Painter {
         // They are drawn at max depth, they are drawn after opaque and before
         // translucent to fail depth testing and mix with translucent objects.
         this.renderPass = 'sky';
-        const isTransitioning = globeToMercatorTransition(this.transform.zoom) > 0.0;
-        if ((isTransitioning || this.transform.projection.name !== 'globe') && this.transform.isHorizonVisible()) {
+        const drawSkyOnGlobe = !this._atmosphere || globeToMercatorTransition(this.transform.zoom) > 0.0;
+        if (drawSkyOnGlobe && (this.transform.projection.name === 'globe' || this.transform.isHorizonVisible())) {
             for (this.currentLayer = 0; this.currentLayer < layerIds.length; this.currentLayer++) {
-                const layer = this.style._layers[layerIds[this.currentLayer]];
-                const sourceCache = style._getLayerSourceCache(layer);
+                const layer = orderedLayers[this.currentLayer];
+                const sourceCache = style.getLayerSourceCache(layer);
                 if (!layer.isSky()) continue;
                 const coords = sourceCache ? coordsDescending[sourceCache.id] : undefined;
 
@@ -607,9 +861,16 @@ class Painter {
         this.renderPass = 'translucent';
 
         this.currentLayer = 0;
+        this.firstLightBeamLayer = Number.MAX_SAFE_INTEGER;
+
+        let shadowLayers = 0;
+        if (shadowRenderer) {
+            shadowLayers = shadowRenderer.getShadowCastingLayerCount();
+        }
+
         while (this.currentLayer < layerIds.length) {
-            const layer = this.style._layers[layerIds[this.currentLayer]];
-            const sourceCache = style._getLayerSourceCache(layer);
+            const layer = orderedLayers[this.currentLayer];
+            const sourceCache = style.getLayerSourceCache(layer);
 
             // Nothing to draw in translucent pass for sky layers, advance
             if (layer.isSky()) {
@@ -620,12 +881,11 @@ class Painter {
             // With terrain on and for draped layers only, issue rendering and progress
             // this.currentLayer until the next non-draped layer.
             // Otherwise we interleave terrain draped render with non-draped layers on top
-            if (this.terrain && this.style.isLayerDraped(layer)) {
+            if (terrain && this.style.isLayerDraped(layer)) {
                 if (layer.isHidden(this.transform.zoom)) {
                     ++this.currentLayer;
                     continue;
                 }
-                const terrain = (((this.terrain): any): Terrain);
                 const prevLayer = this.currentLayer;
                 this.currentLayer = terrain.renderBatch(this.currentLayer);
                 assert(this.context.bindFramebuffer.current === null);
@@ -636,12 +896,37 @@ class Painter {
             // For symbol layers in the translucent pass, we add extra tiles to the renderable set
             // for cross-tile symbol fading. Symbol layers don't use tile clipping, so no need to render
             // separate clipping masks
-            const coords = sourceCache ?
-                (layer.type === 'symbol' ? coordsDescendingSymbol : coordsDescending)[sourceCache.id] :
-                undefined;
+            let coords: ?Array<OverscaledTileID>;
+
+            if (sourceCache) {
+                const coordsSet = layer.type === 'symbol' ? coordsDescendingSymbol :
+                    (layer.is3D() ? coordsSortedByDistance : coordsDescending);
+
+                coords = coordsSet[sourceCache.id];
+            }
 
             this._renderTileClippingMasks(layer, sourceCache, sourceCache ? coordsAscending[sourceCache.id] : undefined);
             this.renderLayer(this, sourceCache, layer, coords);
+
+            // Render ground shadows after the last shadow caster layer
+            if (!terrain && shadowRenderer && shadowLayers > 0 && layer.hasShadowPass() && --shadowLayers === 0) {
+                shadowRenderer.drawGroundShadows();
+
+                if (this.firstLightBeamLayer <= this.currentLayer) { // render light beams for 3D models (all are before ground shadows)
+                    const saveCurrentLayer = this.currentLayer;
+                    this.renderPass = 'light-beam';
+                    for (this.currentLayer = this.firstLightBeamLayer; this.currentLayer <= saveCurrentLayer; this.currentLayer++) {
+                        const layer = orderedLayers[this.currentLayer];
+                        if (!layer.hasLightBeamPass()) continue;
+
+                        const sourceCache = style.getLayerSourceCache(layer);
+                        const coords = sourceCache ? coordsDescending[sourceCache.id] : undefined;
+                        this.renderLayer(this, sourceCache, layer, coords);
+                    }
+                    this.currentLayer = saveCurrentLayer;
+                    this.renderPass = 'translucent';
+                }
+            }
 
             ++this.currentLayer;
         }
@@ -653,10 +938,9 @@ class Painter {
         if (this.options.showTileBoundaries || this.options.showQueryGeometry || this.options.showTileAABBs) {
             //Use source with highest maxzoom
             let selectedSource = null;
-            const layers = values(this.style._layers);
-            layers.forEach((layer) => {
-                const sourceCache = style._getLayerSourceCache(layer);
-                if (sourceCache && !layer.isHidden(this.transform.zoom)) {
+            orderedLayers.forEach((layer) => {
+                const sourceCache = style.getLayerSourceCache(layer);
+                if (sourceCache && !layer.isHidden(this.transform.zoom) && sourceCache.getVisibleCoordinates().length) {
                     if (!selectedSource || (selectedSource.getSource().maxzoom < sourceCache.getSource().maxzoom)) {
                         selectedSource = sourceCache;
                     }
@@ -692,11 +976,26 @@ class Painter {
             this.loadTimeStamps.push(window.performance.now());
             this.saveCanvasCopy();
         }
+
+        if (!conflationActiveThisFrame) {
+            this.conflationActive = false;
+        }
+    }
+
+    uploadLayer(painter: Painter, layer: StyleLayer, sourceCache?: SourceCache) {
+        this.gpuTimingStart(layer);
+        if (!painter.transform.projection.unsupportedLayers || !painter.transform.projection.unsupportedLayers.includes(layer.type) ||
+            (painter.terrain && layer.type === 'custom')) {
+            if (upload[`${layer.type}Upload`]) {
+                upload[`${layer.type}Upload`](painter, sourceCache, layer.scope);
+            }
+        }
+        this.gpuTimingEnd();
     }
 
     renderLayer(painter: Painter, sourceCache?: SourceCache, layer: StyleLayer, coords?: Array<OverscaledTileID>) {
         if (layer.isHidden(this.transform.zoom)) return;
-        if (layer.type !== 'background' && layer.type !== 'sky' && layer.type !== 'custom' && !(coords && coords.length)) return;
+        if (layer.type !== 'background' && layer.type !== 'sky' && layer.type !== 'custom' && layer.type !== 'model' && layer.type !== 'raster' && !(coords && coords.length)) return;
         this.id = layer.id;
 
         this.gpuTimingStart(layer);
@@ -710,6 +1009,7 @@ class Painter {
     gpuTimingStart(layer: StyleLayer) {
         if (!this.options.gpuTiming) return;
         const ext = this.context.extTimerQuery;
+        const gl = this.context.gl;
         // This tries to time the draw call itself, but note that the cost for drawing a layer
         // may be dominated by the cost of uploading vertices to the GPU.
         // To instrument that, we'd need to pass the layerTimers object down into the bucket
@@ -719,32 +1019,35 @@ class Painter {
             layerTimer = this.gpuTimers[layer.id] = {
                 calls: 0,
                 cpuTime: 0,
-                query: ext.createQueryEXT()
+                query: gl.createQuery()
             };
         }
         layerTimer.calls++;
-        ext.beginQueryEXT(ext.TIME_ELAPSED_EXT, layerTimer.query);
+        gl.beginQuery(ext.TIME_ELAPSED_EXT, layerTimer.query);
     }
 
     gpuTimingDeferredRenderStart() {
         if (this.options.gpuTimingDeferredRender) {
             const ext = this.context.extTimerQuery;
-            const query = ext.createQueryEXT();
+            const gl = this.context.gl;
+            const query = gl.createQuery();
             this.deferredRenderGpuTimeQueries.push(query);
-            ext.beginQueryEXT(ext.TIME_ELAPSED_EXT, query);
+            gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
         }
     }
 
     gpuTimingDeferredRenderEnd() {
         if (!this.options.gpuTimingDeferredRender) return;
         const ext = this.context.extTimerQuery;
-        ext.endQueryEXT(ext.TIME_ELAPSED_EXT);
+        const gl = this.context.gl;
+        gl.endQuery(ext.TIME_ELAPSED_EXT);
     }
 
     gpuTimingEnd() {
         if (!this.options.gpuTiming) return;
         const ext = this.context.extTimerQuery;
-        ext.endQueryEXT(ext.TIME_ELAPSED_EXT);
+        const gl = this.context.gl;
+        gl.endQuery(ext.TIME_ELAPSED_EXT);
     }
 
     collectGpuTimers(): GPUTimers {
@@ -764,7 +1067,8 @@ class Painter {
         for (const layerId in gpuTimers) {
             const gpuTimer = gpuTimers[layerId];
             const ext = this.context.extTimerQuery;
-            const gpuTime = ext.getQueryObjectEXT(gpuTimer.query, ext.QUERY_RESULT_EXT) / (1000 * 1000);
+            const gl = this.context.gl;
+            const gpuTime = ext.getQueryParameter(gpuTimer.query, gl.QUERY_RESULT) / (1000 * 1000);
             ext.deleteQueryEXT(gpuTimer.query);
             layers[layerId] = (gpuTime: number);
         }
@@ -774,10 +1078,11 @@ class Painter {
     queryGpuTimeDeferredRender(gpuQueries: Array<any>): number {
         if (!this.options.gpuTimingDeferredRender) return 0;
         const ext = this.context.extTimerQuery;
+        const gl = this.context.gl;
 
         let gpuTime = 0;
         for (const query of gpuQueries) {
-            gpuTime += ext.getQueryObjectEXT(query, ext.QUERY_RESULT_EXT) / (1000 * 1000);
+            gpuTime += ext.getQueryParameter(query, gl.QUERY_RESULT) / (1000 * 1000);
             ext.deleteQueryEXT(query);
         }
 
@@ -817,10 +1122,17 @@ class Painter {
         return translatedMatrix;
     }
 
+    /**
+     * Saves the tile texture for re-use when another tile is loaded.
+     *
+     * @returns true if the tile was cached, false if the tile was not cached and should be destroyed.
+     * @private
+     */
     saveTileTexture(texture: Texture) {
-        const textures = this._tileTextures[texture.size[0]];
+        const tileSize = texture.size[0];
+        const textures = this._tileTextures[tileSize];
         if (!textures) {
-            this._tileTextures[texture.size[0]] = [texture];
+            this._tileTextures[tileSize] = [texture];
         } else {
             textures.push(texture);
         }
@@ -837,15 +1149,20 @@ class Painter {
      * @returns true if a needed image is missing and rendering needs to be skipped.
      * @private
      */
-    isPatternMissing(image: ?ResolvedImage): boolean {
+    isPatternMissing(image: ?ResolvedImage, scope: string): boolean {
         if (image === null) return true;
         if (image === undefined) return false;
-        return !this.imageManager.getPattern(image.toString());
+        return !this.imageManager.getPattern(image.toString(), scope);
     }
 
     terrainRenderModeElevated(): boolean {
         // Whether elevation sampling should be enabled in the vertex shader.
         return this.style && !!this.style.getTerrain() && !!this.terrain && !this.terrain.renderingToTexture;
+    }
+
+    linearFloatFilteringSupported(): boolean {
+        const context = this.context;
+        return context.extTextureFloatLinear != null;
     }
 
     /**
@@ -855,35 +1172,61 @@ class Painter {
      * @returns {string[]}
      * @private
      */
-    currentGlobalDefines(): string[] {
-        const rtt = this.terrain && this.terrain.renderingToTexture;
+    currentGlobalDefines(name: string, overrideFog: ?boolean, overrideRtt: ?boolean): string[] {
+        const rtt = (overrideRtt === undefined) ? this.terrain && this.terrain.renderingToTexture : overrideRtt;
         const zeroExaggeration = this.terrain && this.terrain.exaggeration() === 0.0;
-        const fog = this.style && this.style.fog;
         const defines = [];
 
-        if (this.terrainRenderModeElevated()) defines.push('TERRAIN');
+        if (this.style && this.style.enable3dLights()) {
+            // In case of terrain and map optimized for terrain mode flag
+            // Lighting is deferred to terrain stage
+            if (name === 'globeRaster' || name === 'terrainRaster') {
+                defines.push('LIGHTING_3D_MODE');
+                defines.push('LIGHTING_3D_ALPHA_EMISSIVENESS');
+            } else {
+                if (!rtt) {
+                    defines.push('LIGHTING_3D_MODE');
+                }
+            }
+        }
+        if (this.renderPass === 'shadow') {
+            if (!this._shadowMapDebug) defines.push('DEPTH_TEXTURE');
+        } else if (this.shadowRenderer) {
+            if (this.shadowRenderer.useNormalOffset) {
+                defines.push('RENDER_SHADOWS', 'DEPTH_TEXTURE', 'NORMAL_OFFSET');
+            } else {
+                defines.push('RENDER_SHADOWS', 'DEPTH_TEXTURE');
+            }
+        }
+        if (this.terrainRenderModeElevated()) {
+            defines.push('TERRAIN');
+            if (this.linearFloatFilteringSupported()) defines.push('TERRAIN_DEM_FLOAT_FORMAT');
+            if (zeroExaggeration) defines.push('ZERO_EXAGGERATION');
+        }
         if (this.transform.projection.name === 'globe') defines.push('GLOBE');
-        if (zeroExaggeration) defines.push('ZERO_EXAGGERATION');
         // When terrain is active, fog is rendered as part of draping, not as part of tile
         // rendering. Removing the fog flag during tile rendering avoids additional defines.
-        if (fog && !rtt && fog.getOpacity(this.transform.pitch) !== 0.0) {
-            defines.push('FOG');
+        if (this._fogVisible && !rtt && (overrideFog === undefined || overrideFog)) {
+            defines.push('FOG', 'FOG_DITHERING');
         }
         if (rtt) defines.push('RENDER_TO_TEXTURE');
         if (this._showOverdrawInspector) defines.push('OVERDRAW_INSPECTOR');
         return defines;
     }
 
-    useProgram(name: string, programConfiguration: ?ProgramConfiguration, fixedDefines: ?DynamicDefinesType[]): Program<any> {
+    getOrCreateProgram(name: string, options?: CreateProgramParams): Program<any> {
         this.cache = this.cache || {};
-        const defines = (((fixedDefines || []): any): string[]);
+        const defines = ((((options && options.defines) || []): any): string[]);
+        const config = options && options.config;
+        const overrideFog = options && options.overrideFog;
+        const overrideRtt = options && options.overrideRtt;
 
-        const globalDefines = this.currentGlobalDefines();
+        const globalDefines = this.currentGlobalDefines(name, overrideFog, overrideRtt);
         const allDefines = globalDefines.concat(defines);
-        const key = Program.cacheKey(shaders[name], name, allDefines, programConfiguration);
+        const key = Program.cacheKey(shaders[name], name, allDefines, config);
 
         if (!this.cache[key]) {
-            this.cache[key] = new Program(this.context, name, shaders[name], programConfiguration, programUniforms[name], allDefines);
+            this.cache[key] = new Program(this.context, name, shaders[name], config, programUniforms[name], allDefines);
         }
         return this.cache[key];
     }
@@ -933,6 +1276,10 @@ class Painter {
         if (this._terrain) {
             this._terrain.destroy();
         }
+        if (this._atmosphere) {
+            this._atmosphere.destroy();
+            this._atmosphere = undefined;
+        }
         if (this.globeSharedBuffers) {
             this.globeSharedBuffers.destroy();
         }
@@ -940,9 +1287,7 @@ class Painter {
         if (this.debugOverlayTexture) {
             this.debugOverlayTexture.destroy();
         }
-        if (this.atmosphereBuffer) {
-            this.atmosphereBuffer.destroy();
-        }
+        this._wireframeDebugCache.destroy();
     }
 
     prepareDrawTile() {
@@ -951,7 +1296,20 @@ class Painter {
         }
     }
 
-    prepareDrawProgram(context: Context, program: Program<*>, tileID: ?UnwrappedTileID) {
+    uploadCommonLightUniforms(context: Context, program: Program<*>) {
+        if (this.style.enable3dLights()) {
+            const directionalLight = this.style.directionalLight;
+            const ambientLight = this.style.ambientLight;
+
+            if (directionalLight && ambientLight) {
+                const lightsUniforms = lightsUniformValues(directionalLight, ambientLight);
+                program.setLightsUniformValues(context, lightsUniforms);
+            }
+        }
+    }
+
+    uploadCommonUniforms(context: Context, program: Program<*>, tileID: ?UnwrappedTileID, fogMatrix: ?Float32Array, cutoffParams: ?CutoffParams) {
+        this.uploadCommonLightUniforms(context, program);
 
         // Fog is not enabled when rendering to texture so we
         // can safely skip uploading uniforms in that case
@@ -974,9 +1332,14 @@ class Painter {
                 [
                     this.transform.width * browser.devicePixelRatio,
                     this.transform.height * browser.devicePixelRatio
-                ]);
+                ],
+                fogMatrix);
 
             program.setFogUniformValues(context, fogUniforms);
+        }
+
+        if (cutoffParams) {
+            program.setCutoffUniformValues(context, cutoffParams.uniformValues);
         }
     }
 
@@ -1032,6 +1395,40 @@ class Painter {
 
     clearBackgroundTiles() {
         this._backgroundTiles = {};
+    }
+
+    /*
+     * Replacement source's features get precedence over features defined in other sources.
+     * E.g. landmark features replace fill extrusion buildings at the same position.
+     * Initially planned to be used for Tiled3DModelSource, 2D source that is used with ModelLayer of buildings type and
+     * custom layer buildings.
+     */
+    layerUsedInConflation(layer: StyleLayer, source: ?Source): boolean {
+        if (!layer.is3D()) {
+            return false;
+        }
+
+        if (layer.minzoom && layer.minzoom > this.transform.zoom) {
+            return false;
+        }
+
+        if (layer.sourceLayer === "building") {
+            return true;
+        }
+
+        return !!source && source.type === "batched-model";
+    }
+
+    isTileAffectedByFog(id: OverscaledTileID): boolean {
+        if (!this.style || !this.style.fog) return false;
+        if (this.transform.projection.name === 'globe') return true;
+
+        let cachedRange = this._cachedTileFogOpacities[id.key];
+        if (!cachedRange) {
+            this._cachedTileFogOpacities[id.key] = cachedRange = this.style.fog.getOpacityForTile(id);
+        }
+
+        return cachedRange[0] >= FOG_OPACITY_THRESHOLD || cachedRange[1] >= FOG_OPACITY_THRESHOLD;
     }
 }
 

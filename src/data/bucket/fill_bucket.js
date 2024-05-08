@@ -65,7 +65,7 @@ class FillBucket implements Bucket {
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.hasPattern = false;
         this.patternFeatures = [];
@@ -126,7 +126,7 @@ class FillBucket implements Bucket {
                 // so are stored during populate until later updated with positions by tile worker in addFeatures
                 this.patternFeatures.push(patternFeature);
             } else {
-                this.addFeature(bucketFeature, geometry, index, canonical, {}, options.availableImages);
+                this.addFeature(bucketFeature, geometry, index, canonical, {}, options.availableImages, options.brightness);
             }
 
             const feature = features[index].feature;
@@ -134,14 +134,16 @@ class FillBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
     }
 
-    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform) {
+    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform, brightness: ?number) {
         for (const feature of this.patternFeatures) {
-            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages);
+            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages, brightness);
         }
     }
 
@@ -172,7 +174,7 @@ class FillBucket implements Bucket {
         this.segments2.destroy();
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string> = []) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string> = [], brightness: ?number) {
         for (const polygon of classifyRings(geometry, EARCUT_MAX_RINGS)) {
             let numVertices = 0;
             for (const ring of polygon) {
@@ -226,7 +228,7 @@ class FillBucket implements Bucket {
             triangleSegment.vertexLength += numVertices;
             triangleSegment.primitiveLength += indices.length / 3;
         }
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical, brightness);
     }
 }
 

@@ -130,13 +130,15 @@ import patternAttributes from '../src/data/bucket/pattern_attributes.js';
 import dashAttributes from '../src/data/bucket/dash_attributes.js';
 import skyboxAttributes from '../src/render/skybox_attributes.js';
 import tileBoundsAttributes from '../src/data/bounds_attributes.js';
-import {fillExtrusionAttributes, fillExtrusionAttributesExt, centroidAttributes} from '../src/data/bucket/fill_extrusion_attributes.js';
+import {fillExtrusionGroundAttributes, fillExtrusionAttributes, fillExtrusionAttributesExt, centroidAttributes, hiddenByLandmarkAttributes} from '../src/data/bucket/fill_extrusion_attributes.js';
+import {modelAttributes, color3fAttributes, color4fAttributes, normalAttributes, texcoordAttributes, instanceAttributes, featureAttributes} from '../3d-style/data/model_attributes.js';
 
 // layout vertex arrays
 const layoutAttributes = {
     circle: circleAttributes,
     fill: fillAttributes,
     'fill-extrusion': fillExtrusionAttributes,
+    'fill-extrusion-ground': fillExtrusionGroundAttributes,
     heatmap: circleAttributes,
     line: lineAttributes,
     lineExt: lineAttributesExt,
@@ -156,6 +158,7 @@ import {
     symbolGlobeExtAttributes,
     dynamicLayoutAttributes,
     placementOpacityAttributes,
+    iconTransitioningAttributes,
     collisionBox,
     collisionBoxLayout,
     collisionCircleLayout,
@@ -165,13 +168,15 @@ import {
     placement,
     symbolInstance,
     glyphOffset,
-    lineVertex
+    lineVertex,
+    zOffsetAttributes
 } from '../src/data/bucket/symbol_attributes.js';
 
 createStructArrayType(`symbol_layout`, symbolLayoutAttributes);
 createStructArrayType(`symbol_globe_ext`, symbolGlobeExtAttributes);
 createStructArrayType(`symbol_dynamic_layout`, dynamicLayoutAttributes);
 createStructArrayType(`symbol_opacity`, placementOpacityAttributes);
+createStructArrayType(`symbol_icon_transitioning`, iconTransitioningAttributes);
 createStructArrayType('collision_box', collisionBox, true);
 createStructArrayType(`collision_box_layout`, collisionBoxLayout);
 createStructArrayType(`collision_circle_layout`, collisionCircleLayout);
@@ -182,11 +187,15 @@ createStructArrayType('placed_symbol', placement, true);
 createStructArrayType('symbol_instance', symbolInstance, true);
 createStructArrayType('glyph_offset', glyphOffset, true);
 createStructArrayType('symbol_line_vertex', lineVertex, true);
+createStructArrayType('z_offset_vertex', zOffsetAttributes);
 
 import globeAttributes from '../src/terrain/globe_attributes.js';
 import {atmosphereLayout} from '../src/render/atmosphere_attributes.js';
 createStructArrayType('globe_vertex', globeAttributes);
 createStructArrayType('atmosphere_vertex', atmosphereLayout);
+
+import {starsLayout} from '../src/render/stars_attributes.js';
+createStructArrayType('stars_vertex', starsLayout);
 
 // feature index array
 createStructArrayType('feature_index', createLayout([
@@ -221,6 +230,15 @@ createStructArrayType(`skybox_vertex`, skyboxAttributes);
 // tile bounds vertex array
 createStructArrayType(`tile_bounds`, tileBoundsAttributes);
 
+// model attributes
+createStructArrayType(`model_layout`, modelAttributes);
+createStructArrayType(`color3f_layout`, color3fAttributes);
+createStructArrayType(`color4f_layout`, color4fAttributes);
+createStructArrayType(`texcoord_layout`, texcoordAttributes);
+createStructArrayType(`normal_layout`, normalAttributes);
+createStructArrayType(`instance_vertex`, instanceAttributes);
+createStructArrayType(`feature_vertex`, featureAttributes);
+
 // paint vertex arrays
 
 // used by SourceBinder for float properties
@@ -246,6 +264,9 @@ createStructArrayLayoutType(createLayout([{
 
 // Fill extrusion specific array
 createStructArrayType(`fill_extrusion_centroid`, centroidAttributes, true);
+
+// Fill extrusion ground effect specific array
+createStructArrayType('fill_extrusion_hidden_by_landmark', hiddenByLandmarkAttributes);
 
 // Globe extension arrays
 createStructArrayType('circle_globe_ext', circleGlobeAttributesExt);

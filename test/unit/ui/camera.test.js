@@ -38,11 +38,11 @@ test('camera', (t) => {
     function assertTransitionTime(test, camera, min, max) {
         let startTime;
         camera
-            .on('movestart', () => { startTime = new Date(); })
+            .on('movestart', () => { startTime = browser.now(); })
             .on('moveend', () => {
-                const endTime = new Date();
+                const endTime = browser.now();
                 const timeDiff = endTime - startTime;
-                test.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range( [${min},${max}) ) :${timeDiff}`);
+                test.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range(${min}, ${max}): ${timeDiff}`);
                 test.end();
             });
     }
@@ -961,7 +961,7 @@ test('camera', (t) => {
                 .on('moveend', () => {
                     const endTime = browser.now();
                     const timeDiff = endTime - startTime;
-                    t.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range( [${min},${max}) ) :${timeDiff}`);
+                    t.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range(${min}, ${max}): ${timeDiff}`);
                     t.end();
                 });
 
@@ -997,7 +997,7 @@ test('camera', (t) => {
                 .on('moveend', () => {
                     const endTime = browser.now();
                     const timeDiff = endTime - startTime;
-                    t.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range( [${min},${max}) ) :${timeDiff}`);
+                    t.ok(timeDiff >= min && timeDiff < max, `Camera transition time exceeded expected range(${min}, ${max}): ${timeDiff}`);
                     t.end();
                 });
 
@@ -1042,22 +1042,24 @@ test('camera', (t) => {
                 camera.transform.zoom = 4;
                 camera.transform.setProjection({name: 'globe'});
 
-                camera.easeTo({center: [360, 0], duration: 100, easing: e => e});
+                camera.easeTo({center: [-180.0, 0], duration: 50, easing: e => e});
 
                 camera.simulateFrame();
                 t.deepEqual(camera.getCenter(), {lng: 0, lat: 0});
 
                 stub.callsFake(() => 25);
                 camera.simulateFrame();
-                t.deepEqual(camera.getCenter(), {lng: 90, lat: 0});
+                t.deepEqual(camera.getCenter(), {lng: -90, lat: 0});
 
                 stub.callsFake(() => 50);
                 camera.simulateFrame();
                 t.deepEqual(camera.getCenter(), {lng: 180, lat: 0});
 
+                camera.easeTo({center: [0, 0], duration: 50, easing: e => e});
+
                 stub.callsFake(() => 75);
                 camera.simulateFrame();
-                t.deepEqual(camera.getCenter(), {lng: -90, lat: 0});
+                t.deepEqual(camera.getCenter(), {lng: 90, lat: 0});
 
                 stub.callsFake(() => 100);
                 camera.simulateFrame();
@@ -1877,9 +1879,9 @@ test('camera', (t) => {
             const camera = createCamera({center: [37.63454, 55.75868], zoom: 18});
 
             camera
-                .on('movestart', () => { startTime = new Date(); })
+                .on('movestart', () => { startTime = browser.now(); })
                 .on('moveend', () => {
-                    endTime = new Date();
+                    endTime = browser.now();
                     timeDiff = endTime - startTime;
                     equalWithPrecision(t, timeDiff, 0, 1e+1);
                     t.end();

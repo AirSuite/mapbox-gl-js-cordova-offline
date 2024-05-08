@@ -1,13 +1,14 @@
 // @flow
 
 import assert from 'assert';
-import {clone, extend, easeCubicInOut} from '../util/util.js';
+import type {Direction, Position} from '../util/util.js';
+import {clone, extend, endsWith, easeCubicInOut, sphericalDirectionToCartesian, sphericalPositionToCartesian} from '../util/util.js';
 import * as interpolate from '../style-spec/util/interpolate.js';
+import {number as interpolateValue} from '../style-spec/util/interpolate.js';
 import {normalizePropertyExpression} from '../style-spec/expression/index.js';
 import Color from '../style-spec/util/color.js';
 import {register} from '../util/web_worker_transfer.js';
 import EvaluationParameters from './evaluation_parameters.js';
-
 import type {CanonicalTileID} from '../source/tile_id.js';
 import type {StylePropertySpecification} from '../style-spec/style-spec.js';
 import type {
@@ -22,6 +23,7 @@ import type {
     SourceExpression,
     CompositeExpression
 } from '../style-spec/expression/index.js';
+import type {Expression} from '../style-spec/expression/expression.js';
 
 type TimePoint = number;
 
@@ -65,6 +67,17 @@ export interface Property<T, R> {
     interpolate(a: R, b: R, t: number): R;
 }
 
+export type ConfigOptionValue = {
+    default: Expression;
+    value?: Expression;
+    values?: Array<mixed>;
+    minValue?: number;
+    maxValue?: number;
+    stepValue?: number;
+    type?: 'string' | 'number' | 'boolean' | 'color';
+};
+export type ConfigOptions = Map<string, ConfigOptionValue>;
+
 /**
  *  `PropertyValue` represents the value part of a property key-value unit. It's used to represent both
  *  paint and layout property values, and regardless of whether or not their property supports data-driven
@@ -89,10 +102,10 @@ export class PropertyValue<T, R> {
     value: PropertyValueSpecification<T> | void;
     expression: StylePropertyExpression;
 
-    constructor(property: Property<T, R>, value: PropertyValueSpecification<T> | void) {
+    constructor(property: Property<T, R>, value: PropertyValueSpecification<T> | void, options?: ?ConfigOptions) {
         this.property = property;
         this.value = value;
-        this.expression = normalizePropertyExpression(value === undefined ? property.specification.default : value, property.specification);
+        this.expression = normalizePropertyExpression(value === undefined ? property.specification.default : value, property.specification, options);
     }
 
     isDataDriven(): boolean {
@@ -128,9 +141,9 @@ class TransitionablePropertyValue<T, R> {
     value: PropertyValue<T, R>;
     transition: TransitionSpecification | void;
 
-    constructor(property: Property<T, R>) {
+    constructor(property: Property<T, R>, options?: ?ConfigOptions) {
         this.property = property;
-        this.value = new PropertyValue(property, undefined);
+        this.value = new PropertyValue(property, undefined, options);
     }
 
     transitioned(parameters: TransitionParameters,
@@ -163,10 +176,14 @@ type TransitionablePropertyValues<Props: Object>
 export class Transitionable<Props: Object> {
     _properties: Properties<Props>;
     _values: TransitionablePropertyValues<Props>;
+    _options: ?ConfigOptions;
+    isConfigDependent: boolean;
 
-    constructor(properties: Properties<Props>) {
+    constructor(properties: Properties<Props>, options?: ?ConfigOptions) {
         this._properties = properties;
         this._values = (Object.create(properties.defaultTransitionablePropertyValues): any);
+        this._options = options;
+        this.isConfigDependent = false;
     }
 
     getValue<S: string, T>(name: S): PropertyValueSpecification<T> | void {
@@ -175,11 +192,31 @@ export class Transitionable<Props: Object> {
 
     setValue<S: string, T>(name: S, value: PropertyValueSpecification<T> | void) {
         if (!this._values.hasOwnProperty(name)) {
-            this._values[name] = new TransitionablePropertyValue(this._values[name].property);
+            this._values[name] = new TransitionablePropertyValue(this._values[name].property, this._options);
         }
         // Note that we do not _remove_ an own property in the case where a value is being reset
         // to the default: the transition might still be non-default.
-        this._values[name].value = new PropertyValue(this._values[name].property, value === null ? undefined : clone(value));
+        this._values[name].value = new PropertyValue(this._values[name].property, value === null ? undefined : clone(value), this._options);
+        this.isConfigDependent = this.isConfigDependent || this._values[name].value.expression.isConfigDependent;
+    }
+
+    setTransitionOrValue<P: Object>(properties: ?P, options?: ?ConfigOptions) {
+        if (options) this._options = options;
+
+        const specProperties = this._properties.properties;
+        if (properties) {
+            for (const name in properties) {
+                const value = properties[name];
+                if (endsWith(name, '-transition')) {
+                    const propName = name.slice(0, -'-transition'.length);
+                    if (specProperties[propName]) {
+                        this.setTransition(propName, value);
+                    }
+                } else if (specProperties[name]) { // skip unrecognized properties
+                    this.setValue(name, value);
+                }
+            }
+        }
     }
 
     getTransition<S: string>(name: S): TransitionSpecification | void {
@@ -366,10 +403,14 @@ type PropertyValueSpecifications<Props: Object>
 export class Layout<Props: Object> {
     _properties: Properties<Props>;
     _values: PropertyValues<Props>;
+    _options: ?ConfigOptions;
+    isConfigDependent: boolean;
 
-    constructor(properties: Properties<Props>) {
+    constructor(properties: Properties<Props>, options?: ?ConfigOptions) {
         this._properties = properties;
         this._values = (Object.create(properties.defaultPropertyValues): any);
+        this._options = options;
+        this.isConfigDependent = false;
     }
 
     getValue<S: string, T>(name: S): PropertyValueSpecification<T> | void {
@@ -377,7 +418,8 @@ export class Layout<Props: Object> {
     }
 
     setValue<S: string>(name: S, value: any) {
-        this._values[name] = new PropertyValue(this._values[name].property, value === null ? undefined : clone(value));
+        this._values[name] = new PropertyValue(this._values[name].property, value === null ? undefined : clone(value), this._options);
+        this.isConfigDependent = this.isConfigDependent || this._values[name].expression.isConfigDependent;
     }
 
     serialize(): PropertyValueSpecifications<Props> {
@@ -614,6 +656,50 @@ export class ColorRampProperty implements Property<Color, boolean> {
     }
 
     interpolate(): boolean { return false; }
+}
+
+export class DirectionProperty implements Property<[number, number], Direction> {
+    specification: StylePropertySpecification;
+
+    constructor(specification: StylePropertySpecification) {
+        this.specification = specification;
+    }
+
+    possiblyEvaluate(value: PropertyValue<[number, number], Direction>, parameters: EvaluationParameters): Direction {
+        // $FlowFixMe[method-unbinding]
+        return sphericalDirectionToCartesian(value.expression.evaluate(parameters));
+    }
+
+    interpolate(a: Direction, b: Direction, t: number): Direction {
+        return {
+            x: interpolateValue(a.x, b.x, t),
+            y: interpolateValue(a.y, b.y, t),
+            z: interpolateValue(a.z, b.z, t)
+        };
+    }
+}
+
+export class PositionProperty implements Property<[number, number, number], Position> {
+    specification: StylePropertySpecification;
+
+    constructor(specification: StylePropertySpecification) {
+        this.specification = specification;
+    }
+
+    possiblyEvaluate(value: PropertyValue<[number, number, number], Position>, parameters: EvaluationParameters): Position {
+        // $FlowFixMe[method-unbinding]
+        return sphericalPositionToCartesian(value.expression.evaluate(parameters));
+    }
+
+    interpolate(a: Position, b: Position, t: number): Position {
+        return {
+            x: interpolateValue(a.x, b.x, t),
+            y: interpolateValue(a.y, b.y, t),
+            z: interpolateValue(a.z, b.z, t),
+            azimuthal: interpolateValue(a.azimuthal, b.azimuthal, t),
+            polar: interpolateValue(a.polar, b.polar, t),
+        };
+    }
 }
 
 /**

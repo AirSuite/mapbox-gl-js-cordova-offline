@@ -6,8 +6,11 @@ import assert from 'assert';
 import SymbolBucket from '../../data/bucket/symbol_bucket.js';
 import resolveTokens from '../../util/resolve_tokens.js';
 import properties from './symbol_style_layer_properties.js';
+
 import type {FormattedSection} from '../../style-spec/expression/types/formatted.js';
 import type {FormattedSectionExpression} from '../../style-spec/expression/definitions/format.js';
+import type {CreateProgramParams} from "../../render/painter.js";
+import type {ConfigOptions} from '../properties.js';
 
 import {
     Transitionable,
@@ -48,8 +51,8 @@ class SymbolStyleLayer extends StyleLayer {
     _transitioningPaint: Transitioning<PaintProps>;
     paint: PossiblyEvaluated<PaintProps>;
 
-    constructor(layer: LayerSpecification) {
-        super(layer, properties);
+    constructor(layer: LayerSpecification, options?: ?ConfigOptions) {
+        super(layer, properties, options);
     }
 
     recalculate(parameters: EvaluationParameters, availableImages: Array<string>) {
@@ -132,6 +135,8 @@ class SymbolStyleLayer extends StyleLayer {
             const override = new FormatSectionOverride(overriden);
             const styleExpression = new StyleExpression(override, overriden.property.specification);
             let expression = null;
+            // eslint-disable-next-line no-warning-comments
+            // TODO: check why were the `isLightConstant` values omitted from the construction of these expressions
             if (overriden.value.kind === 'constant' || overriden.value.kind === 'source') {
                 // $FlowFixMe[method-unbinding]
                 expression = (new ZoomConstantExpression('source', styleExpression): SourceExpression);
@@ -196,8 +201,24 @@ class SymbolStyleLayer extends StyleLayer {
         return hasOverrides;
     }
 
-    getProgramConfiguration(zoom: number): ProgramConfiguration {
-        return new ProgramConfiguration(this, zoom);
+    getProgramIds(): string[] {
+        const hasIcon = (this.paint.get('icon-opacity').constantOr(1) !== 0);
+        const hasText = (this.paint.get('text-opacity').constantOr(1) !== 0);
+        const ids = [];
+        if (hasIcon) {
+            ids.push('symbolIcon');
+        }
+        if (hasText) {
+            ids.push('symbolSDF');
+        }
+        return ids;
+    }
+
+    getDefaultProgramParams(name: string, zoom: number): CreateProgramParams | null {
+        return {
+            config: new ProgramConfiguration(this, zoom),
+            overrideFog: false
+        };
     }
 }
 

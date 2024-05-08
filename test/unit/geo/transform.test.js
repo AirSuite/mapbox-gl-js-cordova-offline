@@ -551,6 +551,40 @@ test('transform', (t) => {
             t.end();
         });
 
+        t.test('Extend tile coverage for shadow casters', (t) => {
+            transform.resize(512, 512);
+            transform.center = new LngLat(-146.2148, 73.1277);
+            transform.zoom = 5.08;
+            transform.pitch = 76.5;
+            transform.bearing = 0.0;
+
+            const visibleTiles = transform.coveringTiles({tileSize: 512});
+
+            t.strictSame(visibleTiles, [
+                new OverscaledTileID(5, 0, 5, 3, 6),
+                new OverscaledTileID(5, 0, 5, 2, 6),
+                new OverscaledTileID(5, 0, 5, 3, 7),
+                new OverscaledTileID(5, 0, 5, 2, 7),
+                new OverscaledTileID(4, 0, 4, 1, 2),
+                new OverscaledTileID(4, 0, 4, 2, 2),
+                new OverscaledTileID(4, 0, 4, 0, 2),
+                new OverscaledTileID(3, 0, 3, 0, 0),
+                new OverscaledTileID(3, 0, 3, 1, 0)
+            ]);
+
+            const shadowCasterTiles = transform.extendTileCoverForShadows(visibleTiles, [0.25, -0.433, -0.866], 5);
+
+            t.strictSame(shadowCasterTiles, [
+                new OverscaledTileID(3, -1, 3, 7, 0),
+                new OverscaledTileID(3, -1, 3, 7, 1),
+                new OverscaledTileID(5, 0, 5, 1, 8),
+                new OverscaledTileID(5, 0, 5, 2, 8),
+                new OverscaledTileID(5, 0, 5, 3, 8)
+            ]);
+
+            t.end();
+        });
+
         t.end();
     });
 
@@ -656,14 +690,15 @@ test('transform', (t) => {
             getAtPointOrZero() {
                 return 0.0;
             },
-            getAtPoint(p) {
-                return this.getAtPointOrZero(p);
+            getAtPoint(p, x) {
+                return x;
             },
             getForTilePoints() {
                 return true;
             },
             getMinElevationBelowMSL: () => 0,
-            exaggeration: () => 1
+            exaggeration: () => 1,
+            visibleDemTiles: () => []
         };
     };
 
@@ -688,7 +723,8 @@ test('transform', (t) => {
             _exaggeration: 1,
             exaggeration() {
                 return this._exaggeration;
-            }
+            },
+            getMinMaxForVisibleTiles: () => null
         };
     };
 
@@ -938,7 +974,8 @@ test('transform', (t) => {
             exaggeration() {
                 return 10; // Low tile zoom used, exaggerate elevation to make impact.
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            getMinMaxForVisibleTiles: () => null
         };
         transform.elevation = elevation;
         transform.resize(200, 200);
@@ -1149,7 +1186,8 @@ test('transform', (t) => {
             exaggeration() {
                 return 1;
             },
-            getMinElevationBelowMSL: () => 0
+            getMinElevationBelowMSL: () => 0,
+            getMinMaxForVisibleTiles: () => null
         };
         transform.bearing = -95.8;
         transform.resize(1335, 934);
@@ -1232,6 +1270,33 @@ test('transform', (t) => {
 
         t.deepEqual(transform.project(new LngLat(0, -90)), transform.project(new LngLat(0, -MAX_MERCATOR_LATITUDE)));
         t.deepEqual(transform.project(new LngLat(0, 90)), transform.project(new LngLat(0, MAX_MERCATOR_LATITUDE)));
+        t.end();
+    });
+
+    t.test('horizonLineFromTop', (t) => {
+        const transform = new Transform();
+        transform.maxPitch = 90;
+        transform.resize(800, 800);
+        transform.zoom = 10;
+        transform.center = {lng: 0, lat: 0};
+        transform.pitch = 90;
+        transform.padding = {top:0, bottom:0, left:0, right:0};
+        transform._horizonShift = 0.0;
+        const eq = (a, b, eps = 0.000001) => {
+            return Math.abs(a - b) < eps;
+        };
+
+        // Horizon line is in the center
+        t.true(eq(transform.horizonLineFromTop(), 400.0));
+
+        // Padding from top, horizon line should go down
+        transform.padding = {top:300, bottom:0, left:0, right:0};
+        t.true(eq(transform.horizonLineFromTop(), 550.0));
+
+        // Padding from bottom, horizon line should go up
+        transform.padding = {top:0, bottom:300, left:0, right:0};
+        t.true(eq(transform.horizonLineFromTop(), 250.0));
+
         t.end();
     });
 

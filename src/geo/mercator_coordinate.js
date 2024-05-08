@@ -2,7 +2,12 @@
 
 import LngLat, {earthCircumference} from '../geo/lng_lat.js';
 import type {LngLatLike} from '../geo/lng_lat.js';
+import {clamp, degToRad} from '../util/util.js';
+import {CanonicalTileID} from '../source/tile_id.js';
+import EXTENT from '../style-spec/data/extent.js';
 
+const DEFAULT_MIN_ZOOM = 0;
+const DEFAULT_MAX_ZOOM = 25.5;
 /*
  * The circumference at a line of latitude in meters.
  */
@@ -37,6 +42,16 @@ export function altitudeFromMercatorZ(z: number, y: number): number {
 
 export const MAX_MERCATOR_LATITUDE = 85.051129;
 
+export function getLatitudeScale(lat: number): number {
+    return Math.cos(degToRad(clamp(lat, -MAX_MERCATOR_LATITUDE, MAX_MERCATOR_LATITUDE)));
+}
+
+export function getMetersPerPixelAtLatitude(lat: number, zoom: number): number {
+    const constrainedZoom = clamp(zoom, DEFAULT_MIN_ZOOM, DEFAULT_MAX_ZOOM);
+    const constrainedScale = Math.pow(2.0, constrainedZoom);
+    return getLatitudeScale(lat) * earthCircumference / (constrainedScale * 512.0);
+}
+
 /**
  * Determine the Mercator scale factor for a given latitude, see
  * https://en.wikipedia.org/wiki/Mercator_projection#Scale_factor
@@ -49,6 +64,14 @@ export const MAX_MERCATOR_LATITUDE = 85.051129;
  */
 export function mercatorScale(lat: number): number {
     return 1 / Math.cos(lat * Math.PI / 180);
+}
+
+export function tileToMeter(canonical: CanonicalTileID, tileYCoordinate: number = 0): number {
+    const circumferenceAtEquator = 40075017;
+    const mercatorY = (canonical.y + tileYCoordinate / EXTENT) / (1 << canonical.z);
+    const exp = Math.exp(Math.PI * (1 - 2 * mercatorY));
+    // simplify cos(2 * atan(e) - PI/2) from mercator_coordinate.js, remove trigonometrics.
+    return circumferenceAtEquator * 2 * exp / (exp * exp + 1) / EXTENT / (1 << canonical.z);
 }
 
 /**

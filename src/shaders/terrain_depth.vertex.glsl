@@ -1,7 +1,9 @@
-uniform mat4 u_matrix;
-attribute vec2 a_pos;
+#include "_prelude_terrain.vertex.glsl"
 
-varying float v_depth;
+uniform mat4 u_matrix;
+in vec2 a_pos;
+
+out float v_depth;
 
 void main() {
     float elevation = elevation(a_pos);

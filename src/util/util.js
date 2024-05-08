@@ -571,6 +571,70 @@ export function calculateSignedArea(ring: Array<Point>): number {
     return sum;
 }
 
+export type Position = {
+    x: number,
+    y: number,
+    z: number,
+    azimuthal: number,
+    polar: number,
+};
+
+export type Direction = {
+    x: number,
+    y: number,
+    z: number
+};
+
+/**
+ * Converts spherical coordinates to cartesian position coordinates.
+ *
+ * @private
+ * @param spherical Spherical coordinates, in [radial, azimuthal, polar]
+ * @return Position cartesian coordinates
+ */
+export function sphericalPositionToCartesian([r, azimuthal, polar]: [number, number, number]): Position {
+    // We abstract "north"/"up" (compass-wise) to be 0° when really this is 90° (π/2):
+    // correct for that here
+    const a = degToRad(azimuthal + 90), p = degToRad(polar);
+
+    return {
+        x: r * Math.cos(a) * Math.sin(p),
+        y: r * Math.sin(a) * Math.sin(p),
+        z: r * Math.cos(p),
+        azimuthal, polar
+    };
+}
+
+/**
+ * Converts spherical direction to cartesian coordinates.
+ *
+ * @private
+ * @param spherical Spherical direction, in [azimuthal, polar]
+ * @return Direction cartesian direction
+ */
+export function sphericalDirectionToCartesian([azimuthal, polar]: [number, number, number]): Direction {
+    const position = sphericalPositionToCartesian([1.0, azimuthal, polar]);
+
+    return {
+        x: position.x,
+        y: position.y,
+        z: position.z
+    };
+}
+
+export function cartesianPositionToSpherical(x: number, y: number, z: number): [number, number, number] {
+    const radial = Math.sqrt(x * x + y * y + z * z);
+    const polar = radial > 0.0 ? Math.acos(z / radial) * RAD_TO_DEG : 0.0;
+    // Domain error may occur if x && y are both 0.0
+    let azimuthal = (x !== 0.0 || y !== 0.0) ? Math.atan2(-y, -x) * RAD_TO_DEG + 90.0 : 0.0;
+
+    if (azimuthal < 0.0) {
+        azimuthal += 360.0;
+    }
+
+    return [radial, azimuthal, polar];
+}
+
 /* global self, WorkerGlobalScope */
 /**
  *  Returns true if run in the web-worker context.
@@ -681,6 +745,13 @@ export function b64DecodeUnicode(str: string): string {
     }).join(''));
 }
 
+export function base64DecToArr(sBase64: string): Uint8Array {
+    const str = atob(sBase64);
+    const arr = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) arr[i] = str.codePointAt(i);
+    return arr;
+}
+
 export function getColumn(matrix: Mat4, col: number): Vec4 {
     return [matrix[col * 4], matrix[col * 4 + 1], matrix[col * 4 + 2], matrix[col * 4 + 3]];
 }
@@ -690,4 +761,20 @@ export function setColumn(matrix: Mat4, col: number, values: Vec4) {
     matrix[col * 4 + 1] = values[1];
     matrix[col * 4 + 2] = values[2];
     matrix[col * 4 + 3] = values[3];
+}
+
+export function sRGBToLinearAndScale(v: [number, number, number, number], s: number): [number, number, number] {
+    return [
+        Math.pow(v[0], 2.2) * s,
+        Math.pow(v[1], 2.2) * s,
+        Math.pow(v[2], 2.2) * s
+    ];
+}
+
+export function linearVec3TosRGB(v: [number, number, number]): [number, number, number] {
+    return [
+        Math.pow(v[0], 1.0 / 2.2),
+        Math.pow(v[1], 1.0 / 2.2),
+        Math.pow(v[2], 1.0 / 2.2)
+    ];
 }

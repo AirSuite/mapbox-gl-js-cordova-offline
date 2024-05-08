@@ -1,9 +1,9 @@
 version: 2.1
 orbs:
   aws-cli: circleci/aws-cli@3.1.4
-  browser-tools: circleci/browser-tools@1.4.1
-  macos: circleci/macos@2.3.4
-  win: circleci/windows@4.1.1
+  browser-tools: circleci/browser-tools@1.4.2
+  macos: circleci/macos@2.3.6
+  win: circleci/windows@5.0.0
 
 workflows:
   version: 2
@@ -86,26 +86,12 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - collect-stats:
+      - verify-codegen:
           requires:
-            - build
-            - install-mbx-ci
+            - prepare-linux
           filters:
             tags:
-              ignore: /.*/
-            branches:
-              only: main
-      - deploy-benchmarks:
-          requires:
-            - install-mbx-ci
-            - build
-          filters:
-            tags:
-              only: /v[0-9]+.[0-9]+.[0-9]+(-.+)?/
-            branches:
-              only:
-                - main
-                - /release-.*/
+              only: /.*/
       - deploy-release:
           requires:
             - install-mbx-ci
@@ -116,12 +102,6 @@ workflows:
             branches:
               ignore: /.*/
       - test-render-linux-chrome-dev:
-          requires:
-            - prepare-linux
-          filters:
-            tags:
-              only: /.*/
-      - test-render-linux-chrome-webgl1-dev:
           requires:
             - prepare-linux
           filters:
@@ -145,12 +125,6 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - test-render-linux-firefox-webgl1-dev:
-          requires:
-            - prepare-linux
-          filters:
-            tags:
-              only: /.*/
       - prepare-mac:
           filters:
             tags:
@@ -161,19 +135,7 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - test-render-mac-chrome-webgl1-dev:
-          requires:
-            - prepare-mac
-          filters:
-            tags:
-              only: /.*/
       - test-render-mac-safari-dev:
-          requires:
-            - prepare-mac
-          filters:
-            tags:
-              only: /.*/
-      - test-render-mac-safari-webgl1-dev:
           requires:
             - prepare-mac
           filters:
@@ -189,6 +151,13 @@ workflows:
           filters:
             tags:
               only: /.*/
+      - trigger-performance-tests:
+          context:
+            - "sdk-cicd/circleci-api"
+          filters:
+            branches:
+              only:
+                  - internal
 
 linux-defaults: &linux-defaults
   docker:
@@ -196,7 +165,7 @@ linux-defaults: &linux-defaults
   working_directory: ~/mapbox-gl-js
 
 mac-defaults: &mac-defaults
-  resource_class: macos.x86.medium.gen2
+  resource_class: macos.m1.medium.gen1
   macos:
     # https://circleci.com/docs/using-macos/#supported-xcode-versions
     xcode: 14.3.0 # macOS 13.2 (Ventura)
@@ -206,6 +175,8 @@ mac-defaults: &mac-defaults
 
 windows-defaults: &windows-defaults
   executor:
+    # windows-server-2022-gui:current
+    # https://circleci.com/developer/machine/image/windows-server-2022-gui
     name: win/default
   working_directory: ~/mapbox-gl-js
 
@@ -307,7 +278,9 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn run test-unit
+      - run:
+          command: yarn run test-unit
+          no_output_timeout: 5m
 
   test-query:
     <<: *linux-defaults
@@ -343,26 +316,24 @@ jobs:
           at: ~/
       - run: yarn run test-style-spec
 
-  collect-stats:
+  verify-codegen:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - browser-tools/install-chrome
       - run:
-          name: Collect performance stats
-          command: node bench/gl-stats.js
-      - aws-cli/install
-      - run:
-          name: Upload performance stats
-          command: aws s3 cp data.json.gz s3://mapbox-loading-dock/raw/gl_js.perf_metrics_staging/ci/`git show -s --date=short --format=%cd-%h HEAD`.json.gz
+          name: Verify codegen output
+          command: |
+            yarn run codegen
+            git add -A && git diff --staged --exit-code | tee check.patch
 
   test-browser:
     <<: *linux-defaults
     steps:
       - attach_workspace:
           at: ~/
-      - browser-tools/install-browser-tools
+      - browser-tools/install-browser-tools:
+          chrome-version: "114.0.5735.90"
       - run: yarn run build-token
       - run:
           name: Test Chrome
@@ -383,22 +354,6 @@ jobs:
       - attach_workspace:
           at: ~/
       - run: yarn run test-expressions
-
-  deploy-benchmarks:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - run:
-          name: Build
-          command: BENCHMARK_VERSION="${CIRCLE_TAG:-$CIRCLE_BRANCH} $(git rev-parse --short=7 HEAD)" yarn run build-benchmarks
-      - aws-cli/install
-      - run:
-          name: Upload benchmark
-          command: aws s3 cp --acl public-read --content-type application/javascript bench/versions/benchmarks_generated.js s3://mapbox-gl-js/${CIRCLE_TAG:-$CIRCLE_BRANCH}/benchmarks.js
-      - run:
-          name: Upload source maps
-          command: aws s3 cp --acl public-read --content-type application/javascript bench/versions/benchmarks_generated.js.map s3://mapbox-gl-js/${CIRCLE_TAG:-$CIRCLE_BRANCH}/benchmarks.js.map
 
   deploy-release:
     <<: *linux-defaults
@@ -435,21 +390,6 @@ jobs:
       - store_artifacts:
           path: "test/integration/render-tests/index.html"
 
-  test-render-linux-chrome-webgl1-dev:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-chrome
-      - run:
-          name: Running tests in parallel
-          command: |
-            USE_WEBGL2=false yarn run test-render
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
   test-render-linux-chrome-prod:
     <<: *linux-defaults
     steps:
@@ -481,18 +421,6 @@ jobs:
           at: ~/
       - browser-tools/install-firefox
       - run: yarn run test-render-firefox
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-linux-firefox-webgl1-dev:
-    <<: *linux-defaults
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-firefox
-      - run: USE_WEBGL2=false yarn run test-render-firefox
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -536,42 +464,12 @@ jobs:
       - store_artifacts:
           path: "test/integration/render-tests/index.html"
 
-  test-render-mac-chrome-webgl1-dev:
-    <<: *mac-defaults
-    parallelism: 3
-    steps:
-      - attach_workspace:
-          at: ~/
-      - browser-tools/install-chrome
-      - run:
-          name: Creating test list
-          command: |
-            circleci tests glob "test/integration/render-tests/**/*.json" | circleci tests split --split-by=timings > tests-to-run.txt
-      - run: USE_WEBGL2=false yarn run test-render
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
   test-render-mac-safari-dev:
     <<: *mac-defaults
-    resource_class: macos.m1.large.gen1
     steps:
       - attach_workspace:
           at: ~/
       - run: yarn run test-render-safari
-      - store_test_results:
-          path: test/integration/render-tests
-      - store_artifacts:
-          path: "test/integration/render-tests/index.html"
-
-  test-render-mac-safari-webgl1-dev:
-    <<: *mac-defaults
-    resource_class: macos.m1.large.gen1
-    steps:
-      - attach_workspace:
-          at: ~/
-      - run: USE_WEBGL2=false yarn run test-render-safari
       - store_test_results:
           path: test/integration/render-tests
       - store_artifacts:
@@ -584,11 +482,10 @@ jobs:
       - run:
           name: Setup Node.js and Yarn
           command: |
-            choco uninstall nvm.portable
             $nodeVersion = Get-Content .nvmrc
-            choco install nodejs --version $nodeVersion
+            nvm install $nodeVersion
+            nvm use $nodeVersion
             npm install -g yarn
-            refreshenv
       - run: yarn --frozen-lockfile
       - run: yarn run build-dev
       - run:
@@ -617,11 +514,10 @@ jobs:
       - run:
           name: Setup Node.js and Yarn
           command: |
-            choco uninstall nvm.portable
             $nodeVersion = Get-Content .nvmrc
-            choco install nodejs --version $nodeVersion
+            nvm install $nodeVersion
+            nvm use $nodeVersion
             npm install -g yarn
-            refreshenv
       # The browser-tools orb doesn't work on Windows, so we install chrome manually.
       - run:
           name: Installing Chrome on Windows
@@ -645,3 +541,20 @@ jobs:
           path: test/integration/render-tests
       - store_artifacts:
           path: "test/integration/render-tests/index.html"
+
+  trigger-performance-tests:
+    <<: *linux-defaults
+    steps:
+      - checkout
+      - run:
+          name: Trigger SLA performance tests
+          command: |
+            sha=$(git rev-parse HEAD)
+            response_code=$(curl --location --write-out "%{http_code}" --output /dev/stderr --request POST 'https://circleci.com/api/v2/project/github/mapbox/mapbox-gl-js-performance-internal/pipeline' --header 'Content-Type: application/json' -u $CIRCLECI_API_TOKEN: -d "{ \"parameters\": { \"setup_sha\": \"$sha\", \"setup_source_branch\": \"internal\" } }")
+
+            if [[ "$response_code" =~ ^2 ]]; then
+                echo "Success: HTTP 2xx response"
+            else
+                echo "Error: Non-2xx response code - $response_code"
+                exit 1
+            fi

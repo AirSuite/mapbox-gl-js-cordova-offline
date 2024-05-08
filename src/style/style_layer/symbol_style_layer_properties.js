@@ -27,13 +27,14 @@ export type LayoutProps = {|
     "symbol-avoid-edges": DataConstantProperty<boolean>,
     "symbol-sort-key": DataDrivenProperty<number>,
     "symbol-z-order": DataConstantProperty<"auto" | "viewport-y" | "source">,
+    "symbol-z-elevate": DataConstantProperty<boolean>,
     "icon-allow-overlap": DataConstantProperty<boolean>,
     "icon-ignore-placement": DataConstantProperty<boolean>,
     "icon-optional": DataConstantProperty<boolean>,
     "icon-rotation-alignment": DataConstantProperty<"map" | "viewport" | "auto">,
     "icon-size": DataDrivenProperty<number>,
-    "icon-text-fit": DataConstantProperty<"none" | "width" | "height" | "both">,
-    "icon-text-fit-padding": DataConstantProperty<[number, number, number, number]>,
+    "icon-text-fit": DataDrivenProperty<"none" | "width" | "height" | "both">,
+    "icon-text-fit-padding": DataDrivenProperty<[number, number, number, number]>,
     "icon-image": DataDrivenProperty<ResolvedImage>,
     "icon-rotate": DataDrivenProperty<number>,
     "icon-padding": DataConstantProperty<number>,
@@ -63,6 +64,7 @@ export type LayoutProps = {|
     "text-allow-overlap": DataConstantProperty<boolean>,
     "text-ignore-placement": DataConstantProperty<boolean>,
     "text-optional": DataConstantProperty<boolean>,
+    "visibility": DataConstantProperty<"visible" | "none">,
 |};
 
 const layout: Properties<LayoutProps> = new Properties({
@@ -71,13 +73,14 @@ const layout: Properties<LayoutProps> = new Properties({
     "symbol-avoid-edges": new DataConstantProperty(styleSpec["layout_symbol"]["symbol-avoid-edges"]),
     "symbol-sort-key": new DataDrivenProperty(styleSpec["layout_symbol"]["symbol-sort-key"]),
     "symbol-z-order": new DataConstantProperty(styleSpec["layout_symbol"]["symbol-z-order"]),
+    "symbol-z-elevate": new DataConstantProperty(styleSpec["layout_symbol"]["symbol-z-elevate"]),
     "icon-allow-overlap": new DataConstantProperty(styleSpec["layout_symbol"]["icon-allow-overlap"]),
     "icon-ignore-placement": new DataConstantProperty(styleSpec["layout_symbol"]["icon-ignore-placement"]),
     "icon-optional": new DataConstantProperty(styleSpec["layout_symbol"]["icon-optional"]),
     "icon-rotation-alignment": new DataConstantProperty(styleSpec["layout_symbol"]["icon-rotation-alignment"]),
     "icon-size": new DataDrivenProperty(styleSpec["layout_symbol"]["icon-size"]),
-    "icon-text-fit": new DataConstantProperty(styleSpec["layout_symbol"]["icon-text-fit"]),
-    "icon-text-fit-padding": new DataConstantProperty(styleSpec["layout_symbol"]["icon-text-fit-padding"]),
+    "icon-text-fit": new DataDrivenProperty(styleSpec["layout_symbol"]["icon-text-fit"]),
+    "icon-text-fit-padding": new DataDrivenProperty(styleSpec["layout_symbol"]["icon-text-fit-padding"]),
     "icon-image": new DataDrivenProperty(styleSpec["layout_symbol"]["icon-image"]),
     "icon-rotate": new DataDrivenProperty(styleSpec["layout_symbol"]["icon-rotate"]),
     "icon-padding": new DataConstantProperty(styleSpec["layout_symbol"]["icon-padding"]),
@@ -107,16 +110,20 @@ const layout: Properties<LayoutProps> = new Properties({
     "text-allow-overlap": new DataConstantProperty(styleSpec["layout_symbol"]["text-allow-overlap"]),
     "text-ignore-placement": new DataConstantProperty(styleSpec["layout_symbol"]["text-ignore-placement"]),
     "text-optional": new DataConstantProperty(styleSpec["layout_symbol"]["text-optional"]),
+    "visibility": new DataConstantProperty(styleSpec["layout_symbol"]["visibility"]),
 });
 
 export type PaintProps = {|
     "icon-opacity": DataDrivenProperty<number>,
+    "icon-emissive-strength": DataDrivenProperty<number>,
+    "text-emissive-strength": DataDrivenProperty<number>,
     "icon-color": DataDrivenProperty<Color>,
     "icon-halo-color": DataDrivenProperty<Color>,
     "icon-halo-width": DataDrivenProperty<number>,
     "icon-halo-blur": DataDrivenProperty<number>,
     "icon-translate": DataConstantProperty<[number, number]>,
     "icon-translate-anchor": DataConstantProperty<"map" | "viewport">,
+    "icon-image-cross-fade": DataDrivenProperty<number>,
     "text-opacity": DataDrivenProperty<number>,
     "text-color": DataDrivenProperty<Color>,
     "text-halo-color": DataDrivenProperty<Color>,
@@ -124,16 +131,20 @@ export type PaintProps = {|
     "text-halo-blur": DataDrivenProperty<number>,
     "text-translate": DataConstantProperty<[number, number]>,
     "text-translate-anchor": DataConstantProperty<"map" | "viewport">,
+    "icon-color-saturation": DataConstantProperty<number>,
 |};
 
 const paint: Properties<PaintProps> = new Properties({
     "icon-opacity": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-opacity"]),
+    "icon-emissive-strength": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-emissive-strength"]),
+    "text-emissive-strength": new DataDrivenProperty(styleSpec["paint_symbol"]["text-emissive-strength"]),
     "icon-color": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-color"]),
     "icon-halo-color": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-halo-color"]),
     "icon-halo-width": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-halo-width"]),
     "icon-halo-blur": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-halo-blur"]),
     "icon-translate": new DataConstantProperty(styleSpec["paint_symbol"]["icon-translate"]),
     "icon-translate-anchor": new DataConstantProperty(styleSpec["paint_symbol"]["icon-translate-anchor"]),
+    "icon-image-cross-fade": new DataDrivenProperty(styleSpec["paint_symbol"]["icon-image-cross-fade"]),
     "text-opacity": new DataDrivenProperty(styleSpec["paint_symbol"]["text-opacity"]),
     "text-color": new DataDrivenProperty(styleSpec["paint_symbol"]["text-color"], { runtimeType: ColorType, getOverride: (o) => o.textColor, hasOverride: (o) => !!o.textColor }),
     "text-halo-color": new DataDrivenProperty(styleSpec["paint_symbol"]["text-halo-color"]),
@@ -141,6 +152,7 @@ const paint: Properties<PaintProps> = new Properties({
     "text-halo-blur": new DataDrivenProperty(styleSpec["paint_symbol"]["text-halo-blur"]),
     "text-translate": new DataConstantProperty(styleSpec["paint_symbol"]["text-translate"]),
     "text-translate-anchor": new DataConstantProperty(styleSpec["paint_symbol"]["text-translate-anchor"]),
+    "icon-color-saturation": new DataConstantProperty(styleSpec["paint_symbol"]["icon-color-saturation"]),
 });
 
 // Note: without adding the explicit type annotation, Flow infers weaker types

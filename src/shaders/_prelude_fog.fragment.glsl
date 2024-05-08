@@ -1,10 +1,22 @@
+highp vec3 hash(highp vec2 p) {
+    highp vec3 p3 = fract(p.xyx * vec3(443.8975, 397.2973, 491.1871));
+    p3 += dot(p3, p3.yxz + 19.19);
+    return fract((p3.xxy + p3.yzz) * p3.zyx);
+}
+
+vec3 dither(vec3 color, highp vec2 seed) {
+    vec3 rnd = hash(seed) + hash(seed + 0.59374) - 0.5;
+    return color + rnd / 255.0;
+}
+
 #ifdef FOG
 
 uniform mediump vec4 u_fog_color;
 uniform mediump vec2 u_fog_range;
 uniform mediump float u_fog_horizon_blend;
+uniform mediump vec2 u_fog_vertical_limit;
 uniform mediump float u_fog_temporal_offset;
-varying vec3 v_fog_pos;
+in vec3 v_fog_pos;
 
 uniform highp vec3 u_frustum_tl;
 uniform highp vec3 u_frustum_tr;
@@ -63,7 +75,7 @@ float fog_opacity(vec3 pos) {
     return fog_opacity(fog_range(depth));
 }
 
-vec3 fog_apply(vec3 color, vec3 pos) {
+vec3 fog_apply(vec3 color, vec3 pos, float opacity_limit) {
     float depth = length(pos);
     float opacity;
     if (u_is_globe == 1) {
@@ -74,7 +86,11 @@ vec3 fog_apply(vec3 color, vec3 pos) {
         opacity = fog_opacity(fog_range(depth));
         opacity *= fog_horizon_blending(pos / depth);
     }
-    return mix(color, u_fog_color.rgb, opacity);
+    return mix(color, u_fog_color.rgb, min(opacity, opacity_limit));
+}
+
+vec3 fog_apply(vec3 color, vec3 pos) {
+    return fog_apply(color, pos, 1.0);
 }
 
 // Apply fog computed in the vertex shader
@@ -98,9 +114,21 @@ vec4 fog_apply_premultiplied(vec4 color, vec3 pos) {
     return color;
 }
 
+vec4 fog_apply_premultiplied(vec4 color, vec3 pos, float heightMeters) {
+    float verticalProgress = (u_fog_vertical_limit.x > 0.0 || u_fog_vertical_limit.y > 0.0) ? smoothstep(u_fog_vertical_limit.x, u_fog_vertical_limit.y, heightMeters) : 0.0;
+    // If the fog's opacity is above 90% the content needs to be faded out without the vertical visibility
+    // to avoid a hard cut when the content gets behind the cull distance
+    float opacityLimit = 1.0 - smoothstep(0.9, 1.0, fog_opacity(pos));
+    return mix(fog_apply_premultiplied(color, pos), color, min(verticalProgress, opacityLimit));
+}
+
 vec3 fog_dither(vec3 color) {
+#ifdef FOG_DITHERING
     vec2 dither_seed = gl_FragCoord.xy + u_fog_temporal_offset;
     return dither(color, dither_seed);
+#else
+    return color;
+#endif
 }
 
 vec4 fog_dither(vec4 color) {

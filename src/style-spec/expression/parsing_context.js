@@ -10,11 +10,13 @@ import EvaluationContext from './evaluation_context.js';
 import CompoundExpression from './compound_expression.js';
 import CollatorExpression from './definitions/collator.js';
 import Within from './definitions/within.js';
+import Distance from './definitions/distance.js';
 import {isGlobalPropertyConstant, isFeatureConstant} from './is_constant.js';
 import Var from './definitions/var.js';
 
 import type {Expression, ExpressionRegistry} from './expression.js';
 import type {Type} from './types.js';
+import type {ConfigOptions} from '../../style/properties.js';
 
 /**
  * State associated parsing at a given point in an expression tree.
@@ -26,6 +28,7 @@ class ParsingContext {
     key: string;
     scope: Scope;
     errors: Array<ParsingError>;
+    options: ?ConfigOptions;
 
     // The expected type of this expression. Provided only to allow Expression
     // implementations to infer argument types: Expression#parse() need not
@@ -38,7 +41,8 @@ class ParsingContext {
         path: Array<number> = [],
         expectedType: ?Type,
         scope: Scope = new Scope(),
-        errors: Array<ParsingError> = []
+        errors: Array<ParsingError> = [],
+        options?: ?ConfigOptions
     ) {
         this.registry = registry;
         this.path = path;
@@ -46,6 +50,7 @@ class ParsingContext {
         this.scope = scope;
         this.errors = errors;
         this.expectedType = expectedType;
+        this.options = options;
     }
 
     /**
@@ -62,7 +67,7 @@ class ParsingContext {
         bindings?: Array<[string, Expression]>,
         options: {typeAnnotation?: 'assert' | 'coerce' | 'omit'} = {}
     ): ?Expression {
-        if (index) {
+        if (index || expectedType) {
             return this.concat(index, expectedType, bindings)._parse(expr, options);
         }
         return this._parse(expr, options);
@@ -88,13 +93,7 @@ class ParsingContext {
                 return this.error(`Expected an array with at least one element. If you wanted a literal array, use ["literal", []].`);
             }
 
-            const op = expr[0];
-            if (typeof op !== 'string') {
-                this.error(`Expression name must be a string, but found ${typeof op} instead. If you wanted a literal array, use ["literal", [...]].`, 0);
-                return null;
-            }
-
-            const Expr = this.registry[op];
+            const Expr = typeof expr[0] === 'string' ? this.registry[expr[0]] : undefined;
             if (Expr) {
                 let parsed = Expr.parse(expr, this);
                 if (!parsed) return null;
@@ -125,7 +124,7 @@ class ParsingContext {
                 // parsed/compiled result. Expressions that expect an image should
                 // not be resolved here so we can later get the available images.
                 if (!(parsed instanceof Literal) && (parsed.type.kind !== 'resolvedImage') && isConstant(parsed)) {
-                    const ec = new EvaluationContext();
+                    const ec = new EvaluationContext(this.options);
                     try {
                         parsed = new Literal(parsed.type, parsed.evaluate(ec));
                     } catch (e) {
@@ -137,7 +136,8 @@ class ParsingContext {
                 return parsed;
             }
 
-            return this.error(`Unknown expression "${op}". If you wanted a literal array, use ["literal", [...]].`, 0);
+            // Try to parse as array
+            return Coercion.parse(['to-array', expr], this);
         } else if (typeof expr === 'undefined') {
             return this.error(`'undefined' value invalid. Use null instead.`);
         } else if (typeof expr === 'object') {
@@ -155,7 +155,7 @@ class ParsingContext {
      * parsing, is copied by reference rather than cloned.
      * @private
      */
-    concat(index: number, expectedType?: ?Type, bindings?: Array<[string, Expression]>): ParsingContext {
+    concat(index: ?number, expectedType?: ?Type, bindings?: Array<[string, Expression]>): ParsingContext {
         const path = typeof index === 'number' ? this.path.concat(index) : this.path;
         const scope = bindings ? this.scope.concat(bindings) : this.scope;
         return new ParsingContext(
@@ -163,7 +163,8 @@ class ParsingContext {
             path,
             expectedType || null,
             scope,
-            this.errors
+            this.errors,
+            this.options
         );
     }
 
@@ -197,12 +198,16 @@ function isConstant(expression: Expression) {
         return isConstant(expression.boundExpression);
     } else if (expression instanceof CompoundExpression && expression.name === 'error') {
         return false;
+    } else if (expression instanceof CompoundExpression && expression.name === 'config') {
+        return false;
     } else if (expression instanceof CollatorExpression) {
         // Although the results of a Collator expression with fixed arguments
         // generally shouldn't change between executions, we can't serialize them
         // as constant expressions because results change based on environment.
         return false;
-    } else if (expression instanceof Within) {
+    }  else if (expression instanceof Within) {
+        return false;
+    } else if (expression instanceof Distance) {
         return false;
     }
 
@@ -229,5 +234,5 @@ function isConstant(expression: Expression) {
     }
 
     return isFeatureConstant(expression) &&
-        isGlobalPropertyConstant(expression, ['zoom', 'heatmap-density', 'line-progress', 'sky-radial-progress', 'accumulated', 'is-supported-script', 'pitch', 'distance-from-center']);
+        isGlobalPropertyConstant(expression, ['zoom', 'heatmap-density', 'line-progress', 'raster-value', 'sky-radial-progress', 'accumulated', 'is-supported-script', 'pitch', 'distance-from-center', 'measure-light']);
 }

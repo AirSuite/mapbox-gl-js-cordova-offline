@@ -25,7 +25,7 @@ import tileTransform from '../geo/projection/tile_transform.js';
 import {mercatorXfromLng, mercatorYfromLat} from '../geo/mercator_coordinate.js';
 import boundsAttributes from '../data/bounds_attributes.js';
 import posAttributes, {posAttributesGlobeExt} from '../data/pos_attributes.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import Point from '@mapbox/point-geometry';
 import SegmentVector from '../data/segment.js';
 import {transitionTileAABBinECEF, globeNormalizeECEF, tileCoordToECEF, globeToMercatorTransition, interpolateVec3} from '../geo/projection/globe_util.js';
@@ -56,7 +56,7 @@ import type {QueryResult} from '../data/feature_index.js';
 import type Painter from '../render/painter.js';
 import type {QueryFeature} from '../util/vectortile_to_geojson.js';
 import type {Vec3} from 'gl-matrix';
-import type {TextureImage} from '../render/texture.js';
+import type {UserManagedTexture, TextureImage} from '../render/texture.js';
 import type {VectorTileLayer} from '@mapbox/vector-tile';
 
 const CLOCK_SKEW_RETRY_TIMEOUT = 30000;
@@ -102,11 +102,11 @@ class Tile {
     latestFeatureIndex: ?FeatureIndex;
     latestRawTileData: ?ArrayBuffer;
     imageAtlas: ?ImageAtlas;
-    imageAtlasTexture: Texture;
+    imageAtlasTexture: ?Texture;
     lineAtlas: ?LineAtlas;
-    lineAtlasTexture: Texture;
+    lineAtlasTexture: ?Texture;
     glyphAtlasImage: ?AlphaImage;
-    glyphAtlasTexture: Texture;
+    glyphAtlasTexture: ?Texture;
     expirationTime: any;
     expiredRequestCount: number;
     state: TileState;
@@ -119,6 +119,7 @@ class Tile {
     actor: ?Actor;
     vtLayers: {[_: string]: VectorTileLayer};
     isSymbolTile: ?boolean;
+    isExtraShadowCaster: ?boolean;
     isRaster: ?boolean;
     _tileTransform: TileTransform;
 
@@ -128,8 +129,8 @@ class Tile {
     needsHillshadePrepare: ?boolean;
     needsDEMTextureUpload: ?boolean;
     request: ?Cancelable;
-    texture: any;
-    fbo: ?Framebuffer;
+    texture: ?Texture | ?UserManagedTexture;
+    hillshadeFBO: ?Framebuffer;
     demTexture: ?Texture;
     refreshedUponExpiration: boolean;
     reloadCallback: any;
@@ -156,6 +157,7 @@ class Tile {
     _tileDebugTextSegments: SegmentVector;
     _tileDebugTextIndexBuffer: IndexBuffer;
     _globeTileDebugTextBuffer: ?VertexBuffer;
+    _lastUpdatedBrightness: ?number;
 
     /**
      * @param {OverscaledTileID} tileID
@@ -175,6 +177,9 @@ class Tile {
         this.hasRTLText = false;
         this.dependencies = {};
         this.isRaster = isRaster;
+        if (painter && painter.style) {
+            this._lastUpdatedBrightness = painter.style.getBrightness();
+        }
 
         // Counts the number of times a response was already expired when
         // received. We're using this to add a delay when making a new request
@@ -218,7 +223,7 @@ class Tile {
      * @returns {undefined}
      * @private
      */
-    loadVectorData(data: ?WorkerTileResult, painter: any, justReloaded: ?boolean) {
+    loadVectorData(data: ?WorkerTileResult, painter: Painter, justReloaded: ?boolean) {
         this.unloadVectorData();
 
         this.state = 'loaded';
@@ -275,7 +280,10 @@ class Tile {
         this.queryPadding = 0;
         for (const id in this.buckets) {
             const bucket = this.buckets[id];
-            this.queryPadding = Math.max(this.queryPadding, painter.style.getLayer(id).queryRadius(bucket));
+            const layer = painter.style.getOwnLayer(id);
+            if (!layer) continue;
+            const queryRadius = layer.queryRadius(bucket);
+            this.queryPadding = Math.max(this.queryPadding, queryRadius);
         }
 
         if (data.imageAtlas) {
@@ -287,6 +295,7 @@ class Tile {
         if (data.lineAtlas) {
             this.lineAtlas = data.lineAtlas;
         }
+        this._lastUpdatedBrightness = data.brightness;
     }
 
     /**
@@ -372,7 +381,7 @@ class Tile {
     }
 
     getBucket(layer: StyleLayer): Bucket {
-        return this.buckets[layer.id];
+        return this.buckets[layer.fqid];
     }
 
     upload(context: Context) {
@@ -400,10 +409,23 @@ class Tile {
         }
     }
 
-    prepare(imageManager: ImageManager) {
-        if (this.imageAtlas) {
-            this.imageAtlas.patchUpdatedImages(imageManager, this.imageAtlasTexture);
+    prepare(imageManager: ImageManager, painter: ?Painter, scope: string) {
+        if (this.imageAtlas && this.imageAtlasTexture) {
+            this.imageAtlas.patchUpdatedImages(imageManager, this.imageAtlasTexture, scope);
         }
+
+        if (!painter || !this.latestFeatureIndex || !this.latestFeatureIndex.rawTileData) {
+            return;
+        }
+        const brightness = painter.style.getBrightness();
+        if (!this._lastUpdatedBrightness && !brightness) {
+            return;
+        }
+        if (this._lastUpdatedBrightness && brightness && Math.abs(this._lastUpdatedBrightness - brightness) < 0.001) {
+            return;
+        }
+        this._lastUpdatedBrightness = brightness;
+        this.updateBuckets(undefined, painter);
     }
 
     // Queries non-symbol features rendered for this tile.
@@ -481,6 +503,15 @@ class Tile {
         return this.state === 'loaded' || this.state === 'reloading' || this.state === 'expired';
     }
 
+    bucketsLoaded(): boolean {
+        for (const id in this.buckets) {
+            if (this.buckets[id].uploadPending())
+                return false;
+        }
+
+        return true;
+    }
+
     patternsLoaded(): boolean {
         return !!this.imageAtlas && !!Object.keys(this.imageAtlas.patternPositions).length;
     }
@@ -553,8 +584,14 @@ class Tile {
             return;
         }
 
+        this.updateBuckets(states, painter);
+    }
+
+    updateBuckets(states: ?LayerFeatureStates, painter: Painter) {
+        if (!this.latestFeatureIndex) return;
         const vtLayers = this.latestFeatureIndex.loadVTLayers();
         const availableImages = painter.style.listImages();
+        const brightness = painter.style.getBrightness();
 
         for (const id in this.buckets) {
             if (!painter.style.hasLayer(id)) continue;
@@ -563,19 +600,22 @@ class Tile {
             // Buckets are grouped by common source-layer
             const sourceLayerId = bucket.layers[0]['sourceLayer'] || '_geojsonTileLayer';
             const sourceLayer = vtLayers[sourceLayerId];
-            const sourceLayerStates = states[sourceLayerId];
-            if (!sourceLayer || !sourceLayerStates || Object.keys(sourceLayerStates).length === 0) continue;
+            let sourceLayerStates = {};
+            if (states) {
+                sourceLayerStates = states[sourceLayerId];
+                if (!sourceLayer || !sourceLayerStates || Object.keys(sourceLayerStates).length === 0) continue;
+            }
 
             // $FlowFixMe[incompatible-type] Flow can't interpret ImagePosition as SpritePosition for some reason here
             const imagePositions: SpritePositions = (this.imageAtlas && this.imageAtlas.patternPositions) || {};
-            bucket.update(sourceLayerStates, sourceLayer, availableImages, imagePositions);
+            bucket.update(sourceLayerStates, sourceLayer, availableImages, imagePositions, brightness);
             if (bucket instanceof LineBucket || bucket instanceof FillBucket) {
-                const sourceCache = painter.style._getSourceCache(bucket.layers[0].source);
+                const sourceCache = painter.style.getOwnSourceCache(bucket.layers[0].source);
                 if (painter._terrain && painter._terrain.enabled && sourceCache && bucket.programConfigurations.needsUpload) {
                     painter._terrain._clearRenderCacheForTile(sourceCache.id, this.tileID);
                 }
             }
-            const layer = painter && painter.style && painter.style.getLayer(id);
+            const layer = painter && painter.style && painter.style.getOwnLayer(id);
             if (layer) {
                 this.queryPadding = Math.max(this.queryPadding, layer.queryRadius(bucket));
             }
@@ -602,7 +642,7 @@ class Tile {
         const context = painter.context;
         const gl = context.gl;
         this.texture = this.texture || painter.getTileTexture(img.width);
-        if (this.texture) {
+        if (this.texture && this.texture instanceof Texture) {
             this.texture.update(img, {useMipmap: true});
         } else {
             this.texture = new Texture(context, img, gl.RGBA, {useMipmap: true});
@@ -833,6 +873,113 @@ class Tile {
         this._tileDebugTextBuffer = context.createVertexBuffer(vertices, posAttributes.members);
         this._globeTileDebugTextBuffer = context.createVertexBuffer(extraGlobe, posAttributesGlobeExt.members);
         this._tileDebugTextSegments = SegmentVector.simpleSegment(0, 0, totalVertices, totalTriangles);
+    }
+
+    /**
+     * Release data and WebGL resources referenced by this tile.
+     * @returns {undefined}
+     * @private
+     */
+    destroy(preserveTexture: boolean = false) {
+        for (const id in this.buckets) {
+            this.buckets[id].destroy();
+        }
+
+        this.buckets = {};
+
+        if (this.imageAtlas) {
+            this.imageAtlas = null;
+        }
+
+        if (this.lineAtlas) {
+            this.lineAtlas = null;
+        }
+
+        if (this.imageAtlasTexture) {
+            this.imageAtlasTexture.destroy();
+            delete this.imageAtlasTexture;
+        }
+
+        if (this.glyphAtlasTexture) {
+            this.glyphAtlasTexture.destroy();
+            delete this.glyphAtlasTexture;
+        }
+
+        if (this.lineAtlasTexture) {
+            this.lineAtlasTexture.destroy();
+            delete this.lineAtlasTexture;
+        }
+
+        if (this._tileBoundsBuffer) {
+            this._tileBoundsBuffer.destroy();
+            this._tileBoundsIndexBuffer.destroy();
+            this._tileBoundsSegments.destroy();
+            this._tileBoundsBuffer = null;
+        }
+
+        if (this._tileDebugBuffer) {
+            this._tileDebugBuffer.destroy();
+            this._tileDebugSegments.destroy();
+            this._tileDebugBuffer = null;
+        }
+
+        if (this._tileDebugIndexBuffer) {
+            this._tileDebugIndexBuffer.destroy();
+            this._tileDebugIndexBuffer = null;
+        }
+
+        if (this._globeTileDebugBorderBuffer) {
+            this._globeTileDebugBorderBuffer.destroy();
+            this._globeTileDebugBorderBuffer = null;
+        }
+
+        if (this._tileDebugTextBuffer) {
+            this._tileDebugTextBuffer.destroy();
+            this._tileDebugTextSegments.destroy();
+            this._tileDebugTextIndexBuffer.destroy();
+            this._tileDebugTextBuffer = null;
+        }
+
+        if (this._globeTileDebugTextBuffer) {
+            this._globeTileDebugTextBuffer.destroy();
+            this._globeTileDebugTextBuffer = null;
+        }
+
+        if (!preserveTexture && this.texture && this.texture instanceof Texture) {
+            this.texture.destroy();
+            delete this.texture;
+        }
+
+        if (this.hillshadeFBO) {
+            this.hillshadeFBO.destroy();
+            delete this.hillshadeFBO;
+        }
+
+        if (this.dem) {
+            delete this.dem;
+        }
+
+        if (this.neighboringTiles) {
+            delete this.neighboringTiles;
+        }
+
+        if (this.demTexture) {
+            this.demTexture.destroy();
+            delete this.demTexture;
+        }
+
+        Debug.run(() => {
+            if (this.queryGeometryDebugViz) {
+                this.queryGeometryDebugViz.unload();
+                delete this.queryGeometryDebugViz;
+            }
+            if (this.queryBoundsDebugViz) {
+                this.queryBoundsDebugViz.unload();
+                delete this.queryBoundsDebugViz;
+            }
+        });
+        this.latestFeatureIndex = null;
+        this.state = 'unloaded';
     }
 }
 

@@ -9,7 +9,7 @@ import type Map, {ControlPosition} from '../map.js';
 
 type Options = {
     compact?: boolean,
-    customAttribution?: string | Array<string>
+    customAttribution?: ?string | ?Array<string>
 };
 
 /**
@@ -64,7 +64,6 @@ class AttributionControl {
         this._compactButton.addEventListener('click', this._toggleAttribution);
         this._setElementTitle(this._compactButton, 'ToggleAttribution');
         this._innerContainer = DOM.create('div', 'mapboxgl-ctrl-attrib-inner', this._container);
-        this._innerContainer.setAttribute('role', 'list');
 
         if (compact) {
             this._container.classList.add('mapboxgl-compact');
@@ -107,7 +106,6 @@ class AttributionControl {
 
     _setElementTitle(element: HTMLElement, title: string) {
         const str = this._map._getUIString(`AttributionControl.${title}`);
-        element.setAttribute('aria-label', str);
         element.removeAttribute('title');
         if (element.firstElementChild) element.firstElementChild.setAttribute('title', str);
     }
@@ -164,7 +162,7 @@ class AttributionControl {
             this.styleId = stylesheet.id;
         }
 
-        const sourceCaches = this._map.style._sourceCaches;
+        const sourceCaches = this._map.style._mergedSourceCaches;
         for (const id in sourceCaches) {
             const sourceCache = sourceCaches[id];
             if (sourceCache.used) {

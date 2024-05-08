@@ -1,3 +1,5 @@
+#include "_prelude_fog.vertex.glsl"
+
 // floor(127 / 2) == 63.0
 // the maximum allowed miter limit is 2.0 at the moment. the extrude normal is
 // stored in a byte (-128..127). we scale regular normals up to length 63, but
@@ -6,17 +8,17 @@
 // #define scale 63.0
 #define EXTRUDE_SCALE 0.015873016
 
-attribute vec2 a_pos_normal;
-attribute vec4 a_data;
+in vec2 a_pos_normal;
+in vec4 a_data;
 // Includes in order: a_uv_x, a_split_index, a_clip_start, a_clip_end
 // to reduce attribute count on older devices.
 // Only line-gradient and line-trim-offset will requires a_packed info.
 #if defined(RENDER_LINE_GRADIENT) || defined(RENDER_LINE_TRIM_OFFSET)
-attribute highp vec4 a_packed;
+in highp vec4 a_packed;
 #endif
 
 #ifdef RENDER_LINE_DASH
-attribute float a_linesofar;
+in float a_linesofar;
 #endif
 
 uniform mat4 u_matrix;
@@ -24,15 +26,15 @@ uniform mat2 u_pixels_to_tile_units;
 uniform vec2 u_units_to_pixels;
 uniform lowp float u_device_pixel_ratio;
 
-varying vec2 v_normal;
-varying vec2 v_width2;
-varying float v_gamma_scale;
-varying highp vec4 v_uv;
+out vec2 v_normal;
+out vec2 v_width2;
+out float v_gamma_scale;
+out highp vec4 v_uv;
 
 #ifdef RENDER_LINE_DASH
 uniform vec2 u_texsize;
 uniform float u_tile_units_to_pixels;
-varying vec2 v_tex;
+out vec2 v_tex;
 #endif
 
 #ifdef RENDER_LINE_GRADIENT
@@ -47,6 +49,8 @@ uniform float u_image_height;
 #pragma mapbox: define mediump float gapwidth
 #pragma mapbox: define lowp float offset
 #pragma mapbox: define mediump float width
+#pragma mapbox: define lowp float border_width
+#pragma mapbox: define lowp vec4 border_color
 
 void main() {
     #pragma mapbox: initialize highp vec4 color
@@ -57,6 +61,8 @@ void main() {
     #pragma mapbox: initialize mediump float gapwidth
     #pragma mapbox: initialize lowp float offset
     #pragma mapbox: initialize mediump float width
+    #pragma mapbox: initialize lowp float border_width
+    #pragma mapbox: initialize lowp vec4 border_color
 
     // the distance over which the line edge fades out.
     // Retina devices need a smaller distance to avoid aliasing.

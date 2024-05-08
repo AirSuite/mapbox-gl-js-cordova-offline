@@ -4,7 +4,7 @@ import MercatorCoordinate, {mercatorZfromAltitude} from '../geo/mercator_coordin
 import DEMData from '../data/dem_data.js';
 import SourceCache from '../source/source_cache.js';
 import {number as interpolate} from '../style-spec/util/interpolate.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import {vec3} from 'gl-matrix';
 import Point from '@mapbox/point-geometry';
 import {OverscaledTileID} from '../source/tile_id.js';
@@ -261,6 +261,35 @@ export class Elevation {
     get visibleDemTiles(): Array<Tile> {
         throw new Error('Getter must be implemented in subclass.');
     }
+
+    /**
+     * Get elevation minimum and maximum for tiles which are visible on the current frame.
+     */
+    getMinMaxForVisibleTiles(): ?{min: number, max: number} {
+        const visibleTiles = this.visibleDemTiles;
+        if (visibleTiles.length === 0) {
+            return null;
+        }
+
+        let found = false;
+        let min = Number.MAX_VALUE;
+        let max = Number.MIN_VALUE;
+        for (const tile of visibleTiles) {
+            const minmax = this.getMinMaxForTile(tile.tileID);
+            if (!minmax) {
+                continue;
+            }
+            min = Math.min(min, minmax.min);
+            max = Math.max(max, minmax.max);
+            found = true;
+        }
+
+        if (!found) {
+            return null;
+        }
+
+        return {min, max};
+    }
 }
 
 /**
@@ -289,7 +318,7 @@ export class DEMSampler {
         const scale = 1 << tileID.canonical.z - demTileID.canonical.z;
         const xOffset = (tileID.canonical.x / scale - demTileID.canonical.x) * dem.dim;
         const yOffset = (tileID.canonical.y / scale - demTileID.canonical.y) * dem.dim;
-        const k = demTile.tileSize / EXTENT / scale;
+        const k = dem.dim / EXTENT / scale;
 
         return new DEMSampler(demTile, k, [xOffset, yOffset]);
     }

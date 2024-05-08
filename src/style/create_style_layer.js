@@ -12,9 +12,12 @@ import background from './style_layer/background_style_layer.js';
 import raster from './style_layer/raster_style_layer.js';
 import CustomStyleLayer from './style_layer/custom_style_layer.js';
 import sky from './style_layer/sky_style_layer.js';
+import slot from './style_layer/slot_style_layer.js';
 import type {CustomLayerInterface} from './style_layer/custom_style_layer.js';
+import model from '../../3d-style/style/style_layer/model_style_layer.js';
 
 import type {LayerSpecification} from '../style-spec/types.js';
+import type {ConfigOptions} from './properties.js';
 
 const subclasses = {
     circle,
@@ -26,13 +29,15 @@ const subclasses = {
     symbol,
     background,
     raster,
-    sky
+    sky,
+    slot,
+    model
 };
 
-export default function createStyleLayer(layer: LayerSpecification | CustomLayerInterface): StyleLayer | CustomStyleLayer {
+export default function createStyleLayer(layer: LayerSpecification | CustomLayerInterface, options?: ?ConfigOptions): StyleLayer | CustomStyleLayer {
     if (layer.type === 'custom') {
         return new CustomStyleLayer(layer);
     } else {
-        return new subclasses[layer.type](layer);
+        return new subclasses[layer.type](layer, options);
     }
 }

@@ -1,3 +1,4 @@
+/* eslint-disable flowtype/require-valid-file-annotation */
 
 import flowRemoveTypes from '@mapbox/flow-remove-types';
 import resolve from '@rollup/plugin-node-resolve';
@@ -24,12 +25,14 @@ export const plugins = ({minified, production, test, bench, keepClassNames}) => 
         functions: ['PerformanceUtils.*', 'WorkerPerformanceUtils.*', 'Debug.*', 'performance.mark']
     }) : false,
     production || bench ? unassert() : false,
+    replace({
+        'process.env.ROLLUP_WATCH': JSON.stringify(process.env.ROLLUP_WATCH),
+    }),
     test ? replace({
         'process.env.CI': JSON.stringify(process.env.CI),
-        'process.env.UPDATE': JSON.stringify(process.env.UPDATE),
-        'process.env.USE_WEBGL2': JSON.stringify(process.env.USE_WEBGL2)
+        'process.env.UPDATE': JSON.stringify(process.env.UPDATE)
     }) : false,
-    glsl('./src/shaders/*.glsl', production),
+    glsl(['./src/shaders/*.glsl', './3d-style/shaders/*.glsl'], production),
     minified ? terser({
         compress: {
             pure_getters: true,
@@ -39,7 +42,8 @@ export const plugins = ({minified, production, test, bench, keepClassNames}) => 
     }) : false,
     resolve({
         browser: true,
-        preferBuiltins: false
+        preferBuiltins: false,
+        mainFields: ['browser', 'main']
     }),
     commonjs({
         // global keyword handling causes Webpack compatibility issues, so we disabled it:

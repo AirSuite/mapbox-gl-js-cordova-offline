@@ -1,8 +1,7 @@
-
 import fs from 'fs';
-import path from 'path';
-import {supportsPropertyExpression, supportsZoomExpression} from '../src/style-spec/util/properties.js';
+import assert from 'assert';
 import spec from '../src/style-spec/reference/v8.json';
+import {supportsPropertyExpression, supportsZoomExpression} from '../src/style-spec/util/properties.js';
 
 function flowEnum(values) {
     if (Array.isArray(values)) {
@@ -26,22 +25,17 @@ function flowType(property) {
             case 'enum':
                 return flowEnum(property.values);
             case 'array':
+                if (property.value === 'light-3d') {
+                    return 'Array<LightsSpecification>';
+                }
                 const elementType = flowType(typeof property.value === 'string' ? {type: property.value, values: property.values} : property.value)
                 if (property.length) {
                     return `[${Array(property.length).fill(elementType).join(', ')}]`;
                 } else {
                     return `Array<${elementType}>`;
                 }
-            case 'light':
-                return 'LightSpecification';
-            case 'terrain':
-                return 'TerrainSpecification';
-            case 'fog':
-                return 'FogSpecification';
-            case 'projection':
-                return 'ProjectionSpecification';
-            case 'sources':
-                return '{[_: string]: SourceSpecification}';
+            case '$root':
+                return 'StyleSpecification';
             case '*':
                 return 'mixed';
             default:
@@ -61,26 +55,35 @@ function flowType(property) {
 }
 
 function flowProperty(key, property) {
-    return `"${key}"${property.required ? '' : '?'}: ${flowType(property)}`;
+    assert(property, `Property not found in the style-specification for ${key}`);
+    if (key === '*') {
+        return `[_: string]: ${flowType(property)}`;
+    } else {
+        return `"${key}"${property.required ? '' : '?'}: ${property['optional'] ? '?' : ''}${flowType(property)}`;
+    }
 }
 
 function flowObjectDeclaration(key, properties) {
+    assert(properties, `Properties not found in the style-specification for ${key}`);
     return `export type ${key} = ${flowObject(properties, '', '*' in properties ? '' : '|')}`;
 }
 
 function flowObject(properties, indent, sealing = '') {
     return `{${sealing}
 ${Object.keys(properties)
-        .filter(k => k !== '*')
         .map(k => `    ${indent}${flowProperty(k, properties[k])}`)
         .join(',\n')}
-${indent}${sealing}}`
+${indent}${sealing}}`;
 }
 
 function flowSourceTypeName(key) {
     return key.replace(/source_(.)(.*)/, (_, _1, _2) => `${_1.toUpperCase()}${_2}SourceSpecification`)
         .replace(/_dem/, 'DEM')
         .replace(/Geojson/, 'GeoJSON');
+}
+
+function flowLightTypeName(key) {
+    return key.split('-').map(k => k.replace(/(.)(.*)/, (_, _1, _2) => `${_1.toUpperCase()}${_2}`)).concat('LightSpecification').join('');
 }
 
 function flowLayerTypeName(key) {
@@ -99,15 +102,23 @@ function flowLayer(key) {
     delete layer.ref;
     delete layer['paint.*'];
 
-    layer.paint.type = () => {
-        return flowObject(spec[`paint_${key}`], '    ', '|');
-    };
+    if (spec[`paint_${key}`]) {
+        layer.paint.type = () => {
+            return flowObject(spec[`paint_${key}`], '    ', '|');
+        };
+    } else {
+        delete layer.paint;
+    }
 
-    layer.layout.type = () => {
-        return flowObject(spec[`layout_${key}`], '    ', '|');
-    };
+    if (spec[`layout_${key}`]) {
+        layer.layout.type = () => {
+            return flowObject(spec[`layout_${key}`], '    ', '|');
+        };
+    } else {
+        delete layer.layout;
+    }
 
-    if (key === 'background' || key === 'sky') {
+    if (key === 'background' || key === 'sky' || key === 'slot') {
         delete layer.source;
         delete layer['source-layer'];
         delete layer.filter;
@@ -115,8 +126,31 @@ function flowLayer(key) {
         layer.source.required = true;
     }
 
+    if (key === 'slot') {
+        delete layer.minzoom;
+        delete layer.maxzoom;
+    }
+
     return flowObjectDeclaration(flowLayerTypeName(key), layer);
 }
+
+function flowLight(key) {
+    const light = spec['light-3d'];
+
+    light.type = {
+        type: 'enum',
+        values: [key],
+        required: true
+    };
+
+    light.properties.type = () => {
+        return flowObject(spec[`properties_light_${key}`], '    ', '|');
+    };
+
+    return flowObjectDeclaration(flowLightTypeName(key), light);
+}
+
+const lightTypes = Object.keys(spec['light-3d'].type.values);
 
 const layerTypes = Object.keys(spec.layer.type.values);
 
@@ -181,18 +215,39 @@ export type DataDrivenPropertyValueSpecification<T> =
 
 ${flowObjectDeclaration('StyleSpecification', spec.$root)}
 
+${flowObjectDeclaration('SourcesSpecification', spec.sources)}
+
+${flowObjectDeclaration('ModelsSpecification', spec.models)}
+
 ${flowObjectDeclaration('LightSpecification', spec.light)}
 
 ${flowObjectDeclaration('TerrainSpecification', spec.terrain)}
 
 ${flowObjectDeclaration('FogSpecification', spec.fog)}
 
+${flowObjectDeclaration('CameraSpecification', spec.camera)}
+
 ${flowObjectDeclaration('ProjectionSpecification', spec.projection)}
+
+${flowObjectDeclaration('ImportSpecification', spec.import)}
+
+${flowObjectDeclaration('ConfigSpecification', spec.config)}
+
+${flowObjectDeclaration('SchemaSpecification', spec.schema)}
+
+${flowObjectDeclaration('OptionSpecification', spec.option)}
 
 ${spec.source.map(key => flowObjectDeclaration(flowSourceTypeName(key), spec[key])).join('\n\n')}
 
 export type SourceSpecification =
 ${spec.source.map(key => `    | ${flowSourceTypeName(key)}`).join('\n')}
+
+export type ModelSpecification = ${flowType(spec.model)};
+
+${lightTypes.map(key => flowLight(key)).join('\n\n')}
+
+export type LightsSpecification =
+${lightTypes.map(key => `    | ${flowLightTypeName(key)}`).join('\n')};
 
 ${layerTypes.map(key => flowLayer(key)).join('\n\n')}
 

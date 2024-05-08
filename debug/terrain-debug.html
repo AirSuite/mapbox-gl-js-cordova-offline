@@ -50,7 +50,6 @@ var map = window.map = new mapboxgl.Map({
     // style: 'mapbox://styles/claretrainor/ck2pc4ljf1jbe1codiy7oxzjg', // Style with additional traffic vector source.
     hash: true,
     projection: 'globe',
-    useWebGL2: true
 });
 
 map.addControl(new mapboxgl.NavigationControl());
@@ -74,8 +73,8 @@ const hillshadeId = 'mapbox-dem-hillshade';
 map.on('style.load', function() {
     map.addSource('mapbox-dem', {
         "type": "raster-dem",
-        "url": "mapbox://mapbox.terrain-rgb",
-        "tileSize": 512,
+        "url": "mapbox://mapbox.mapbox-terrain-dem-v1",
+        "tileSize": 514,
         "maxzoom": 14
     });
     map.addSource('ethnicity', {
@@ -109,9 +108,15 @@ map.on('style.load', function() {
             "visibility": "none"
         }
     });
-    map.setLight({
-        intensity: 0.26
-    });
+    map.setLights([
+        {
+            'type': 'flat',
+            'id': 'flat',
+            'properties': {
+                'intensity': 0.26
+            }
+        }
+    ]);
     const buildingExtrusions = map.style._order.find((id) => map.style.getLayer(id).type === 'fill-extrusion');
     if (buildingExtrusions) {
         buildingsLayerId = buildingExtrusions;

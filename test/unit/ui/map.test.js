@@ -1,3 +1,4 @@
+import assert from 'assert';
 import {test} from '../../util/test.js';
 import {extend} from '../../../src/util/util.js';
 import window from '../../../src/util/window.js';
@@ -14,7 +15,8 @@ import Fog from '../../../src/style/fog.js';
 import Color from '../../../src/style-spec/util/color.js';
 import {MAX_MERCATOR_LATITUDE} from '../../../src/geo/mercator_coordinate.js';
 import {performanceEvent_} from '../../../src/util/mapbox.js';
-import assert from 'assert';
+import {makeFQID} from '../../../src/util/fqid.js';
+import styleSpec from '../../../src/style-spec/reference/latest.js';
 
 function createStyleSource() {
     return {
@@ -53,6 +55,7 @@ const createElevation = (func, exaggeration) => {
 test('Map', (t) => {
     t.beforeEach(() => {
         window.useFakeXMLHttpRequest();
+        t.setTimeout(2000);
     });
 
     t.afterEach(() => {
@@ -81,6 +84,18 @@ test('Map', (t) => {
         t.end();
     });
 
+    t.test('default style', (t) => {
+        t.stub(Map.prototype, '_detectMissingCSS');
+
+        const stub = t.stub(Map.prototype, 'setStyle');
+        new Map({container: window.document.createElement('div'), testMode: false});
+
+        t.ok(stub.calledOnce);
+        t.equal(stub.getCall(0).args[0], 'mapbox://styles/mapbox/standard');
+
+        t.end();
+    });
+
     t.test('disablePerformanceMetricsCollection', (t) => {
         const map = createMap(t, {performanceMetricsCollection: false});
         map.once('idle', () => {
@@ -95,7 +110,7 @@ test('Map', (t) => {
     });
 
     t.test('default performance metrics collection', (t) => {
-        const map = createMap(t);
+        const map = createMap(t, {performanceMetricsCollection: true});
         map._requestManager._customAccessToken = 'access-token';
         map.once('idle', () => {
             map.triggerRepaint();
@@ -112,7 +127,7 @@ test('Map', (t) => {
     });
 
     t.test('performance metrics event stores explicit projection', (t) => {
-        const map = createMap(t, {projection: 'globe', zoom: 20});
+        const map = createMap(t, {performanceMetricsCollection: true, projection: 'globe', zoom: 20});
         map._requestManager._customAccessToken = 'access-token';
         map.once('idle', () => {
             map.triggerRepaint();
@@ -145,6 +160,57 @@ test('Map', (t) => {
         createMap(t, {container, testMode: true});
 
         t.ok(stub.calledOnce);
+
+        t.end();
+    });
+
+    t.test('uses zero values for zoom and coordinates', (t) => {
+        function getInitialMap(t) {
+            return createMap(t, {
+                zoom: 0,
+                center: [0, 0],
+                style: {
+                    version: 8,
+                    sources: {},
+                    layers: [],
+                    center: [
+                        -73.9749,
+                        40.7736
+                    ],
+                    zoom: 4
+                }
+            });
+        }
+
+        t.test('should use these values instead of defaults from style', (t) => {
+            const map = getInitialMap(t);
+
+            map.on('load', () => {
+                t.equal(map.getZoom(), 0);
+                t.deepEqual(map.getCenter(), {lat: 0, lng: 0});
+                t.end();
+            });
+        });
+
+        t.test('after setStyle should still use these values', (t) => {
+            const map = getInitialMap(t);
+
+            map.on('load', () => {
+                map.setStyle({
+                    version: 8,
+                    sources: {},
+                    layers: [],
+                    center: [
+                        24.9384,
+                        60.169
+                    ],
+                    zoom: 3
+                });
+                t.equal(map.getZoom(), 0);
+                t.deepEqual(map.getCenter(), {lat: 0, lng: 0});
+                t.end();
+            });
+        });
 
         t.end();
     });
@@ -560,6 +626,46 @@ test('Map', (t) => {
             });
         });
 
+        t.test('Setting terrain to null disables the terrain but does not affect draping', (t) => {
+            const style = extend(createStyle(), {
+                terrain: null,
+                imports: [{
+                    id: 'basemap',
+                    url: '',
+                    data: extend(createStyle(), {
+                        projection: {name: 'globe'},
+                        terrain: {source: 'dem', exaggeration: 1},
+                        sources: {dem: {type: 'raster-dem', tiles: ['http://example.com/{z}/{x}/{y}.png']}}
+                    })
+                },
+                {
+                    id: 'navigation',
+                    url: '',
+                    data: extend(createStyle(), {
+                        terrain: {source: 'dem', exaggeration: 2},
+                        sources: {dem: {type: 'raster-dem', tiles: ['http://example.com/{z}/{x}/{y}.png']}}
+                    })
+                }]
+            });
+
+            const map = createMap(t, {style});
+
+            map.on('style.load', () => {
+                map.setZoom(3);
+                t.ok(map.style.terrain);
+                t.equal(map.getTerrain(), null);
+                t.equal(map.getStyle().terrain, null);
+
+                map.setZoom(12);
+                map.once('render', () => {
+                    t.notOk(map.style.terrain);
+                    t.equal(map.getTerrain(), null);
+                    t.equal(map.getStyle().terrain, null);
+                    t.end();
+                });
+            });
+        });
+
         t.test('https://github.com/mapbox/mapbox-gl-js/issues/11352', (t) => {
             const styleSheet = new window.CSSStyleSheet();
             styleSheet.insertRule('.mapboxgl-canary { background-color: rgb(250, 128, 114); }', 0);
@@ -901,12 +1007,12 @@ test('Map', (t) => {
                 const fog = new Fog({});
                 const fogSpy = t.spy(fog, '_validate');
 
-                fog.set({color: [444]}, {validate: false});
+                fog.set({color: 444}, {validate: false});
                 fog.updateTransitions({transition: false}, {});
                 fog.recalculate({zoom: 16, now: 10});
 
                 t.ok(fogSpy.calledOnce);
-                t.deepEqual(fog.properties.get('color'), [444]);
+                t.deepEqual(fog.properties.get('color'), 444);
                 t.end();
             });
             t.end();
@@ -997,9 +1103,9 @@ test('Map', (t) => {
             map.on('load', () => {
                 const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
                 map.addSource('geojson', createStyleSource());
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
+                map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
                 t.equal(map.areTilesLoaded(), false, 'returns false if tiles are loading');
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key].state = 'loaded';
+                map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key].state = 'loaded';
                 t.equal(map.areTilesLoaded(), true, 'returns true if tiles are loaded');
                 t.end();
             });
@@ -1020,8 +1126,8 @@ test('Map', (t) => {
                 map.addSource('geojson', createStyleSource());
                 const source = map.getSource('geojson');
                 const fakeTileId = new OverscaledTileID(0, 0, 0, 0, 0);
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
-                map.style._getSourceCache('geojson')._tiles[fakeTileId.key].state = tileState;
+                map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key] = new Tile(fakeTileId);
+                map.style.getOwnSourceCache('geojson')._tiles[fakeTileId.key].state = tileState;
                 callback(map, source);
             });
         }
@@ -1123,9 +1229,16 @@ test('Map', (t) => {
                     "color": "blue"
                 };
                 map.setFog(fog);
-                t.deepEqual(map.getStyle(), extend(createStyle(), {
-                    fog
-                }));
+
+                const fogDefaults = Object
+                    .entries(styleSpec.fog)
+                    .reduce((acc, [key, value]) => {
+                        acc[key] = value.default;
+                        return acc;
+                    }, {});
+
+                const fogWithDefaults = extend({}, fogDefaults, fog);
+                t.deepEqual(map.getStyle(), extend(createStyle(), {fog: fogWithDefaults}));
                 t.ok(map.getFog());
                 t.end();
             });
@@ -2441,22 +2554,40 @@ test('Map', (t) => {
     });
 
     t.test('#remove deletes gl resources used by the atmosphere', (t) => {
-        const style = extend(createStyle(), {zoom: 1});
-        const map = createMap(t, {style});
+        const styleWithAtmosphere = {
+            'version': 8,
+            'sources': {},
+            'fog':  {
+                'color': '#0F2127',
+                'high-color': '#000',
+                'horizon-blend': 0.5,
+                'space-color': '#000'
+            },
+            'layers': [],
+            'zoom': 2,
+            'projection': {
+                name: 'globe'
+            }
+        };
+
+        const map = createMap(t, {style:styleWithAtmosphere});
 
         map.on('style.load', () => {
             map.once('render', () => {
-                const atmosphereBuffers = map.painter.atmosphereBuffer;
-
-                t.ok(atmosphereBuffers);
-
-                t.true(atmosphereBuffers.vertexBuffer.buffer);
-                t.true(atmosphereBuffers.indexBuffer.buffer);
+                const atmosphereBuffer = map.painter._atmosphere.atmosphereBuffer;
+                const starsVx = map.painter._atmosphere.starsVx;
+                const starsIdx = map.painter._atmosphere.starsIdx;
+                t.ok(atmosphereBuffer.vertexBuffer.buffer);
+                t.ok(atmosphereBuffer.indexBuffer.buffer);
+                t.ok(starsVx.buffer);
+                t.ok(starsIdx.buffer);
 
                 map.remove();
 
-                t.false(atmosphereBuffers.vertexBuffer.buffer);
-                t.false(atmosphereBuffers.indexBuffer.buffer);
+                t.false(atmosphereBuffer.vertexBuffer.buffer);
+                t.false(atmosphereBuffer.indexBuffer.buffer);
+                t.false(starsVx.buffer);
+                t.false(starsIdx.buffer);
 
                 t.end();
             });
@@ -2480,6 +2611,25 @@ test('Map', (t) => {
         t.equal(container.addEventListener.callCount, container.removeEventListener.callCount);
         t.equal(container.addEventListener.callCount, 1);
         t.equal(container.removeEventListener.callCount, 1);
+        t.end();
+    });
+
+    t.test('#hasImage doesn\'t throw after map is removed', (t) => {
+        const map = createMap(t);
+        map.remove();
+        t.notOk(map.hasImage('image'));
+        t.end();
+    });
+
+    t.test('#updateImage doesn\'t throw after map is removed', (t) => {
+        const map = createMap(t);
+        map.remove();
+
+        const stub = t.stub(console, 'error');
+        map.updateImage('image', {});
+        t.ok(stub.calledOnce);
+        t.match(stub.getCall(0).args[0].message, 'The map has no image with that id');
+
         t.end();
     });
 
@@ -2738,7 +2888,7 @@ test('Map', (t) => {
     });
 
     t.test('#queryRenderedFeatures', (t) => {
-
+        const defaultParams = {scope: '', availableImages: [], serializedLayers: {}};
         t.test('if no arguments provided', (t) => {
             createMap(t, {}, (err, map) => {
                 t.error(err);
@@ -2748,7 +2898,7 @@ test('Map', (t) => {
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
                 t.ok(args[0]);
-                t.deepEqual(args[1], {availableImages: []});
+                t.deepEqual(args[1], defaultParams);
                 t.deepEqual(output, []);
 
                 t.end();
@@ -2764,7 +2914,7 @@ test('Map', (t) => {
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
                 t.deepEqual(args[0], {x: 100, y: 100}); // query geometry
-                t.deepEqual(args[1], {availableImages: []}); // params
+                t.deepEqual(args[1], defaultParams); // params
                 t.deepEqual(args[2], map.transform); // transform
                 t.deepEqual(output, []);
 
@@ -2781,7 +2931,7 @@ test('Map', (t) => {
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
                 t.ok(args[0]);
-                t.deepEqual(args[1], {availableImages: [], filter: ['all']});
+                t.deepEqual(args[1], {...defaultParams, filter: ['all']});
                 t.deepEqual(output, []);
 
                 t.end();
@@ -2797,7 +2947,7 @@ test('Map', (t) => {
 
                 const args = map.style.queryRenderedFeatures.getCall(0).args;
                 t.deepEqual(args[0], {x: 100, y: 100});
-                t.deepEqual(args[1], {availableImages: [], filter: ['all']});
+                t.deepEqual(args[1], {...defaultParams, filter: ['all']});
                 t.deepEqual(args[2], map.transform);
                 t.deepEqual(output, []);
 
@@ -2852,11 +3002,38 @@ test('Map', (t) => {
         });
 
         t.test('sets and gets language property', (t) => {
-            const map = createMap(t);
+            const map = createMap(t, {
+                style: extend(createStyle(), {
+                    sources: {
+                        mapbox: {
+                            type: 'vector',
+                            minzoom: 1,
+                            maxzoom: 10,
+                            tiles: ['http://example.com/{z}/{x}/{y}.png']
+                        }
+                    }
+                })
+            });
+
             map.on('style.load', () => {
+                const source = map.getSource('mapbox');
+                const loadSpy = t.spy(source, 'load');
+                const clearSourceSpy = t.spy(map.style, 'clearSource');
+
+                source.on('data', (e) => {
+                    if (e.sourceDataType === 'metadata') {
+                        setImmediate(() => {
+                            t.ok(clearSourceSpy.calledOnce, 'Style.clearSource should be called after source load');
+                            t.equal(clearSourceSpy.lastCall.firstArg, 'mapbox');
+                            t.end();
+                        });
+                    }
+                });
+
                 map.setLanguage('es');
+
                 t.equal(map.getLanguage(), 'es');
-                t.end();
+                t.ok(loadSpy.calledOnce, 'Changing language must trigger source reload');
             });
         });
 
@@ -2895,11 +3072,38 @@ test('Map', (t) => {
         });
 
         t.test('sets and gets worldview property', (t) => {
-            const map = createMap(t);
+            const map = createMap(t, {
+                style: extend(createStyle(), {
+                    sources: {
+                        mapbox: {
+                            type: 'vector',
+                            minzoom: 1,
+                            maxzoom: 10,
+                            tiles: ['http://example.com/{z}/{x}/{y}.png']
+                        }
+                    }
+                })
+            });
+
             map.on('style.load', () => {
+                const source = map.getSource('mapbox');
+                const loadSpy = t.spy(source, 'load');
+                const clearSourceSpy = t.spy(map.style, 'clearSource');
+
+                source.on('data', (e) => {
+                    if (e.sourceDataType === 'metadata') {
+                        setImmediate(() => {
+                            t.ok(clearSourceSpy.calledOnce, 'Style.clearSource should be called after source load');
+                            t.equal(clearSourceSpy.lastCall.firstArg, 'mapbox');
+                            t.end();
+                        });
+                    }
+                });
+
                 map.setWorldview('JP');
+
                 t.equal(map.getWorldview(), 'JP');
-                t.end();
+                t.ok(loadSpy.calledOnce, 'Changing worldview must trigger source reload');
             });
         });
 
@@ -2917,6 +3121,7 @@ test('Map', (t) => {
     });
 
     t.test('#setLayoutProperty', (t) => {
+        t.setTimeout(2000);
         t.test('sets property', (t) => {
             const map = createMap(t, {
                 style: {
@@ -2981,7 +3186,7 @@ test('Map', (t) => {
 
             map.on('style.load', () => {
                 map.on('error', ({error}) => {
-                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
+                    t.match(error.message, /does not exist in the map\'s style/);
                     t.end();
                 });
                 map.setLayoutProperty('non-existant', 'text-transform', 'lowercase');
@@ -3194,6 +3399,7 @@ test('Map', (t) => {
     });
 
     t.test('#setPaintProperty', (t) => {
+        t.setTimeout(2000);
         t.test('sets property', (t) => {
             const map = createMap(t, {
                 style: {
@@ -3240,7 +3446,7 @@ test('Map', (t) => {
 
             map.on('style.load', () => {
                 map.on('error', ({error}) => {
-                    t.match(error.message, /does not exist in the map\'s style and cannot be styled/);
+                    t.match(error.message, /does not exist in the map\'s style/);
                     t.end();
                 });
                 map.setPaintProperty('non-existant', 'background-color', 'red');
@@ -3822,6 +4028,15 @@ test('Map', (t) => {
         t.end();
     });
 
+    t.test('should not have tabindex attribute when non-interactive', (t) => {
+        const map = createMap(t, {interactive: false});
+
+        t.notOk(map.getCanvas().getAttribute('tabindex'));
+
+        map.remove();
+        t.end();
+    });
+
     t.test('should calculate correct canvas size when transform css property is applied', (t) => {
         const map = createMap(t);
         Object.defineProperty(window, 'getComputedStyle',
@@ -3888,7 +4103,7 @@ test('Map', (t) => {
 
         t.notok(map.hasImage(id));
 
-        map.style.imageManager.getImages([id], () => {
+        map.style.imageManager.getImages([id], '', () => {
             t.equals(called, id);
             t.ok(map.hasImage(id));
             t.end();
@@ -3922,9 +4137,72 @@ test('Map', (t) => {
         });
     });
 
-    t.test('#snapToNorth', (t) => {
+    t.test('map#setLights map#getLights', (t) => {
+        const map = createMap(t);
 
+        map.on('load', () =>  {
+            const lights = [
+                {
+                    id: "sun_light",
+                    type: "directional",
+                    properties: {
+                        "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                        "intensity": 0.4,
+                        "direction": [200.0, 40.0],
+                        "cast-shadows": true,
+                        "shadow-intensity": 0.2
+                    }
+                },
+                {
+                    "id": "environment",
+                    "type": "ambient",
+                    "properties": {
+                        "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                        "intensity": 0.4
+                    }
+                }
+            ];
+
+            map.setLights(lights);
+            t.deepEqual(map.getLights(), lights);
+            map.setLights(null);
+            t.deepEqual(map.getLights(), [
+                {
+                    "id": "flat",
+                    "properties": {},
+                    "type": "flat"
+                }
+            ]);
+
+            t.end();
+        });
+    });
+
+    t.test('map#setLights with missing id and light type throws error', (t) => {
+        const map = createMap(t);
+
+        map.on('load', () =>  {
+            const lights = [{
+                properties: {
+                    "color": "rgba(255.0, 0.0, 0.0, 1.0)",
+                    "intensity": 0.4,
+                    "direction": [200.0, 40.0],
+                    "cast-shadows": true,
+                    "shadow-intensity": 0.2
+                }
+            }];
+
+            const stub = t.stub(console, 'error');
+            map.setLights(lights);
+
+            t.ok(stub.calledOnce);
+            t.end();
+        });
+    });
+
+    t.test('#snapToNorth', (t) => {
         t.test('snaps when less than < 7 degrees', (t) => {
+            t.setTimeout(10000);
             const map = createMap(t);
             map.on('load', () =>  {
                 map.setBearing(6);
@@ -3938,6 +4216,7 @@ test('Map', (t) => {
         });
 
         t.test('does not snap when > 7 degrees', (t) => {
+            t.setTimeout(2000);
             const map = createMap(t);
             map.on('load', () =>  {
                 map.setBearing(8);
@@ -3951,6 +4230,7 @@ test('Map', (t) => {
         });
 
         t.test('snaps when < bearingSnap', (t) => {
+            t.setTimeout(2000);
             const map = createMap(t, {"bearingSnap": 12});
             map.on('load', () =>  {
                 map.setBearing(11);
@@ -3964,6 +4244,7 @@ test('Map', (t) => {
         });
 
         t.test('does not snap when > bearingSnap', (t) => {
+            t.setTimeout(2000);
             const map = createMap(t, {"bearingSnap": 10});
             map.on('load', () =>  {
                 map.setBearing(11);
@@ -3983,7 +4264,7 @@ test('Map', (t) => {
         const version = map.version;
         t.test('returns version string', (t) => {
             t.ok(version);
-            t.match(version, /^2\.[0-9]+\.[0-9]+(-dev|-beta\.[1-9])?$/);
+            t.match(version, /^3\.[0-9]+\.[0-9]+(-(dev|alpha|beta|rc)\.[1-9])?$/);
             t.end();
         });
         t.test('cannot be set', (t) => {
@@ -4119,6 +4400,69 @@ test('Map', (t) => {
     });
 
     t.end();
+});
+
+test('Disallow usage of FQID separator in the public APIs', (t) => {
+    const map = createMap(t);
+
+    const spy = t.spy();
+    map.on('error', spy);
+
+    map.on('style.load', () => {
+        map.getLayer(null);
+        map.getSource(undefined);
+
+        map.getLayer(makeFQID('id', 'scope'));
+        map.addLayer({id: makeFQID('id', 'scope')});
+        map.moveLayer(makeFQID('id', 'scope'));
+        map.removeLayer(makeFQID('id', 'scope'));
+
+        map.getLayoutProperty(makeFQID('id', 'scope'));
+        map.setLayoutProperty(makeFQID('id', 'scope'));
+
+        map.getPaintProperty(makeFQID('id', 'scope'));
+        map.setPaintProperty(makeFQID('id', 'scope'));
+
+        map.setLayerZoomRange(makeFQID('id', 'scope'));
+
+        map.getFilter(makeFQID('id', 'scope'));
+        map.setFilter(makeFQID('id', 'scope'));
+
+        map.getSource(makeFQID('id', 'scope'));
+        map.addSource(makeFQID('id', 'scope'));
+        map.removeSource(makeFQID('id', 'scope'));
+        map.isSourceLoaded(makeFQID('id', 'scope'));
+
+        map.getFeatureState({source: makeFQID('id', 'scope')});
+        map.setFeatureState({source: makeFQID('id', 'scope')});
+        map.removeFeatureState({source: makeFQID('id', 'scope')});
+
+        map.querySourceFeatures(makeFQID('id', 'scope'));
+        map.queryRenderedFeatures([0, 0], {layers: [makeFQID('id', 'scope')]});
+
+        map.on('click', makeFQID('id', 'scope'), () => {});
+        map.once('click', makeFQID('id', 'scope'), () => {});
+        map.off('click', makeFQID('id', 'scope'));
+
+        const callCount = 24;
+        t.equal(spy.callCount, callCount);
+
+        const event0 = spy.getCall(0).firstArg;
+        t.ok(event0);
+        t.match(event0.error, /can't be empty/);
+
+        const event1 = spy.getCall(1).firstArg;
+        t.ok(event1);
+        t.match(event1.error, /can't be empty/);
+
+        for (let i = 2; i <= callCount - 1; i++) {
+            const event = spy.getCall(i).firstArg;
+            t.ok(event);
+            t.match(event.error, /can't contain special symbols/);
+        }
+
+        t.end();
+    });
 });
 
 function createStyle() {

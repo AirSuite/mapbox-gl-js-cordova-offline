@@ -1,5 +1,6 @@
 import {test} from '../../util/test.js';
-import Light, {sphericalToCartesian} from '../../../src/style/light.js';
+import {sphericalPositionToCartesian} from '../../../src/util/util.js';
+import Light from '../../../src/style/light.js';
 import styleSpec from '../../../src/style-spec/reference/latest.js';
 import Color from '../../../src/style-spec/util/color.js';
 
@@ -10,7 +11,7 @@ test('Light with defaults', (t) => {
     light.recalculate({zoom: 0});
 
     t.deepEqual(light.properties.get('anchor'), spec.anchor.default);
-    t.deepEqual(light.properties.get('position'), sphericalToCartesian(spec.position.default));
+    t.deepEqual(light.properties.get('position'), sphericalPositionToCartesian(spec.position.default));
     t.deepEqual(light.properties.get('intensity'), spec.intensity.default);
     t.deepEqual(light.properties.get('color'), Color.parse(spec.color.default));
 
@@ -26,7 +27,7 @@ test('Light with options', (t) => {
     light.recalculate({zoom: 0});
 
     t.deepEqual(light.properties.get('anchor'), 'map');
-    t.deepEqual(light.properties.get('position'), sphericalToCartesian([2, 30, 30]));
+    t.deepEqual(light.properties.get('position'), sphericalPositionToCartesian([2, 30, 30]));
     t.deepEqual(light.properties.get('intensity'), 1);
     t.deepEqual(light.properties.get('color'), Color.parse(spec.color.default));
 
@@ -59,7 +60,7 @@ test('Light#getLight', (t) => {
 test('Light#setLight', (t) => {
     t.test('sets light', (t) => {
         const light = new Light({});
-        light.setLight({color: 'red', "color-transition": {duration: 3000}});
+        light.setLight({color: 'red', "color-transition": {duration: 3000}}, "flat");
         light.updateTransitions({transition: true}, {});
         light.recalculate({zoom: 16, now: 1500});
         t.deepEqual(light.properties.get('color'), new Color(1, 0.5, 0.5, 1));
@@ -70,7 +71,7 @@ test('Light#setLight', (t) => {
         const light = new Light({});
         const lightSpy = t.spy(light, '_validate');
         t.stub(console, 'error');
-        light.setLight({color: 'notacolor'});
+        light.setLight({color: 'notacolor'}, "flat");
         light.updateTransitions({transition: false}, {});
         light.recalculate({zoom: 16, now: 10});
         t.ok(lightSpy.calledOnce);
@@ -83,13 +84,13 @@ test('Light#setLight', (t) => {
         const light = new Light({});
 
         const lightSpy = t.spy(light, '_validate');
-        light.setLight({color: [999]}, {validate: false});
+        light.setLight({color: 999}, "flat", {validate: false});
         light.updateTransitions({transition: false}, {});
         light.recalculate({zoom: 16, now: 10});
 
         t.ok(lightSpy.calledOnce);
         t.deepEqual(lightSpy.args[0][2], {validate: false});
-        t.deepEqual(light.properties.get('color'), [999]);
+        t.deepEqual(light.properties.get('color'), 999);
         t.end();
     });
     t.end();

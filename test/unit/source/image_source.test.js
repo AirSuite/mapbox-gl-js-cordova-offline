@@ -8,7 +8,7 @@ import browser from '../../../src/util/browser.js';
 import {OverscaledTileID} from '../../../src/source/tile_id.js';
 import window from '../../../src/util/window.js';
 import Context from '../../../src/gl/context.js';
-import gl from 'gl';
+import gl from '../../../src/util/gl.js';
 
 function createSource(options) {
     options = extend({
@@ -54,6 +54,12 @@ test('ImageSource', (t) => {
         req.onload();
         img.onload();
         img.data = new Uint8Array(req.response);
+    };
+    const respondNotFound = () => {
+        const req = requests.shift();
+        req.setStatus(404);
+        req.onerror();
+        req.response = new ArrayBuffer(1);
     };
     t.stub(browser, 'getImageData').callsFake(() => new ArrayBuffer(1));
 
@@ -253,6 +259,23 @@ test('ImageSource', (t) => {
         source.updateImage({url: '/image.png'});
 
         t.equal(spy.callCount, 0);
+        t.end();
+    });
+
+    t.test('updates image before first image was loaded', (t) => {
+        const source = createSource({url : '/notfound.png'});
+        const map = new StubMap();
+        const spy = t.spy(map._requestManager, 'transformRequest');
+        const errorStub = t.stub(console, 'error');
+        source.onAdd(map);
+        respondNotFound();
+        t.ok(errorStub.calledOnce);
+        t.notOk(source.image);
+        source.updateImage({url: '/image2.png'});
+        respond();
+        t.ok(spy.calledTwice);
+        t.equal(spy.getCall(1).args[0], '/image2.png');
+        t.equal(spy.getCall(1).args[1], 'Image');
         t.end();
     });
 

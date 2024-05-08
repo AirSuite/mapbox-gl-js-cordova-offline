@@ -8,7 +8,7 @@ import {tileAABB} from '../geo/projection/tile_transform.js';
 import Point from '@mapbox/point-geometry';
 import {wrap, clamp, pick, radToDeg, degToRad, getAABBPointSquareDist, furthestTileCorner, warnOnce, deepEqual} from '../util/util.js';
 import {number as interpolate} from '../style-spec/util/interpolate.js';
-import EXTENT from '../data/extent.js';
+import EXTENT from '../style-spec/data/extent.js';
 import {vec4, mat4, mat2, vec3, quat} from 'gl-matrix';
 import {Frustum, FrustumCorners, Ray} from '../util/primitives.js';
 import EdgeInsets from './edge_insets.js';
@@ -20,6 +20,7 @@ import {UnwrappedTileID, OverscaledTileID, CanonicalTileID} from '../source/tile
 import {
     calculateGlobeMatrix,
     polesInViewport,
+    aabbForTileOnGlobe,
     GLOBE_ZOOM_THRESHOLD_MIN,
     GLOBE_ZOOM_THRESHOLD_MAX,
     GLOBE_SCALE_MATCH_LATITUDE
@@ -36,7 +37,9 @@ import type {Mat4, Vec3, Vec4, Quat} from 'gl-matrix';
 import type {Aabb} from '../util/primitives';
 
 const NUM_WORLD_COPIES = 3;
-const DEFAULT_MIN_ZOOM = 0;
+export const DEFAULT_MIN_ZOOM = 0;
+export const DEFAULT_MAX_ZOOM = 25.5;
+export const MIN_LOD_PITCH = 60.0;
 
 type RayIntersectionResult = { p0: Vec4, p1: Vec4, t: number};
 type ElevationReference = "sea" | "ground";
@@ -51,6 +54,19 @@ type RootTile = {
     x: number,
     y: number,
     zoom: number,
+};
+
+const OrthographicPitchTranstionValue = 15;
+const lerp = (x: number, y: number, t: number) => { return (1 - t) * x + t * y; };
+const easeIn = (x: number) => {
+    return x * x * x * x * x;
+};
+const lerpMatrix = (out: Float64Array, a: Float64Array, b: Float64Array, value: number) => {
+    for (let i = 0; i < 16; i++) {
+        out[i] = lerp(a[i], b[i], value);
+    }
+
+    return out;
 };
 
 /**
@@ -97,6 +113,9 @@ class Transform {
     projMatrix: Array<number> | Float32Array | Float64Array;
     invProjMatrix: Float64Array;
 
+    // Projection matrix with expanded farZ on globe projection
+    expandedFarZProjMatrix: Array<number> | Float32Array | Float64Array;
+
     // Same as projMatrix, pixel-aligned to avoid fractional pixels for raster tiles
     alignedProjMatrix: Float64Array;
 
@@ -106,6 +125,8 @@ class Transform {
 
     worldToFogMatrix: Float64Array;
     skyboxMatrix: Float32Array;
+
+    starsProjMatrix: Float32Array;
 
     // Transform from screen coordinates to GL NDC, [0, w] x [h, 0] --> [-1, 1] x [-1, 1]
     // Roughly speaking, applies pixelsToGLUnits scaling with a translation
@@ -133,6 +154,7 @@ class Transform {
     worldMinY: number;
     worldMaxY: number;
 
+    cameraFrustum: Frustum;
     frustumCorners: FrustumCorners;
 
     freezeTileCoverage: boolean;
@@ -158,6 +180,7 @@ class Transform {
     _projMatrixCache: {[_: number]: Float32Array};
     _alignedProjMatrixCache: {[_: number]: Float32Array};
     _pixelsToTileUnitsCache: {[_: number]: Float32Array};
+    _expandedProjMatrixCache: {[_: number]: Float32Array};
     _fogTileMatrixCache: {[_: number]: Float32Array};
     _distanceTileDataCache: {[_: number]: FeatureDistanceData};
     _camera: FreeCamera;
@@ -169,6 +192,8 @@ class Transform {
     _farZ: number;
     _mercatorScaleRatio: number;
     _isCameraConstrained: boolean;
+
+    _orthographicProjectionAtLowPitch: boolean;
 
     constructor(minZoom: ?number, maxZoom: ?number, minPitch: ?number, maxPitch: ?number, renderWorldCopies: boolean | void, projection?: ?ProjectionSpecification, bounds: ?LngLatBounds) {
         this.tileSize = 512; // constant
@@ -197,6 +222,7 @@ class Transform {
         this._projMatrixCache = {};
         this._alignedProjMatrixCache = {};
         this._fogTileMatrixCache = {};
+        this._expandedProjMatrixCache = {};
         this._distanceTileDataCache = {};
         this._camera = new FreeCamera();
         this._centerAltitude = 0;
@@ -208,6 +234,8 @@ class Transform {
 
         // Move the horizon closer to the center. 0 would not shift the horizon. 1 would put the horizon at the center.
         this._horizonShift = 0.1;
+
+        this._orthographicProjectionAtLowPitch = false;
     }
 
     clone(): Transform {
@@ -229,6 +257,7 @@ class Transform {
         clone._nearZ = this._nearZ;
         clone._farZ = this._farZ;
         clone._averageElevation = this._averageElevation;
+        clone._orthographicProjectionAtLowPitch = this._orthographicProjectionAtLowPitch;
         clone._unmodified = this._unmodified;
         clone._edgeInsets = this._edgeInsets.clone();
         clone._camera = this._camera.clone();
@@ -238,12 +267,18 @@ class Transform {
         return clone;
     }
 
+    get isOrthographic(): boolean {
+        return this.projection.name !== 'globe' && this._orthographicProjectionAtLowPitch && this.pitch < OrthographicPitchTranstionValue;
+    }
     get elevation(): ?Elevation { return this._elevation; }
     set elevation(elevation: ?Elevation) {
         if (this._elevation === elevation) return;
         this._elevation = elevation;
         this._updateCameraOnTerrain();
         this._calcMatrices();
+    }
+    get depthOcclusionForSymbolsAndCircles(): boolean {
+        return this.projection.name !== 'globe' && !this.isOrthographic;
     }
 
     updateElevation(constrainCameraOverTerrain: boolean, adaptCameraAltitude: boolean = false) {
@@ -276,6 +311,18 @@ class Transform {
         this.mercatorFromTransition = false;
 
         return projectionHasChanged;
+    }
+
+    // Returns whether the projection need to be reevaluated
+    setOrthographicProjectionAtLowPitch(enabled: boolean): boolean {
+        if (this._orthographicProjectionAtLowPitch === enabled) {
+            return false;
+        }
+
+        this._orthographicProjectionAtLowPitch = enabled;
+        this._calcMatrices();
+
+        return true;
     }
 
     setMercatorFromTransition(): boolean {
@@ -358,7 +405,7 @@ class Transform {
     }
 
     get cameraPixelsPerMeter(): number {
-        return mercatorZfromAltitude(this.center.lat, this.cameraWorldSizeForFog);
+        return mercatorZfromAltitude(1, this.center.lat) * this.cameraWorldSizeForFog;
     }
 
     get centerOffset(): Point {
@@ -456,7 +503,10 @@ class Transform {
     }
 
     _updateCameraOnTerrain() {
-        if (!this._elevation || !this._elevation.isDataAvailableAtPoint(this.locationCoordinate(this.center))) {
+        const elevationAtCenter = this.elevation ? this.elevation.getAtPoint(this.locationCoordinate(this.center), Number.NEGATIVE_INFINITY) : Number.NEGATIVE_INFINITY;
+        const usePreviousCenter = this.elevation && elevationAtCenter === Number.NEGATIVE_INFINITY && this.elevation.visibleDemTiles.length > 0 && this.elevation.exaggeration() > 0 &&
+            this._centerAltitudeValidForExaggeration;
+        if (!this._elevation || (elevationAtCenter === Number.NEGATIVE_INFINITY && !(usePreviousCenter && this._centerAltitude))) {
             // Elevation data not loaded yet, reset
             this._centerAltitude = 0;
             this._seaLevelZoom = null;
@@ -464,8 +514,17 @@ class Transform {
             return;
         }
         const elevation: Elevation = this._elevation;
-        this._centerAltitude = elevation.getAtPointOrZero(this.locationCoordinate(this.center));
-        this._centerAltitudeValidForExaggeration = elevation.exaggeration();
+        if (usePreviousCenter || (this._centerAltitude && this._centerAltitudeValidForExaggeration &&
+                                  elevation.exaggeration() && this._centerAltitudeValidForExaggeration !== elevation.exaggeration())) {
+            assert(this._centerAltitudeValidForExaggeration);
+            const previousExaggeration = (this._centerAltitudeValidForExaggeration: any);
+            // scale down the centerAltitude
+            this._centerAltitude = this._centerAltitude / previousExaggeration * elevation.exaggeration();
+            this._centerAltitudeValidForExaggeration = elevation.exaggeration();
+        } else {
+            this._centerAltitude = elevationAtCenter || 0;
+            this._centerAltitudeValidForExaggeration = elevation.exaggeration();
+        }
         this._updateSeaLevelZoom();
     }
 
@@ -749,6 +808,117 @@ class Transform {
         return result;
     }
 
+    isLODDisabled(checkPitch: boolean): boolean {
+        // No change of LOD behavior for pitch lower than 60 and when there is no top padding: return only tile ids from the requested zoom level
+        return (!checkPitch || this.pitch <= MIN_LOD_PITCH) && this._edgeInsets.top <= this._edgeInsets.bottom && !this._elevation && !this.projection.isReprojectedInTileSpace;
+    }
+
+    /**
+     * Extends tile coverage to include potential shadow caster tiles.
+     * @param {Array<OverscaledTileID>} coveringTiles tiles that are potential shadow receivers
+     * @param {Vec3} lightDir direction of the light (unit vector)
+     * @param {number} maxZoom maximum zoom level of shadow caster tiles
+     * @returns {Array<OverscaledTileID>} a set of potential shadow casters
+     */
+    extendTileCoverForShadows(coveringTiles: Array<OverscaledTileID>, lightDir: Vec3, maxZoom: number): Array<OverscaledTileID> {
+        let out = [];
+
+        if (lightDir[0] === 0.0 && lightDir[1] === 0.0) {
+            return out;
+        }
+
+        // Extra tile selection based on the direction of the light:
+        // For each tile we add neighbourgs that might cast shadows over the current tile
+        for (const id of coveringTiles) {
+            const tileId = id.canonical;
+            const overscaledZ = id.overscaledZ;
+            const tileWrap = id.wrap;
+            const tiles = 1 << tileId.z;
+
+            const xMaxInsideRange = tileId.x + 1 < tiles;
+            const xMinInsideRange = tileId.x > 0;
+
+            const yMaxInsideRange = tileId.y + 1 < tiles;
+            const yMinInsideRange = tileId.y > 0;
+
+            const leftWrap = id.wrap - (xMinInsideRange ? 0 : 1);
+            const rightWrap = id.wrap + (xMaxInsideRange ? 0 : 1);
+
+            const leftTileX = xMinInsideRange ? tileId.x - 1 : tiles - 1;
+            const rightTileX = xMaxInsideRange ? tileId.x + 1 : 0;
+
+            if (lightDir[0] < 0.0) {
+                out.push(new OverscaledTileID(overscaledZ, rightWrap, tileId.z, rightTileX, tileId.y));
+                if (lightDir[1] < 0.0 && yMaxInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y + 1));
+                    out.push(new OverscaledTileID(overscaledZ, rightWrap, tileId.z, rightTileX, tileId.y + 1));
+                }
+                if (lightDir[1] > 0.0 && yMinInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y - 1));
+                    out.push(new OverscaledTileID(overscaledZ, rightWrap, tileId.z, rightTileX, tileId.y - 1));
+                }
+            } else if (lightDir[0] > 0.0) {
+                out.push(new OverscaledTileID(overscaledZ, leftWrap, tileId.z, leftTileX, tileId.y));
+                if (lightDir[1] < 0.0 && yMaxInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y + 1));
+                    out.push(new OverscaledTileID(overscaledZ, leftWrap, tileId.z, leftTileX, tileId.y + 1));
+                }
+                if (lightDir[1] > 0.0 && yMinInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y - 1));
+                    out.push(new OverscaledTileID(overscaledZ, leftWrap, tileId.z, leftTileX, tileId.y - 1));
+                }
+            } else {
+                if (lightDir[1] < 0.0 && yMaxInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y + 1));
+                } else if (yMinInsideRange) {
+                    out.push(new OverscaledTileID(overscaledZ, tileWrap, tileId.z, tileId.x, tileId.y - 1));
+                }
+            }
+        }
+
+        // Remove duplicates from new ids
+        if (out.length > 1) {
+            out.sort((a, b) => {
+                return a.overscaledZ - b.overscaledZ ||
+                        a.wrap - b.wrap ||
+                        a.canonical.z - b.canonical.z ||
+                        a.canonical.x - b.canonical.x ||
+                        a.canonical.y - b.canonical.y;
+            });
+
+            let i = 0;
+            let j = 0;
+            while (j < out.length) {
+                if (!out[j].equals(out[i])) {
+                    out[++i] = out[j++];
+                } else {
+                    ++j;
+                }
+            }
+            out.length = i + 1;
+        }
+
+        // Remove higher zoom new IDs that overlap with other new IDs
+        const nonOverlappingIds = [];
+
+        for (const id of out) {
+            if (!out.some(ancestorCandidate => id.isChildOf(ancestorCandidate))) {
+                nonOverlappingIds.push(id);
+            }
+        }
+
+        // Remove new IDs that overlap with old IDs
+        out = nonOverlappingIds.filter(newId => !coveringTiles.some(oldId => {
+            if (newId.overscaledZ < maxZoom && oldId.isChildOf(newId)) {
+                return true;
+            }
+            // Remove identical IDs or children of existing IDs
+            return newId.equals(oldId) || newId.isChildOf(oldId);
+        }));
+
+        return out;
+    }
+
     /**
      * Return all coordinates that could cover this transform for a covering
      * zoom level.
@@ -775,7 +945,8 @@ class Transform {
         let z = this.coveringZoomLevel(options);
         const actualZ = z;
 
-        const useElevationData = this.elevation && !options.isTerrainDEM;
+        const hasExaggeration = this.elevation && this.elevation.exaggeration();
+        const useElevationData = hasExaggeration && !options.isTerrainDEM;
         const isMercator = this.projection.name === 'mercator';
 
         if (options.minzoom !== undefined && z < options.minzoom) return [];
@@ -792,18 +963,26 @@ class Transform {
         const meterToTile = numTiles * mercatorZfromAltitude(1, this.center.lat);
         const cameraAltitude = this._camera.position[2] / mercatorZfromAltitude(1, this.center.lat);
         const cameraPoint = [numTiles * cameraCoord.x, numTiles * cameraCoord.y, cameraAltitude * (zInMeters ? 1 : meterToTile)];
+        const verticalFrustumIntersect = isGlobe || hasExaggeration;
         // Let's consider an example for !roundZoom: e.g. tileZoom 16 is used from zoom 16 all the way to zoom 16.99.
         // This would mean that the minimal distance to split would be based on distance from camera to center of 16.99 zoom.
         // The same is already incorporated in logic behind roundZoom for raster (so there is no adjustment needed in following line).
         // 0.02 added to compensate for precision errors, see "coveringTiles for terrain" test in transform.test.js.
         const zoomSplitDistance = this.cameraToCenterDistance / options.tileSize * (options.roundZoom ? 1 : 0.502);
 
-        // No change of LOD behavior for pitch lower than 60 and when there is no top padding: return only tile ids from the requested zoom level
-        const minZoom = this.pitch <= 60.0 && this._edgeInsets.top <= this._edgeInsets.bottom && !this._elevation && !this.projection.isReprojectedInTileSpace ? z : 0;
+        const minZoom = this.isLODDisabled(true) ? z : 0;
 
         // When calculating tile cover for terrain, create deep AABB for nodes, to ensure they intersect frustum: for sources,
         // other than DEM, use minimum of visible DEM tiles and center altitude as upper bound (pitch is always less than 90°).
-        const maxRange = options.isTerrainDEM && this._elevation ? this._elevation.exaggeration() * 10000 : this._centerAltitude;
+        let maxRange;
+        if (this._elevation && options.isTerrainDEM) {
+            maxRange = this._elevation.exaggeration() * 10000;
+        } else if (this._elevation) {
+            const minMaxOpt = this._elevation.getMinMaxForVisibleTiles();
+            maxRange = minMaxOpt ? minMaxOpt.max : this._centerAltitude;
+        } else {
+            maxRange = this._centerAltitude;
+        }
         const minRange = options.isTerrainDEM ? -maxRange : this._elevation ? this._elevation.getMinElevationBelowMSL() : 0;
 
         const scaleAdjustment = this.projection.isReprojectedInTileSpace ? getScaleAdjustment(this) : 1.0;
@@ -995,13 +1174,24 @@ class Transform {
             const y = it.y;
             let fullyVisible = it.fullyVisible;
 
+            const isPoleNeighbourAndGlobeProjection = () => {
+                return this.projection.name === 'globe' && (it.y === 0 || it.y === (1 << it.zoom) - 1);
+            };
+
             // Visibility of a tile is not required if any of its ancestor is fully inside the frustum
             if (!fullyVisible) {
-                const intersectResult = it.aabb.intersects(cameraFrustum);
+                let intersectResult = verticalFrustumIntersect ? it.aabb.intersects(cameraFrustum) : it.aabb.intersectsFlat(cameraFrustum);
 
-                if (intersectResult === 0)
+                // For globe projection and pole neighboouring tiles - clip against pole segments as well
+                if (intersectResult === 0 && isPoleNeighbourAndGlobeProjection()) {
+                    const tileId = new CanonicalTileID(it.zoom, x, y);
+                    const poleAABB = aabbForTileOnGlobe(this, numTiles, tileId, true);
+                    intersectResult = poleAABB.intersects(cameraFrustum);
+                }
+
+                if (intersectResult === 0) {
                     continue;
-
+                }
                 fullyVisible = intersectResult === 2;
             }
 
@@ -1011,6 +1201,23 @@ class Transform {
                 if (!!options.minzoom && options.minzoom > tileZoom) {
                     // Not within source tile range.
                     continue;
+                }
+
+                // Perform more precise intersection tests to cull the remaining < 1% false positives from the earlier test.
+                if (!fullyVisible) {
+
+                    let intersectResult = verticalFrustumIntersect ? it.aabb.intersectsPrecise(cameraFrustum) : it.aabb.intersectsPreciseFlat(cameraFrustum);
+
+                    // For globe projection and pole neighboouring tiles - clip against pole segments as well
+                    if (intersectResult === 0 && isPoleNeighbourAndGlobeProjection()) {
+                        const tileId = new CanonicalTileID(it.zoom, x, y);
+                        const poleAABB = aabbForTileOnGlobe(this, numTiles, tileId, true);
+                        intersectResult = poleAABB.intersectsPrecise(cameraFrustum);
+                    }
+
+                    if (intersectResult === 0) {
+                        continue;
+                    }
                 }
 
                 const dx = centerPoint[0] - ((0.5 + x + (it.wrap << it.zoom)) * (1 << (z - it.zoom)));
@@ -1038,13 +1245,17 @@ class Transform {
             const fogCullDistSq = this.fogCullDistSq;
             const horizonLineFromTop = this.horizonLineFromTop();
             result = result.filter(entry => {
-                const min = [0, 0, 0, 1];
-                const max = [EXTENT, EXTENT, 0, 1];
+                const tl = [0, 0, 0, 1];
+                const br = [EXTENT, EXTENT, 0, 1];
 
                 const fogTileMatrix = this.calculateFogTileMatrix(entry.tileID.toUnwrapped());
 
-                vec4.transformMat4(min, min, fogTileMatrix);
-                vec4.transformMat4(max, max, fogTileMatrix);
+                vec4.transformMat4(tl, tl, fogTileMatrix);
+                vec4.transformMat4(br, br, fogTileMatrix);
+
+                // the fog matrix can flip the min/max values, so we calculate them explicitly
+                const min = vec4.min([], tl, br);
+                const max = vec4.max([], tl, br);
 
                 const sqDist = getAABBPointSquareDist(min, max);
 
@@ -1543,7 +1754,7 @@ class Transform {
      */
     horizonLineFromTop(clampToTop: boolean = true): number {
         // h is height of space above map center to horizon.
-        const h = this.height / 2 / Math.tan(this._fov / 2) / Math.tan(Math.max(this._pitch, 0.1)) + this.centerOffset.y;
+        const h = this.height / 2 / Math.tan(this._fov / 2) / Math.tan(Math.max(this._pitch, 0.1)) - this.centerOffset.y;
         const offset = this.height / 2 - h * (1 - this._horizonShift);
         return clampToTop ? Math.max(0, offset) : offset;
     }
@@ -1654,16 +1865,30 @@ class Transform {
      * @param {UnwrappedTileID} unwrappedTileID;
      * @private
      */
-    calculateProjMatrix(unwrappedTileID: UnwrappedTileID, aligned: boolean = false): Float32Array {
+    calculateProjMatrix(unwrappedTileID: UnwrappedTileID, aligned: boolean = false, expanded: boolean = false): Float32Array {
         const projMatrixKey = unwrappedTileID.key;
-        const cache = aligned ? this._alignedProjMatrixCache : this._projMatrixCache;
+        let cache;
+        if (expanded) {
+            cache = this._expandedProjMatrixCache;
+        } else if (aligned) {
+            cache = this._alignedProjMatrixCache;
+        } else {
+            cache = this._projMatrixCache;
+        }
         if (cache[projMatrixKey]) {
             return cache[projMatrixKey];
         }
 
         const posMatrix = this.calculatePosMatrix(unwrappedTileID, this.worldSize);
-        const projMatrix = this.projection.isReprojectedInTileSpace ?
-            this.mercatorMatrix : (aligned ? this.alignedProjMatrix : this.projMatrix);
+        let projMatrix;
+        if (this.projection.isReprojectedInTileSpace) {
+            projMatrix = this.mercatorMatrix;
+        } else if (expanded) {
+            assert(!aligned);
+            projMatrix = this.expandedFarZProjMatrix;
+        } else {
+            projMatrix = aligned ? this.alignedProjMatrix : this.projMatrix;
+        }
         mat4.multiply(posMatrix, projMatrix, posMatrix);
 
         cache[projMatrixKey] = new Float32Array(posMatrix);
@@ -1864,6 +2089,7 @@ class Transform {
         if (!this.height) return;
 
         const offset = this.centerOffset;
+        const isGlobe = this.projection.name === 'globe';
 
         // Z-axis uses pixel coordinates when globe mode is enabled
         const pixelsPerMeter = this.pixelsPerMeter;
@@ -1896,12 +2122,38 @@ class Transform {
 
         const zUnit = this.projection.zAxisUnit === "meters" ? pixelsPerMeter : 1.0;
         const worldToCamera = this._camera.getWorldToCamera(this.worldSize, zUnit);
-        const cameraToClip = this._camera.getCameraToClipPerspective(this._fov, this.width / this.height, this._nearZ, this._farZ);
 
-        // Apply center of perspective offset
-        cameraToClip[8] = -offset.x * 2 / this.width;
-        cameraToClip[9] = offset.y * 2 / this.height;
+        let cameraToClip;
 
+        const cameraToClipPerspective = this._camera.getCameraToClipPerspective(this._fov, this.width / this.height, this._nearZ, this._farZ);
+        // Apply offset/padding
+        cameraToClipPerspective[8] = -offset.x * 2 / this.width;
+        cameraToClipPerspective[9] = offset.y * 2 / this.height;
+
+        if (this.isOrthographic) {
+            const cameraToCenterDistance =  0.5 * this.height / Math.tan(this._fov / 2.0) * 1.0;
+
+            // Calculate bounds for orthographic view
+            let top = cameraToCenterDistance * Math.tan(this._fov * 0.5);
+            let right = top * this.aspect;
+            let left = -right;
+            let bottom = -top;
+            // Apply offset/padding
+            right -= offset.x;
+            left -= offset.x;
+            top += offset.y;
+            bottom += offset.y;
+
+            cameraToClip = this._camera.getCameraToClipOrthographic(left, right, bottom, top, this._nearZ, this._farZ);
+
+            const mixValue =
+                this.pitch >= OrthographicPitchTranstionValue ? 1.0 : this.pitch / OrthographicPitchTranstionValue;
+            lerpMatrix(cameraToClip, cameraToClip, cameraToClipPerspective, easeIn(mixValue));
+        } else {
+            cameraToClip = cameraToClipPerspective;
+        }
+
+        const worldToClipPerspective: Array<number> | Float32Array | Float64Array = mat4.mul([], cameraToClipPerspective, worldToCamera);
         let m: Array<number> | Float32Array | Float64Array = mat4.mul([], cameraToClip, worldToCamera);
 
         if (this.projection.isReprojectedInTileSpace) {
@@ -1913,6 +2165,7 @@ class Transform {
             mat4.multiply(adjustments, adjustments, getProjectionAdjustments(this));
             mat4.translate(adjustments, adjustments, [-mc.x * this.worldSize, -mc.y * this.worldSize, 0]);
             mat4.multiply(m, m, adjustments);
+            mat4.multiply(worldToClipPerspective, worldToClipPerspective, adjustments);
             this.inverseAdjustmentMatrix = getProjectionAdjustmentInverted(this);
         } else {
             this.inverseAdjustmentMatrix = [1, 0, 0, 1];
@@ -1928,8 +2181,20 @@ class Transform {
         // as tile elevations are in tile coordinates and relative to center elevation.
         this.invProjMatrix = mat4.invert(new Float64Array(16), this.projMatrix);
 
+        if (isGlobe) {
+            const expandedCameraToClipPerspective = this._camera.getCameraToClipPerspective(this._fov, this.width / this.height, this._nearZ, Infinity);
+            expandedCameraToClipPerspective[8] = -offset.x * 2 / this.width;
+            expandedCameraToClipPerspective[9] = offset.y * 2 / this.height;
+            this.expandedFarZProjMatrix = mat4.mul([], expandedCameraToClipPerspective, worldToCamera);
+        } else {
+            this.expandedFarZProjMatrix = this.projMatrix;
+        }
+
         const clipToCamera = mat4.invert([], cameraToClip);
         this.frustumCorners = FrustumCorners.fromInvProjectionMatrix(clipToCamera, this.horizonLineFromTop(), this.height);
+
+        // Create a camera frustum in mercator units
+        this.cameraFrustum = Frustum.fromInvProjectionMatrix(this.invProjMatrix, this.worldSize, 0.0, !isGlobe);
 
         const view = new Float32Array(16);
         mat4.identity(view);
@@ -1938,6 +2203,9 @@ class Transform {
         mat4.rotateZ(view, view, this.angle);
 
         const projection = mat4.perspective(new Float32Array(16), this._fov, this.width / this.height, this._nearZ, this._farZ);
+
+        this.starsProjMatrix = mat4.clone(projection);
+
         // The distance in pixels the skybox needs to be shifted down by to meet the shifted horizon.
         const skyboxHorizonShift = (Math.PI / 2 - this._pitch) * (this.height / this._fov) * this._horizonShift;
         // Apply center of perspective offset to skybox projection
@@ -1973,7 +2241,7 @@ class Transform {
         this.glCoordMatrix = m;
 
         // matrix for conversion from location to screen coordinates
-        this.pixelMatrix = mat4.multiply(new Float64Array(16), this.labelPlaneMatrix, this.projMatrix);
+        this.pixelMatrix = mat4.multiply(new Float64Array(16), this.labelPlaneMatrix, worldToClipPerspective);
 
         this._calcFogMatrices();
         this._distanceTileDataCache = {};
@@ -1997,6 +2265,7 @@ class Transform {
         this._projMatrixCache = {};
         this._alignedProjMatrixCache = {};
         this._pixelsToTileUnitsCache = {};
+        this._expandedProjMatrixCache = {};
     }
 
     _calcFogMatrices() {
@@ -2278,7 +2547,15 @@ class Transform {
     getCameraToCenterDistance(projection: Projection, zoom: number = this.zoom, worldSize: number = this.worldSize): number {
         const t = getProjectionInterpolationT(projection, zoom, this.width, this.height, 1024);
         const projectionScaler = projection.pixelSpaceConversion(this.center.lat, worldSize, t);
-        return 0.5 / Math.tan(this._fov * 0.5) * this.height * projectionScaler;
+        let distance =  0.5 / Math.tan(this._fov * 0.5) * this.height * projectionScaler;
+
+        // In case we have orthographic transition we need to interpolate the distance value in the range [1, distance]
+        // to calculate correct perspective ratio values for symbols
+        if (this.isOrthographic) {
+            const mixValue = this.pitch >= OrthographicPitchTranstionValue ? 1.0 : this.pitch / OrthographicPitchTranstionValue;
+            distance = lerp(1.0, distance, easeIn(mixValue));
+        }
+        return distance;
     }
 
     getWorldToCameraMatrix(): Mat4 {
@@ -2290,6 +2567,11 @@ class Transform {
         }
 
         return worldToCamera;
+    }
+
+    getFrustum(zoom: number): Frustum {
+        const zInMeters = this.projection.zAxisUnit === 'meters';
+        return Frustum.fromInvProjectionMatrix(this.invProjMatrix, this.worldSize, zoom, zInMeters);
     }
 }
 

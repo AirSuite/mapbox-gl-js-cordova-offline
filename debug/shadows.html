@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapbox GL JS debug page</title>
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel='stylesheet' href='../dist/mapbox-gl.css' />
+    <style>
+        body { margin: 0; padding: 0; }
+        html, body, #map { height: 100%; }
+        #radius {
+            position: absolute;
+            width: 700px;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+<div id='map'></div>
+<script type='text/javascript' src='https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js'></script>
+<script src='../dist/mapbox-gl-dev.js'></script>
+<script src='../debug/access_token_generated.js'></script>
+<script>
+
+var PageSettings = function() {
+    this.enableTerrain = true;
+    this.terrainExaggeration = 1.0;
+    this.ambientColor = [ 255, 255, 255 ];
+    this.ambientIntensity = 0.5;
+    this.sunColor = [ 255, 255, 255 ];
+    this.sunIntensity = 0.5;
+    this.sunBearing = 160;
+    this.sunPolarAngle = 50;
+    this.castShadows = true;
+    this.shadowIntensity = 1.0;
+};
+
+var pageSettings = new PageSettings();
+
+function updateLights() {
+    map.setLights([
+        {
+            'type': 'ambient',
+            'id': 'ambient_light',
+            'properties': {
+                'color': 'rgba(' + pageSettings.ambientColor[0] + ', ' + pageSettings.ambientColor[1] + ', ' + pageSettings.ambientColor[2] + ', 1.0)',
+                'intensity': pageSettings.ambientIntensity
+            }
+        },
+        {
+            'type': 'directional',
+            'id': 'directional_light',
+            'properties': {
+                'color': 'rgba(' + pageSettings.sunColor[0] + ', ' + pageSettings.sunColor[1] + ', ' + pageSettings.sunColor[2] + ', 1.0)',
+                'intensity': pageSettings.sunIntensity,
+                'direction': [
+                    pageSettings.sunBearing,
+                    pageSettings.sunPolarAngle
+                ],
+                'cast-shadows': pageSettings.castShadows,
+                'shadow-intensity': pageSettings.shadowIntensity
+            }
+        }
+    ]);
+}
+
+window.onload = function() {
+    const gui = new dat.GUI(); // eslint-disable-line
+
+    const lights = gui.addFolder('Lighting');
+
+    const castShadows = lights.add(pageSettings, 'castShadows');
+    castShadows.onFinishChange((value) => { updateLights(); });
+
+    const shadowIntensity = lights.add(pageSettings, 'shadowIntensity', 0.0, 1.0);
+    shadowIntensity.onChange((value) => { updateLights(); });
+
+    const sunPolarAngle = lights.add(pageSettings, 'sunPolarAngle', 0.0, 90.0);
+    sunPolarAngle.onChange((value) => { updateLights(); });
+
+    const sunBearing = lights.add(pageSettings, 'sunBearing', 0.0, 360.0);
+    sunBearing.onChange((value) => { updateLights(); });
+
+    const sunIntensity = lights.add(pageSettings, 'sunIntensity', 0.0, 1.0);
+    sunIntensity.onChange((value) => { updateLights(); });
+
+    const sunColor = lights.addColor(pageSettings, 'sunColor');
+    sunColor.onChange((value) => { updateLights(); });
+
+    const ambientIntensity = lights.add(pageSettings, 'ambientIntensity', 0.0, 1.0);
+    ambientIntensity.onChange((value) => { updateLights(); });
+
+    const ambientColor = lights.addColor(pageSettings, 'ambientColor');
+    ambientColor.onChange((value) => { updateLights(); });
+
+    const terrain = gui.addFolder('Terrain');
+    const enableTerrain = terrain.add(pageSettings, 'enableTerrain');
+    enableTerrain.onFinishChange((value) => {
+        map.setTerrain(value ? {"source": "mapbox-dem", "exaggeration": pageSettings.terrainExaggeration} : null);
+    });
+    const terrainExaggeration = terrain.add(pageSettings, 'terrainExaggeration', 0, 5);
+    terrainExaggeration.onChange((value) => {
+        if (pageSettings.enableTerrain) {
+            map.setTerrain({"source": "mapbox-dem", "exaggeration": value});
+        }
+    });
+};
+
+var map = window.map = new mapboxgl.Map({
+    container: 'map',
+    zoom: 12.5,
+    center: [-122.4194, 37.7749],
+    style: 'mapbox://styles/mapbox/streets-v11',
+    hash: true,
+});
+
+// Enable shadow map rendering to color texture as well
+map.painter._shadowMapDebug = true;
+
+map.on('load', () => {
+    map.addSource('mapbox-dem', {
+        'type': 'raster-dem',
+        'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+        'tileSize': 512,
+        'maxzoom': 14
+    });
+
+    map.setTerrain({'source': 'mapbox-dem', 'exaggeration': 1.0});
+
+    map.addLayer({
+        'id': 'add-3d-buildings',
+        'source': 'composite',
+        'source-layer': 'building',
+        'filter': ['==', 'extrude', 'true'],
+        'type': 'fill-extrusion',
+        'minzoom': 15,
+        'layout': {
+            'fill-extrusion-edge-radius': 0.4
+        },
+        'paint': {
+            'fill-extrusion-color': '#eee',
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': ['get', 'min_height'],
+            'fill-extrusion-opacity': 1,
+            'fill-extrusion-ambient-occlusion-intensity': 0.5,
+            'fill-extrusion-ambient-occlusion-radius': 0.1
+        }
+    });
+
+    updateLights();
+});
+
+</script>
+</body>
+</html>

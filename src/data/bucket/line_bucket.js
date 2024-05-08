@@ -7,7 +7,7 @@ import {members as layoutAttributesExt} from './line_attributes_ext.js';
 import SegmentVector from '../segment.js';
 import {ProgramConfigurationSet} from '../program_configuration.js';
 import {TriangleIndexArray} from '../index_array_type.js';
-import EXTENT from '../extent.js';
+import EXTENT from '../../style-spec/data/extent.js';
 import {VectorTileFeature} from '@mapbox/vector-tile';
 const vectorTileFeatureTypes = VectorTileFeature.types;
 import {register} from '../../util/web_worker_transfer.js';
@@ -116,7 +116,7 @@ class LineBucket implements Bucket {
         this.zoom = options.zoom;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
-        this.layerIds = this.layers.map(layer => layer.id);
+        this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.projection = options.projection;
         this.hasPattern = false;
@@ -191,7 +191,7 @@ class LineBucket implements Bucket {
                 this.patternFeatures.push(patternBucketFeature);
 
             } else {
-                this.addFeature(bucketFeature, geometry, index, canonical, lineAtlas.positions, options.availableImages);
+                this.addFeature(bucketFeature, geometry, index, canonical, lineAtlas.positions, options.availableImages, options.brightness);
             }
 
             const feature = features[index].feature;
@@ -255,14 +255,16 @@ class LineBucket implements Bucket {
 
     }
 
-    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions) {
-        if (!this.stateDependentLayers.length) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, availableImages, imagePositions);
+    update(states: FeatureStates, vtLayer: IVectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
+        const withStateUpdates = Object.keys(states).length !== 0;
+        if (withStateUpdates && !this.stateDependentLayers.length) return;
+        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
     }
 
-    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform) {
+    addFeatures(options: PopulateParameters, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, _: TileTransform, brightness: ?number) {
         for (const feature of this.patternFeatures) {
-            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages);
+            this.addFeature(feature, feature.geometry, feature.index, canonical, imagePositions, availableImages, brightness);
         }
     }
 
@@ -302,7 +304,7 @@ class LineBucket implements Bucket {
         }
     }
 
-    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>) {
+    addFeature(feature: BucketFeature, geometry: Array<Array<Point>>, index: number, canonical: CanonicalTileID, imagePositions: SpritePositions, availableImages: Array<string>, brightness: ?number) {
         const layout = this.layers[0].layout;
         const join = layout.get('line-join').evaluate(feature, {});
         const cap = layout.get('line-cap').evaluate(feature, {});
@@ -314,7 +316,7 @@ class LineBucket implements Bucket {
             this.addLine(line, feature, join, cap, miterLimit, roundLimit);
         }
 
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical);
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, availableImages, canonical, brightness);
     }
 
     addLine(vertices: Array<Point>, feature: BucketFeature, join: string, cap: string, miterLimit: number, roundLimit: number) {

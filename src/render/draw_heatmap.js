@@ -35,7 +35,7 @@ function drawHeatmap(painter: Painter, sourceCache: SourceCache, layer: HeatmapS
         // large kernels are not clipped to tiles
         const stencilMode = StencilMode.disabled;
         // Turn on additive blending for kernels, which is a key aspect of kernel density estimation formula
-        const colorMode = new ColorMode([gl.ONE, gl.ONE], Color.transparent, [true, true, true, true]);
+        const colorMode = new ColorMode([gl.ONE, gl.ONE, gl.ONE, gl.ONE], Color.transparent, [true, true, true, true]);
         const resolutionScaling = painter.transform.projection.name === 'globe' ? 0.5 : 0.25;
 
         bindFramebuffer(context, painter, layer, resolutionScaling);
@@ -46,7 +46,7 @@ function drawHeatmap(painter: Painter, sourceCache: SourceCache, layer: HeatmapS
 
         const isGlobeProjection = tr.projection.name === 'globe';
 
-        const definesValues = isGlobeProjection ? ['PROJECTION_GLOBE_VIEW'] : null;
+        const definesValues = isGlobeProjection ? ['PROJECTION_GLOBE_VIEW'] : [];
         const cullMode = isGlobeProjection ? CullFaceMode.frontCCW : CullFaceMode.disabled;
 
         const mercatorCenter = [mercatorXfromLng(tr.center.lng), mercatorYfromLat(tr.center.lat)];
@@ -63,16 +63,17 @@ function drawHeatmap(painter: Painter, sourceCache: SourceCache, layer: HeatmapS
             const bucket: ?HeatmapBucket = (tile.getBucket(layer): any);
             if (!bucket || bucket.projection.name !== tr.projection.name) continue;
 
+            const affectedByFog = painter.isTileAffectedByFog(coord);
             const programConfiguration = bucket.programConfigurations.get(layer.id);
-            const program = painter.useProgram('heatmap', programConfiguration, definesValues);
+            const program = painter.getOrCreateProgram('heatmap', {config: programConfiguration, defines: definesValues, overrideFog: affectedByFog});
             const {zoom} = painter.transform;
             if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
 
-            painter.prepareDrawProgram(context, program, coord.toUnwrapped());
+            painter.uploadCommonUniforms(context, program, coord.toUnwrapped());
 
             const invMatrix = tr.projection.createInversionMatrix(tr, coord.canonical);
 
-            program.draw(context, gl.TRIANGLES, DepthMode.disabled, stencilMode, colorMode, cullMode,
+            program.draw(painter, gl.TRIANGLES, DepthMode.disabled, stencilMode, colorMode, cullMode,
                 heatmapUniformValues(painter, coord,
                     tile, invMatrix, mercatorCenter, zoom, layer.paint.get('heatmap-intensity')),
                 layer.id, bucket.layoutVertexBuffer, bucket.indexBuffer,
@@ -108,7 +109,7 @@ function bindFramebuffer(context: Context, painter: Painter, layer: HeatmapStyle
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-        fbo = layer.heatmapFbo = context.createFramebuffer(width, height, false);
+        fbo = layer.heatmapFbo = context.createFramebuffer(width, height, true, null);
 
         bindTextureToFramebuffer(context, painter, texture, fbo, width, height);
 
@@ -122,10 +123,8 @@ function bindTextureToFramebuffer(context: Context, painter: Painter, texture: ?
     const gl = context.gl;
     // Use the higher precision half-float texture where available (producing much smoother looking heatmaps);
     // Otherwise, fall back to a low precision texture
-    /* $FlowFixMe[prop-missing] WebGL2 */
-    const type = context.extRenderToTextureHalfFloat ? (context.isWebGL2 ? gl.HALF_FLOAT : context.extTextureHalfFloat.HALF_FLOAT_OES) : gl.UNSIGNED_BYTE;
-    /* $FlowFixMe[prop-missing] WebGL2 */
-    gl.texImage2D(gl.TEXTURE_2D, 0, (context.isWebGL2 && context.extRenderToTextureHalfFloat) ? gl.RGBA16F : gl.RGBA, width, height, 0, gl.RGBA, type, null);
+    const type = context.extRenderToTextureHalfFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    gl.texImage2D(gl.TEXTURE_2D, 0, context.extRenderToTextureHalfFloat ? gl.RGBA16F : gl.RGBA, width, height, 0, gl.RGBA, type, null);
     fbo.colorAttachment.set(texture);
 }
 
@@ -148,7 +147,7 @@ function renderTextureToMap(painter: Painter, layer: HeatmapStyleLayer) {
     }
     colorRampTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
 
-    painter.useProgram('heatmapTexture').draw(context, gl.TRIANGLES,
+    painter.getOrCreateProgram('heatmapTexture').draw(painter, gl.TRIANGLES,
         DepthMode.disabled, StencilMode.disabled, painter.colorModeForRenderPass(), CullFaceMode.disabled,
         heatmapTextureUniformValues(painter, layer, 0, 1),
         layer.id, painter.viewportBuffer, painter.quadTriangleIndexBuffer,

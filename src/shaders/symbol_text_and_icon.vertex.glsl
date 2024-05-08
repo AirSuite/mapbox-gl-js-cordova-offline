@@ -1,10 +1,15 @@
-attribute vec4 a_pos_offset;
-attribute vec4 a_tex_size;
-attribute vec4 a_projected_pos;
-attribute float a_fade_opacity;
+#include "_prelude_terrain.vertex.glsl"
+
+in vec4 a_pos_offset;
+in vec4 a_tex_size;
+in vec4 a_projected_pos;
+in float a_fade_opacity;
+#ifdef Z_OFFSET
+in float a_z_offset;
+#endif
 #ifdef PROJECTION_GLOBE_VIEW
-attribute vec3 a_globe_anchor;
-attribute vec3 a_globe_normal;
+in vec3 a_globe_anchor;
+in vec3 a_globe_normal;
 #endif
 
 // contents of a_size vary based on the type of property value
@@ -30,6 +35,7 @@ uniform float u_fade_change;
 uniform vec2 u_texsize;
 uniform vec3 u_up_vector;
 uniform vec2 u_texsize_icon;
+uniform bool u_is_halo;
 
 #ifdef PROJECTION_GLOBE_VIEW
 uniform vec3 u_tile_id;
@@ -41,14 +47,16 @@ uniform vec3 u_ecef_origin;
 uniform mat4 u_tile_matrix;
 #endif
 
-varying vec4 v_data0;
-varying vec4 v_data1;
+out float v_draw_halo;
+out vec4 v_data0;
+out vec4 v_data1;
 
 #pragma mapbox: define highp vec4 fill_color
 #pragma mapbox: define highp vec4 halo_color
 #pragma mapbox: define lowp float opacity
 #pragma mapbox: define lowp float halo_width
 #pragma mapbox: define lowp float halo_blur
+#pragma mapbox: define lowp float emissive_strength
 
 void main() {
     #pragma mapbox: initialize highp vec4 fill_color
@@ -56,6 +64,7 @@ void main() {
     #pragma mapbox: initialize lowp float opacity
     #pragma mapbox: initialize lowp float halo_width
     #pragma mapbox: initialize lowp float halo_blur
+    #pragma mapbox: initialize lowp float emissive_strength
 
     vec2 a_pos = a_pos_offset.xy;
     vec2 a_offset = a_pos_offset.zw;
@@ -78,7 +87,11 @@ void main() {
     }
 
     vec2 tile_anchor = a_pos;
-    vec3 h = elevationVector(tile_anchor) * elevation(tile_anchor);
+    float e = elevation(tile_anchor);
+#ifdef Z_OFFSET
+    e += a_z_offset;
+#endif
+    vec3 h = elevationVector(tile_anchor) * e;
 
     float globe_occlusion_fade;
     vec3 world_pos;
@@ -152,17 +165,6 @@ void main() {
 #endif
 #endif
     float occlusion_fade = occlusionFade(projected_point) * globe_occlusion_fade;
-#ifdef PROJECTION_GLOBE_VIEW
-    // Map aligned labels in globe view are aligned to the surface of the globe
-    vec3 xAxis = u_pitch_with_map ? normalize(cross(a_globe_normal, u_up_vector)) : vec3(1, 0, 0);
-    vec3 yAxis = u_pitch_with_map ? normalize(cross(a_globe_normal, xAxis)) : vec3(0, 1, 0);
-
-    gl_Position = mix(u_coord_matrix * vec4(projected_pos.xyz / projected_pos.w + xAxis * offset.x + yAxis * offset.y, 1.0), AWAY, float(projected_point.w <= 0.0 || occlusion_fade == 0.0));
-#else
-    gl_Position = mix(u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + offset, z, 1.0), AWAY, float(projected_point.w <= 0.0 || occlusion_fade == 0.0));
-#endif
-    float gamma_scale = gl_Position.w;
-
     vec2 fade_opacity = unpack_opacity(a_fade_opacity);
     float fade_change = fade_opacity[1] > 0.5 ? u_fade_change : -u_fade_change;
     float interpolated_fade_opacity = max(0.0, min(occlusion_fade, fade_opacity[0] + fade_change));
@@ -171,8 +173,25 @@ void main() {
 #if defined(PROJECTED_POS_ON_VIEWPORT) && defined(PROJECTION_GLOBE_VIEW)
     projection_transition_fade = 1.0 - step(EPSILON, u_zoom_transition);
 #endif
+    float out_fade_opacity = interpolated_fade_opacity * projection_transition_fade;
+    float alpha = opacity * out_fade_opacity;
+    float hidden = float(alpha == 0.0 || projected_point.w <= 0.0 || occlusion_fade == 0.0);
+
+#ifdef PROJECTION_GLOBE_VIEW
+    // Map aligned labels in globe view are aligned to the surface of the globe
+    vec3 xAxis = u_pitch_with_map ? normalize(cross(a_globe_normal, u_up_vector)) : vec3(1, 0, 0);
+    vec3 yAxis = u_pitch_with_map ? normalize(cross(a_globe_normal, xAxis)) : vec3(0, 1, 0);
+
+    gl_Position = mix(u_coord_matrix * vec4(projected_pos.xyz / projected_pos.w + xAxis * offset.x + yAxis * offset.y, 1.0), AWAY, hidden);
+#else
+    gl_Position = mix(u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + offset, z, 1.0), AWAY, hidden);
+#endif
+    float gamma_scale = gl_Position.w;
+
+    // Cast to float is required to fix a rendering error in Swiftshader
+    v_draw_halo = (u_is_halo && float(gl_InstanceID) == 0.0) ? 1.0 : 0.0;
 
     v_data0.xy = a_tex / u_texsize;
     v_data0.zw = a_tex / u_texsize_icon;
-    v_data1 = vec4(gamma_scale, size, interpolated_fade_opacity * projection_transition_fade, is_sdf);
+    v_data1 = vec4(gamma_scale, size, out_fade_opacity, is_sdf);
 }

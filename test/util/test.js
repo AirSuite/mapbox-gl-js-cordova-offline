@@ -3,6 +3,7 @@
 import tap from 'tap';
 /*eslint-disable import/no-named-as-default-member */
 import sinon from 'sinon';
+import browser from '../../src/util/browser.js';
 
 // Disable MessageChannel in unit tests since
 // it prevents a Node.js process from exiting.
@@ -30,11 +31,14 @@ type CreateTest = (typeof sinon) & {
     tearDown(() => void): void,
 };
 
+export const skip = (tap.skip: CreateTest);
 export const test = (tap.test: CreateTest);
 export const only = (tap.only: CreateTest);
 
 const consoleError = console.error;
 const consoleWarn = console.warn;
+
+sinon.stub(browser, 'hasCanvasFingerprintNoise').returns(false);
 
 // $FlowFixMe[missing-this-annot]
 tap.beforeEach(function () {
@@ -46,7 +50,7 @@ tap.beforeEach(function () {
     // $FlowFixMe the assignment is intentional
     console.error = (msg) => this.fail(`console.error called -- please adjust your test (maybe stub console.error?)\n${msg}`);
     // $FlowFixMe the assignment is intentional
-    console.warn = () => this.fail(`console.warn called -- please adjust your test (maybe stub console.warn?)`);
+    console.warn = (msg) => this.fail(`console.warn called -- please adjust your test (maybe stub console.warn?)\n${msg}`);
 });
 
 // $FlowFixMe[missing-this-annot]

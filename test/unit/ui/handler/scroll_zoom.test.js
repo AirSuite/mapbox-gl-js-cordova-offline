@@ -13,7 +13,6 @@ import MercatorCoordinate from '../../../../src/geo/mercator_coordinate.js';
 
 function createMap(t) {
     t.stub(Map.prototype, '_detectMissingCSS');
-    t.stub(Map.prototype, '_authenticate');
     return new Map({
         container: DOM.create('div', '', window.document.body),
         testMode: true,
@@ -27,10 +26,10 @@ function createMap(t) {
 
 function createMapWithCooperativeGestures(t) {
     t.stub(Map.prototype, '_detectMissingCSS');
-    t.stub(Map.prototype, '_authenticate');
     return new Map({
         container: DOM.create('div', '', window.document.body),
-        cooperativeGestures: true
+        cooperativeGestures: true,
+        testMode: true,
     });
 }
 
@@ -199,7 +198,7 @@ test('ScrollZoomHandler', (t) => {
                     map._renderTaskQueue.run();
 
                     // Simulate the switching of DEM tiles (due to LOD perhaps) to low elevation dems
-                    const tiles = map.style._getSourceCache('mapbox-dem')._tiles;
+                    const tiles = map.style.getOwnSourceCache('mapbox-dem')._tiles;
                     for (const tile in tiles)
                         tiles[tile].dem = zeroElevationDem;
 

@@ -20,8 +20,6 @@ import {vec3, vec4} from 'gl-matrix';
 
 const browserWriteFile = new Worker('../util/browser_write_file.js');
 
-const useWebGL2 = process.env.USE_WEBGL2 ? process.env.USE_WEBGL2 !== 'false' : true;
-
 // We are self-hosting test files.
 config.REQUIRE_ACCESS_TOKEN = false;
 window._suiteName = 'render-tests';
@@ -45,7 +43,7 @@ fakeCanvasContainer.style.top = '10px';
 fakeCanvasContainer.style.left = '10px';
 document.body.appendChild(fakeCanvasContainer);
 
-setupHTML({useWebGL2});
+setupHTML();
 
 const {canvas: expectedCanvas, ctx: expectedCtx} = createCanvas();
 const {canvas: diffCanvas, ctx: diffCtx} = createCanvas();
@@ -193,18 +191,27 @@ async function renderMap(style, options) {
         attributionControl: false,
         preserveDrawingBuffer: true,
         axonometric: options.axonometric || false,
-        useWebGL2,
         skew: options.skew || [0, 0],
         fadeDuration: options.fadeDuration || 0,
-        optimizeForTerrain: options.optimizeForTerrain || false,
         localIdeographFontFamily: options.localIdeographFontFamily || false,
         projection: options.projection,
         crossSourceCollisions: typeof options.crossSourceCollisions === "undefined" ? true : options.crossSourceCollisions,
         performanceMetricsCollection: false,
+        contextCreateOptions: {
+            // Anisotropic filtering is disabled
+            extTextureFilterAnisotropicForceOff: true,
+            // By default standard derivatives are disabled for testing
+            extStandardDerivativesForceOff: !options.standardDerivatives,
+            // OES_texture_float_linear is enabled by default
+            extTextureFloatLinearForceOff: options.textureFloatLinear === undefined ? false : !options.textureFloatLinear,
+        }
     });
 
     map.on('error', (e) => {
         errors.push({error: e.error.message, stack: e.error.stack});
+
+        // Log errors immediately in case test times out and doesn't have a chance to output the error messages
+        console.error(e.error.message);
     });
 
     map._authenticate = () => {};
@@ -216,14 +223,11 @@ async function renderMap(style, options) {
     if (options.debug) map.showTileBoundaries = true;
     if (options.showOverdrawInspector) map.showOverdrawInspector = true;
     if (options.showTerrainWireframe) map.showTerrainWireframe = true;
+    if (options.showLayers2DWireframe) map.showLayers2DWireframe = true;
+    if (options.showLayers3DWireframe) map.showLayers3DWireframe = true;
     if (options.showPadding) map.showPadding = true;
     if (options.collisionDebug) map.showCollisionBoxes = true;
     if (options.fadeDuration) map._isInitialLoad = false;
-
-    // Disable anisotropic filtering on render tests
-    map.painter.context.extTextureFilterAnisotropicForceOff = true;
-    // Disable globe antialiasing on render tests expect for antialiasing test
-    map.painter.context.extStandardDerivativesForceOff = !options.standardDerivatives;
 
     map.repaint = true;
     await map.once('load');

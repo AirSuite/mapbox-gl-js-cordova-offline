@@ -48,7 +48,7 @@ export class RequestManager {
     _customAccessToken: ?string;
     _silenceAuthErrors: boolean;
 
-    constructor(transformRequestFn?: RequestTransformFunction, customAccessToken?: string, silenceAuthErrors: ?boolean) {
+    constructor(transformRequestFn?: ?RequestTransformFunction, customAccessToken?: ?string, silenceAuthErrors: ?boolean) {
         this._transformRequestFn = transformRequestFn;
         this._customAccessToken = customAccessToken;
         this._silenceAuthErrors = !!silenceAuthErrors;
@@ -76,6 +76,7 @@ export class RequestManager {
     normalizeStyleURL(url: string, accessToken?: string): string {
         if (!isMapboxURL(url)) return url;
         const urlObject = parseUrl(url);
+        urlObject.params.push(`sdk=js-${sdkVersion}`);
         urlObject.path = `/styles/v1${urlObject.path}`;
         return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
     }
@@ -84,6 +85,13 @@ export class RequestManager {
         if (!isMapboxURL(url)) return url;
         const urlObject = parseUrl(url);
         urlObject.path = `/fonts/v1${urlObject.path}`;
+        return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
+    }
+
+    normalizeModelURL(url: string, accessToken?: string): string {
+        if (!isMapboxURL(url)) return url;
+        const urlObject = parseUrl(url);
+        urlObject.path = `/models/v1${urlObject.path}`;
         return this._makeAPIURL(urlObject, this._customAccessToken || accessToken);
     }
 
@@ -665,7 +673,7 @@ const mapSessionAPI_ = new MapSessionAPI();
 export const getMapSessionAPI: (number, string, ?string, EventCallback) => void = mapSessionAPI_.getSessionAPI.bind(mapSessionAPI_);
 
 const authenticatedMaps = new Set();
-export function storeAuthState(gl: WebGLRenderingContext, state: boolean) {
+export function storeAuthState(gl: WebGL2RenderingContext, state: boolean) {
     if (state) {
         authenticatedMaps.add(gl);
     } else {
@@ -673,11 +681,11 @@ export function storeAuthState(gl: WebGLRenderingContext, state: boolean) {
     }
 }
 
-export function isMapAuthenticated(gl: WebGLRenderingContext): boolean {
+export function isMapAuthenticated(gl: WebGL2RenderingContext): boolean {
     return authenticatedMaps.has(gl);
 }
 
-export function removeAuthState(gl: WebGLRenderingContext) {
+export function removeAuthState(gl: WebGL2RenderingContext) {
     authenticatedMaps.delete(gl);
 }
 

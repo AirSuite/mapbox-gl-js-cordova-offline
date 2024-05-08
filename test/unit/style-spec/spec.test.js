@@ -82,6 +82,7 @@ function validSchema(k, t, obj, ref, version, kind) {
         'length',
         'min-length',
         'required',
+        'optional',
         'transition',
         'type',
         'value',
@@ -163,22 +164,28 @@ function validSchema(k, t, obj, ref, version, kind) {
             const expression = obj.expression;
             t.ok(ref['property-type'][obj['property-type']], `${k}.expression: property-type: ${obj['property-type']}`);
             t.equal('boolean', typeof expression.interpolated, `${k}.expression.interpolated.required (boolean)`);
-            t.equal(true, Array.isArray(expression.parameters), `${k}.expression.parameters array`);
-            if (obj['property-type'] !== 'color-ramp') {
-                t.equal(true, expression.parameters.every(k => {
-                    return k === 'zoom' ||
-                        k === 'feature' ||
-                        k === 'feature-state' ||
-                        k === 'pitch' ||
-                        k === 'distance-from-center';
-                })
-                );
+            if (expression.parameters) {
+                t.equal(true, Array.isArray(expression.parameters), `${k}.expression.parameters array`);
+                if (obj['property-type'] !== 'color-ramp') {
+                    t.equal(true, expression.parameters.every(k => {
+                        return k === 'zoom' ||
+                            k === 'feature' ||
+                            k === 'feature-state' ||
+                            k === 'pitch' ||
+                            k === 'distance-from-center' ||
+                            k === 'measure-light';
+                    }));
+                }
             }
         }
 
         // schema key required checks
         if (obj.required !== undefined) {
             t.equal('boolean', typeof obj.required, `${k}.required (boolean)`);
+        }
+
+        if (obj.required && obj.optional) {
+            t.fail(`${k} is marked as "required" and "optional" at the same time`);
         }
 
         // schema key transition checks

@@ -117,14 +117,14 @@ class StructArray {
      * deserialization.
      * @private
      */
-    static serialize(array: StructArray, transferables?: Array<Transferable>): SerializedStructArray {
+    static serialize(array: StructArray, transferables?: Set<Transferable>): SerializedStructArray {
         assert(!array.isTransferred);
 
         array._trim();
 
         if (transferables) {
             array.isTransferred = true;
-            transferables.push(array.arrayBuffer);
+            transferables.add(array.arrayBuffer);
         }
 
         return {
@@ -155,7 +155,7 @@ class StructArray {
     }
 
     /**
-     * Resets the the length of the array to 0 without de-allocating capcacity.
+     * Resets the the length of the array to 0 without de-allocating capacity.
      */
     clear() {
         this.length = 0;

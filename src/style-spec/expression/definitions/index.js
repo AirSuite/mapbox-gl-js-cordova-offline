@@ -14,7 +14,7 @@ import {
     toString as typeToString
 } from '../types.js';
 
-import {typeOf, Color, validateRGBA, toString as valueToString} from '../values.js';
+import {typeOf, Color, validateRGBA, validateHSLA, toString as valueToString} from '../values.js';
 import CompoundExpression from '../compound_expression.js';
 import RuntimeError from '../runtime_error.js';
 import Let from './let.js';
@@ -45,10 +45,12 @@ import FormatExpression from './format.js';
 import ImageExpression from './image.js';
 import Length from './length.js';
 import Within from './within.js';
+import Distance from './distance.js';
 
 import type EvaluationContext from '../evaluation_context.js';
 import type {Varargs} from '../compound_expression.js';
 import type {Expression, ExpressionRegistry} from '../expression.js';
+import {mulberry32} from '../../util/random.js';
 
 const expressions: ExpressionRegistry = {
     // special forms
@@ -106,7 +108,9 @@ const expressions: ExpressionRegistry = {
     // $FlowFixMe[method-unbinding]
     'var': Var,
     // $FlowFixMe[method-unbinding]
-    'within': Within
+    'within': Within,
+    // $FlowFixMe[method-unbinding]
+    'distance': Distance
 };
 
 function rgba(ctx: EvaluationContext, [r, g, b, a]: Array<Expression>) {
@@ -119,6 +123,19 @@ function rgba(ctx: EvaluationContext, [r, g, b, a]: Array<Expression>) {
     return new Color(r / 255 * alpha, g / 255 * alpha, b / 255 * alpha, alpha);
 }
 
+function hsla(ctx: EvaluationContext, [h, s, l, a]: Array<Expression>) {
+    h = h.evaluate(ctx);
+    s = s.evaluate(ctx);
+    l = l.evaluate(ctx);
+    const alpha = a ? a.evaluate(ctx) : 1;
+    const error = validateHSLA(h, s, l, alpha);
+    if (error) throw new RuntimeError(error);
+    const colorFunction = `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+    const color = Color.parse(colorFunction);
+    if (!color) throw new RuntimeError(`Failed to parse HSLA color: ${colorFunction}`);
+    return color;
+}
+
 function has(key: string, obj: {[string]: any}): boolean {
     return key in obj;
 }
@@ -126,6 +143,59 @@ function has(key: string, obj: {[string]: any}): boolean {
 function get(key: string, obj: {[string]: any}) {
     const v = obj[key];
     return typeof v === 'undefined' ? null : v;
+}
+
+function coerceValue(type: 'string' | 'number' | 'boolean' | 'color', value: any): any {
+    switch (type) {
+    case 'string': return String(value);
+    case 'number': return +value;
+    case 'boolean': return !!value;
+    case 'color': return Color.parse(value);
+    }
+    return value;
+}
+
+function clampToAllowedNumber(value: number, min: number | void, max: number | void, step: number | void): number {
+    if (step !== undefined) {
+        value = step * Math.round(value / step);
+    }
+    if (min !== undefined && value < min) {
+        value = min;
+    }
+    if (max !== undefined && value > max) {
+        value = max;
+    }
+    return value;
+}
+
+function getConfig(ctx: EvaluationContext, key: string, scope: string) {
+    if (scope.length) {
+        key += `\u{1f}${scope}`;
+    }
+    const config = ctx.getConfig(key);
+    if (!config) return null;
+
+    const {type, value, values, minValue, maxValue, stepValue} = config;
+
+    const defaultValue = config.default.evaluate(ctx);
+    let result = value ? value.evaluate(ctx) : defaultValue;
+
+    if (type) result = coerceValue(type, result);
+
+    if (value !== undefined && result !== undefined && values && !values.includes(result)) {
+        result = defaultValue;
+        if (type) result = coerceValue(type, result);
+    }
+
+    if (result !== undefined && (minValue !== undefined || maxValue !== undefined || stepValue !== undefined)) {
+        if (typeof result === 'number') {
+            result = clampToAllowedNumber(result, minValue, maxValue, stepValue);
+        } else if (Array.isArray(result)) {
+            result = result.map((item) => typeof item === 'number' ? clampToAllowedNumber(item, minValue, maxValue, stepValue) : item);
+        }
+    }
+
+    return result;
 }
 
 function binarySearch(v: any, a: {[number]: any}, i: number, j: number) {
@@ -143,6 +213,19 @@ function binarySearch(v: any, a: {[number]: any}, i: number, j: number) {
 
 function varargs(type: Type): Varargs {
     return {type};
+}
+
+function hashString(str: string) {
+    let hash = 0;
+    if (str.length === 0) {
+        return hash;
+    }
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash;
 }
 
 CompoundExpression.register(expressions, {
@@ -173,6 +256,16 @@ CompoundExpression.register(expressions, {
         [NumberType, NumberType, NumberType, NumberType],
         rgba
     ],
+    'hsl': [
+        ColorType,
+        [NumberType, NumberType, NumberType],
+        hsla
+    ],
+    'hsla': [
+        ColorType,
+        [NumberType, NumberType, NumberType, NumberType],
+        hsla
+    ],
     'has': {
         type: BooleanType,
         overloads: [
@@ -194,6 +287,18 @@ CompoundExpression.register(expressions, {
             ], [
                 [StringType, ObjectType],
                 (ctx, [key, obj]) => get(key.evaluate(ctx), obj.evaluate(ctx))
+            ]
+        ]
+    },
+    'config': {
+        type: ValueType,
+        overloads: [
+            [
+                [StringType],
+                (ctx, [key]) => getConfig(ctx, key.evaluate(ctx), '')
+            ], [
+                [StringType, StringType],
+                (ctx, [key, scope]) => getConfig(ctx, key.evaluate(ctx), scope.evaluate(ctx))
             ]
         ]
     },
@@ -232,6 +337,11 @@ CompoundExpression.register(expressions, {
         [],
         (ctx) => ctx.distanceFromCenter()
     ],
+    'measure-light': [
+        NumberType,
+        [StringType],
+        (ctx, [s]) => ctx.measureLight(s.evaluate(ctx))
+    ],
     'heatmap-density': [
         NumberType,
         [],
@@ -241,6 +351,11 @@ CompoundExpression.register(expressions, {
         NumberType,
         [],
         (ctx) => ctx.globals.lineProgress || 0
+    ],
+    'raster-value': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterValue || 0
     ],
     'sky-radial-progress': [
         NumberType,
@@ -595,7 +710,30 @@ CompoundExpression.register(expressions, {
         StringType,
         [CollatorType],
         (ctx, [collator]) => collator.evaluate(ctx).resolvedLocale()
-    ]
+    ],
+    'random': [
+        NumberType,
+        [NumberType, NumberType, ValueType],
+        (ctx, args) => {
+            const [min, max, seed] = args.map(arg => arg.evaluate(ctx));
+            if (min > max) {
+                return min;
+            }
+            if (min === max) {
+                return min;
+            }
+            let seedVal;
+            if (typeof seed === 'string') {
+                seedVal = hashString(seed);
+            } else if (typeof seed === 'number') {
+                seedVal = seed;
+            } else {
+                throw new RuntimeError(`Invalid seed input: ${seed}`);
+            }
+            const random = mulberry32(seedVal)();
+            return min + random * (max - min);
+        }
+    ],
 });
 
 export default expressions;

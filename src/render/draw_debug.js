@@ -54,7 +54,7 @@ function drawDebugTile(painter: Painter, sourceCache: SourceCache, coord: Oversc
     const gl = context.gl;
 
     const isGlobeProjection = tr.projection.name === 'globe';
-    const definesValues = isGlobeProjection ? ['PROJECTION_GLOBE_VIEW'] : null;
+    const definesValues = isGlobeProjection ? ['PROJECTION_GLOBE_VIEW'] : [];
 
     let posMatrix = coord.projMatrix;
 
@@ -68,7 +68,7 @@ function drawDebugTile(painter: Painter, sourceCache: SourceCache, coord: Oversc
         mat4.multiply(posMatrix, tr.projMatrix, posMatrix);
     }
 
-    const program = painter.useProgram('debug', null, definesValues);
+    const program = painter.getOrCreateProgram('debug', {defines: definesValues});
     const tile = sourceCache.getTileByID(coord.key);
     if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
 
@@ -91,7 +91,7 @@ function drawDebugTile(painter: Painter, sourceCache: SourceCache, coord: Oversc
     const debugIndexBuffer = tile._tileDebugIndexBuffer || painter.debugIndexBuffer;
     const debugSegments = tile._tileDebugSegments || painter.debugSegments;
 
-    program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
+    program.draw(painter, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
         debugUniformValues(posMatrix, Color.red), id,
         debugBuffer, debugIndexBuffer, debugSegments,
         null, null, null, [tile._globeTileDebugBorderBuffer]);
@@ -112,7 +112,7 @@ function drawDebugTile(painter: Painter, sourceCache: SourceCache, coord: Oversc
     const debugTextIndexBuffer = tile._tileDebugTextIndexBuffer || painter.quadTriangleIndexBuffer;
     const debugTextSegments = tile._tileDebugTextSegments || painter.debugSegments;
 
-    program.draw(context, gl.TRIANGLES, depthMode, stencilMode, ColorMode.alphaBlended, CullFaceMode.disabled,
+    program.draw(painter, gl.TRIANGLES, depthMode, stencilMode, ColorMode.alphaBlended, CullFaceMode.disabled,
         debugUniformValues(posMatrix, Color.transparent, scaleRatio), id,
         debugTextBuffer, debugTextIndexBuffer, debugTextSegments,
         null, null, null, [tile._globeTileDebugTextBuffer]);
@@ -150,7 +150,7 @@ function drawTileQueryGeometry(painter: Painter, sourceCache: SourceCache, coord
     const gl = context.gl;
 
     const posMatrix = coord.projMatrix;
-    const program = painter.useProgram('debug');
+    const program = painter.getOrCreateProgram('debug');
     const tile = sourceCache.getTileByID(coord.key);
     if (painter.terrain) painter.terrain.setupElevationDraw(tile, program);
 
@@ -172,7 +172,7 @@ function drawTileQueryGeometry(painter: Painter, sourceCache: SourceCache, coord
         const indexBuffer = queryViz.indexBuffer;
         const segments = queryViz.segments;
         if (vertexBuffer != null && indexBuffer != null && segments != null) {
-            program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
+            program.draw(painter, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
                 debugUniformValues(posMatrix, queryViz.color), id,
                 vertexBuffer, indexBuffer, segments);
         }
@@ -184,7 +184,7 @@ function drawTileQueryGeometry(painter: Painter, sourceCache: SourceCache, coord
         const indexBuffer = boundsViz.indexBuffer;
         const segments = boundsViz.segments;
         if (vertexBuffer != null && indexBuffer != null && segments != null) {
-            program.draw(context, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
+            program.draw(painter, gl.LINE_STRIP, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
                 debugUniformValues(posMatrix, boundsViz.color), id,
                 vertexBuffer, indexBuffer, segments);
         }

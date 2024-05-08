@@ -79,8 +79,8 @@ function packColor(color: Color): [number, number] {
  */
 
 interface AttributeBinder {
-    populatePaintArray(length: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, formattedSection?: FormattedSection): void;
-    updatePaintArray(start: number, length: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, imagePositions: SpritePositions): void;
+    populatePaintArray(length: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, brightness: ?number, formattedSection?: FormattedSection): void;
+    updatePaintArray(start: number, length: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, imagePositions: SpritePositions, brightness: number): void;
     upload(Context): void;
     destroy(): void;
 }
@@ -169,17 +169,17 @@ class SourceExpressionBinder implements AttributeBinder {
         this.paintVertexArray = new PaintVertexArray();
     }
 
-    populatePaintArray(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+    populatePaintArray(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, brightness: ?number, formattedSection?: FormattedSection) {
         const start = this.paintVertexArray.length;
         assert(Array.isArray(availableImages));
         // $FlowFixMe[method-unbinding]
-        const value = this.expression.evaluate(new EvaluationParameters(0), feature, {}, canonical, availableImages, formattedSection);
+        const value = this.expression.evaluate(new EvaluationParameters(0, {brightness}), feature, {}, canonical, availableImages, formattedSection);
         this.paintVertexArray.resize(newLength);
         this._setPaintValue(start, newLength, value);
     }
 
-    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>) {
-        const value = this.expression.evaluate({zoom: 0}, feature, featureState, undefined, availableImages);
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, spritePositions: SpritePositions, brightness: number) {
+        const value = this.expression.evaluate({zoom: 0, brightness}, feature, featureState, undefined, availableImages);
         this._setPaintValue(start, end, value);
     }
 
@@ -202,7 +202,7 @@ class SourceExpressionBinder implements AttributeBinder {
             if (this.paintVertexBuffer && this.paintVertexBuffer.buffer) {
                 this.paintVertexBuffer.updateData(this.paintVertexArray);
             } else {
-                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent);
+                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent || !this.expression.isLightConstant);
             }
         }
     }
@@ -242,19 +242,19 @@ class CompositeExpressionBinder implements AttributeBinder, UniformBinder {
         this.paintVertexArray = new PaintVertexArray();
     }
 
-    populatePaintArray(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+    populatePaintArray(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, brightness: ?number, formattedSection?: FormattedSection) {
         // $FlowFixMe[method-unbinding]
-        const min = this.expression.evaluate(new EvaluationParameters(this.zoom), feature, {}, canonical, availableImages, formattedSection);
+        const min = this.expression.evaluate(new EvaluationParameters(this.zoom, {brightness}), feature, {}, canonical, availableImages, formattedSection);
         // $FlowFixMe[method-unbinding]
-        const max = this.expression.evaluate(new EvaluationParameters(this.zoom + 1), feature, {}, canonical, availableImages, formattedSection);
+        const max = this.expression.evaluate(new EvaluationParameters(this.zoom + 1, {brightness}), feature, {}, canonical, availableImages, formattedSection);
         const start = this.paintVertexArray.length;
         this.paintVertexArray.resize(newLength);
         this._setPaintValue(start, newLength, min, max);
     }
 
-    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>) {
-        const min = this.expression.evaluate({zoom: this.zoom}, feature, featureState, undefined, availableImages);
-        const max = this.expression.evaluate({zoom: this.zoom + 1}, feature, featureState, undefined, availableImages);
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, spritePositions: SpritePositions, brightness: number) {
+        const min = this.expression.evaluate({zoom: this.zoom, brightness}, feature, featureState, undefined, availableImages);
+        const max = this.expression.evaluate({zoom: this.zoom + 1, brightness}, feature, featureState, undefined, availableImages);
         this._setPaintValue(start, end, min, max);
     }
 
@@ -278,7 +278,7 @@ class CompositeExpressionBinder implements AttributeBinder, UniformBinder {
             if (this.paintVertexBuffer && this.paintVertexBuffer.buffer) {
                 this.paintVertexBuffer.updateData(this.paintVertexArray);
             } else {
-                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent);
+                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent || !this.expression.isLightConstant);
             }
         }
     }
@@ -327,7 +327,7 @@ class PatternCompositeBinder implements AttributeBinder {
         this._setPaintValues(start, length, feature.patterns && feature.patterns[this.layerId], imagePositions);
     }
 
-    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, imagePositions: SpritePositions) {
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, availableImages: Array<string>, imagePositions: SpritePositions, _?: ?number) {
         this._setPaintValues(start, end, feature.patterns && feature.patterns[this.layerId], imagePositions);
     }
 
@@ -345,7 +345,7 @@ class PatternCompositeBinder implements AttributeBinder {
 
     upload(context: Context) {
         if (this.paintVertexArray && this.paintVertexArray.arrayBuffer) {
-            this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent);
+            this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent || !this.expression.isLightConstant);
         }
     }
 
@@ -387,8 +387,8 @@ export default class ProgramConfiguration {
         const keys = [];
 
         for (const property in layer.paint._values) {
-            if (!filterProperties(property)) continue;
             const value = layer.paint.get(property);
+            if (!filterProperties(property)) continue;
             if (!(value instanceof PossiblyEvaluatedPropertyValue) || !supportsPropertyExpression(value.property.specification)) {
                 continue;
             }
@@ -434,11 +434,11 @@ export default class ProgramConfiguration {
         return binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder ? binder.maxValue : 0;
     }
 
-    populatePaintArrays(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+    populatePaintArrays(newLength: number, feature: Feature, imagePositions: SpritePositions, availableImages: Array<string>, canonical?: CanonicalTileID, brightness: ?number, formattedSection?: FormattedSection) {
         for (const property in this.binders) {
             const binder = this.binders[property];
             if (binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder || binder instanceof PatternCompositeBinder)
-                (binder: AttributeBinder).populatePaintArray(newLength, feature, imagePositions, availableImages, canonical, formattedSection);
+                (binder: AttributeBinder).populatePaintArray(newLength, feature, imagePositions, availableImages, canonical, brightness, formattedSection);
         }
     }
     setConstantPatternPositions(posTo: SpritePosition) {
@@ -449,25 +449,35 @@ export default class ProgramConfiguration {
         }
     }
 
-    updatePaintArrays(featureStates: FeatureStates, featureMap: FeaturePositionMap, vtLayer: IVectorTileLayer, layer: TypedStyleLayer, availableImages: Array<string>, imagePositions: SpritePositions): boolean {
+    updatePaintArrays(featureStates: FeatureStates, featureMap: FeaturePositionMap, featureMapWithoutIds: FeaturePositionMap, vtLayer: IVectorTileLayer, layer: TypedStyleLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness: number): boolean {
         let dirty: boolean = false;
-        for (const id in featureStates) {
-            const positions = featureMap.getPositions(id);
-
-            for (const pos of positions) {
-                const feature = vtLayer.feature(pos.index);
-
-                for (const property in this.binders) {
-                    const binder = this.binders[property];
-                    if ((binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder ||
-                         binder instanceof PatternCompositeBinder) && (binder: any).expression.isStateDependent === true) {
-                        //AHM: Remove after https://github.com/mapbox/mapbox-gl-js/issues/6255
-                        const value = layer.paint.get(property);
-                        (binder: any).expression = value.value;
-                        (binder: AttributeBinder).updatePaintArray(pos.start, pos.end, feature, featureStates[id], availableImages, imagePositions);
-                        dirty = true;
+        const keys = Object.keys(featureStates);
+        const featureStateUpdate = (keys.length !== 0);
+        const ids = featureStateUpdate ? keys : featureMap.uniqueIds;
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if ((binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder ||
+                 binder instanceof PatternCompositeBinder) && ((binder: any).expression.isStateDependent === true || (binder: any).expression.isLightConstant === false)) {
+                //AHM: Remove after https://github.com/mapbox/mapbox-gl-js/issues/6255
+                const value = layer.paint.get(property);
+                (binder: any).expression = value.value;
+                for (const id of ids) {
+                    const state = featureStates[id.toString()];
+                    featureMap.eachPosition(id, (index, start, end) => {
+                        const feature = vtLayer.feature(index);
+                        (binder: AttributeBinder).updatePaintArray(start, end, feature, state, availableImages, imagePositions, brightness);
+                    });
+                }
+                if (!featureStateUpdate) {
+                    for (const id of featureMapWithoutIds.uniqueIds) {
+                        const state = featureStates[id.toString()];
+                        featureMapWithoutIds.eachPosition(id, (index, start, end) => {
+                            const feature = vtLayer.feature(index);
+                            (binder: AttributeBinder).updatePaintArray(start, end, feature, state, availableImages, imagePositions, brightness);
+                        });
                     }
                 }
+                dirty = true;
             }
         }
         return dirty;
@@ -571,7 +581,9 @@ export class ProgramConfigurationSet<Layer: TypedStyleLayer> {
     programConfigurations: {[_: string]: ProgramConfiguration};
     needsUpload: boolean;
     _featureMap: FeaturePositionMap;
+    _featureMapWithoutIds: FeaturePositionMap;
     _bufferOffset: number;
+    _idlessCounter: number;
 
     constructor(layers: $ReadOnlyArray<Layer>, zoom: number, filterProperties: (_: string) => boolean = () => true) {
         this.programConfigurations = {};
@@ -580,25 +592,30 @@ export class ProgramConfigurationSet<Layer: TypedStyleLayer> {
         }
         this.needsUpload = false;
         this._featureMap = new FeaturePositionMap();
+        this._featureMapWithoutIds = new FeaturePositionMap();
         this._bufferOffset = 0;
+        this._idlessCounter = 0;
     }
 
-    populatePaintArrays(length: number, feature: Feature, index: number, imagePositions: SpritePositions, availableImages: Array<string>, canonical: CanonicalTileID, formattedSection?: FormattedSection) {
+    populatePaintArrays(length: number, feature: Feature, index: number, imagePositions: SpritePositions, availableImages: Array<string>, canonical: CanonicalTileID, brightness: ?number, formattedSection?: FormattedSection) {
         for (const key in this.programConfigurations) {
-            this.programConfigurations[key].populatePaintArrays(length, feature, imagePositions, availableImages, canonical, formattedSection);
+            this.programConfigurations[key].populatePaintArrays(length, feature, imagePositions, availableImages, canonical, brightness, formattedSection);
         }
 
         if (feature.id !== undefined) {
             this._featureMap.add(feature.id, index, this._bufferOffset, length);
+        } else {
+            this._featureMapWithoutIds.add(this._idlessCounter, index, this._bufferOffset, length);
+            this._idlessCounter += 1;
         }
         this._bufferOffset = length;
 
         this.needsUpload = true;
     }
 
-    updatePaintArrays(featureStates: FeatureStates, vtLayer: IVectorTileLayer, layers: $ReadOnlyArray<TypedStyleLayer>, availableImages: Array<string>, imagePositions: SpritePositions) {
+    updatePaintArrays(featureStates: FeatureStates, vtLayer: IVectorTileLayer, layers: $ReadOnlyArray<TypedStyleLayer>, availableImages: Array<string>, imagePositions: SpritePositions, brightness: ?number) {
         for (const layer of layers) {
-            this.needsUpload = this.programConfigurations[layer.id].updatePaintArrays(featureStates, this._featureMap, vtLayer, layer, availableImages, imagePositions) || this.needsUpload;
+            this.needsUpload = this.programConfigurations[layer.id].updatePaintArrays(featureStates, this._featureMap, this._featureMapWithoutIds, vtLayer, layer, availableImages, imagePositions, brightness || 0) || this.needsUpload;
         }
     }
 
@@ -626,6 +643,8 @@ const attributeNameExceptions = {
     'icon-opacity': ['opacity'],
     'text-color': ['fill_color'],
     'icon-color': ['fill_color'],
+    'text-emissive-strength': ['emissive_strength'],
+    'icon-emissive-strength': ['emissive_strength'],
     'text-halo-color': ['halo_color'],
     'icon-halo-color': ['halo_color'],
     'text-halo-blur': ['halo_blur'],
