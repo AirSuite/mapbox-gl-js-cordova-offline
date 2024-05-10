@@ -237,10 +237,13 @@ class RasterTileSource extends Evented implements Source {
                             } else {
                                 tileData = `data:image/png;base64,${tileData}`;
                             }
+                            tile.request = getmbtileImage(tileData, done.bind(this));
+                        } else {
+                            callback(null);
                         }
-                        tile.request = getmbtileImage(tileData, done.bind(this));
                     }.bind(this), function (tx, e) {
                         console.log(`Database Error: ${e.message}`);
+                        callback(null);
                     });
                 }.bind(this));
             }

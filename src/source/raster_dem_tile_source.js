@@ -48,6 +48,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
             const database = getTerrainMbtileFile(z, x, y);
             try {
                 if (window.openDatabases[database] === undefined) {
+                    //console.log('No DEM', database, z, x, y);
                     //do nothing because offline DEM database is not available
                     callback(null);
                     return;
@@ -75,10 +76,14 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                                 } else {
                                     tileData = `data:image/webp;base64,${tileData}`;
                                 }
+                                tile.request = getmbtileImage(tileData, imageLoaded.bind(this));
+                            } else {
+                                //console.log('No Tile', database, z, x, y);
+                                callback(null);
                             }
-                            tile.request = getmbtileImage(tileData, imageLoaded.bind(this));
                         }.bind(this), function (tx, e) {
                             console.log(`Database Error: ${e.message}`);
+                            callback(null);
                         });
                     }.bind(this));
                 }

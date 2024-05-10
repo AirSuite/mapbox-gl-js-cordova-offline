@@ -73,10 +73,12 @@ class VectorTileSource extends Evented implements Source {
     isTileClipped: boolean | void;
     _tileJSONRequest: ?Cancelable;
     _loaded: boolean;
-    _tileWorkers: {[string]: Actor};
+    _tileWorkers: { [string]: Actor };
     _deduped: DedupedRequest;
 
-    constructor(id: string, options: VectorSourceSpecification & {collectResourceTiming: boolean}, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: VectorSourceSpecification & {
+        collectResourceTiming: boolean
+    }, dispatcher: Dispatcher, eventedParent: Evented) {
         super();
         this.id = id;
         this.dispatcher = dispatcher;
@@ -290,19 +292,24 @@ class VectorTileSource extends Evented implements Source {
                     if (window.AppType === "CORDOVA") {
                         window.openDatabases[database].transaction(function (tx) {
                             tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
-                                const tileData = res.rows.item(0).tile_data64,
-                                    tileDataDecoded = window.atob(tileData),
-                                    tileDataDecodedLength = tileDataDecoded.length,
-                                    tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
-                                for (let i = 0; i < tileDataDecodedLength; ++i) {
-                                    tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                const tileData = res.rows.item(0).tile_data64;
+                                if (tileData !== undefined) {
+                                    const tileDataDecoded = window.atob(tileData),
+                                        tileDataDecodedLength = tileDataDecoded.length,
+                                        tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                                    for (let i = 0; i < tileDataDecodedLength; ++i) {
+                                        tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                    }
+                                    const tileDataInflated = Pako.inflate(tileDataTypedArray);
+                                    params.tileData = tileDataInflated;
+                                    tile.actor = this.dispatcher.getActor();
+                                    tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
+                                } else {
+                                    callback(null);
                                 }
-                                const tileDataInflated = Pako.inflate(tileDataTypedArray);
-                                params.tileData = tileDataInflated;
-                                tile.actor = this.dispatcher.getActor();
-                                tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
                             }.bind(this), function (tx, e) {
                                 console.log(`Database Error: ${e.message}`);
+                                callback(null);
                             });
                         }.bind(this));
                     }
