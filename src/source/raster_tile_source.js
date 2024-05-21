@@ -210,42 +210,75 @@ class RasterTileSource extends Evented implements Source {
             if (database.substring(0, 4) === 'VFR_') {
                 database = database.slice(4);
             }
-            if (window.openDatabases[database] === undefined) {
-                //do nothing because offline raster tile database is not available
-                callback(null);
-                return;
-            }
-            if (window.openDatabases[database] === true) {
+            try {
+                if (window.openDatabases[database] === undefined) {
+                    //do nothing because offline raster tile database is not available
+                    callback(null);
+                    return;
+                }
+                if (window.openDatabases[database] === true) {
+                    if (window.AppType === "CORDOVA") {
+                        window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                            name: `${database}.mbtiles`,
+                            location: 2,
+                            createFromLocation: 0,
+                            androidDatabaseImplementation: 1
+                        });
+                    }
+                }
                 if (window.AppType === "CORDOVA") {
-                    window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                        name: `${database}.mbtiles`,
-                        location: 2,
-                        createFromLocation: 0,
-                        androidDatabaseImplementation: 1
+                    window.openDatabases[database].transaction(function (tx) {
+                        tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
+
+                            let tileData = res.rows.item(0).tile_data64;
+                            if (tileData !== undefined) {
+                                if (!webpSupported.supported) {
+                                    //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                                    tileData = WEBPtoPNG(tileData);
+                                } else {
+                                    tileData = `data:image/png;base64,${tileData}`;
+                                }
+                                tile.request = getmbtileImage(tileData, done.bind(this));
+                            } else {
+                                callback(null);
+                            }
+                        }.bind(this), function (tx, e) {
+                            console.log(`Database Error: ${e.message}`);
+                            callback(null);
+                        });
+                    }.bind(this));
+                } else {
+                    window.vueApp.utilities.sqlite.open(database + '.mbtiles').then((connection) => {
+                        connection.query(
+                            `SELECT tile_data AS tile_dataUint8Array
+                             FROM images
+                                      LEFT OUTER JOIN map ON images.tile_id = map.tile_id
+                             WHERE map.zoom_level = ${z}
+                               AND map.tile_column = ${x}
+                               AND map.tile_row = ${y}`
+                        ).then((res) => {
+                            if (res[0] !== undefined) {
+                                let tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
+                                if (!webpSupported.supported) {
+                                    //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                                    tileData = WEBPtoPNG(tileData);
+                                } else {
+                                    tileData = `data:image/png;base64,${tileData}`;
+                                }
+                                tile.request = getmbtileImage(tileData, done.bind(this));
+                            } else {
+                                callback(null);
+                            }
+                        })
+                            .catch((e) => {
+                                //console.log(`Database Error: ${e.message}`);
+                                callback(null);
+                            });
                     });
                 }
-            }
-            if (window.AppType === "CORDOVA") {
-                window.openDatabases[database].transaction(function (tx) {
-                    tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
-
-                        let tileData = res.rows.item(0).tile_data64;
-                        if (tileData !== undefined) {
-                            if (!webpSupported.supported) {
-                                //Because Safari doesn't support WEBP we need to convert it tiles PNG
-                                tileData = WEBPtoPNG(tileData);
-                            } else {
-                                tileData = `data:image/png;base64,${tileData}`;
-                            }
-                            tile.request = getmbtileImage(tileData, done.bind(this));
-                        } else {
-                            callback(null);
-                        }
-                    }.bind(this), function (tx, e) {
-                        console.log(`Database Error: ${e.message}`);
-                        callback(null);
-                    });
-                }.bind(this));
+            } catch (e) {
+                console.log('Error:', e);
+                callback(null);
             }
         }
 

@@ -86,9 +86,39 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                             callback(null);
                         });
                     }.bind(this));
+                } else {
+                    window.vueApp.utilities.sqlite.open(database + '.mbtiles').then((connection) => {
+                        connection.query(
+                            `SELECT tile_data AS tile_dataUint8Array
+                                 FROM images
+                                          LEFT OUTER JOIN map ON images.tile_id = map.tile_id
+                                 WHERE map.zoom_level = ${z}
+                                   AND map.tile_column = ${x}
+                                   AND map.tile_row = ${y}`
+                        )
+                            .then((res) => {
+                                if (res[0] !== undefined) {
+                                    let tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
+                                    if (!webpSupported.supported) {
+                                        //Because Safari doesn't support WEBP we need to convert it tiles PNG
+                                        tileData = WEBPtoPNG(tileData);
+                                    } else {
+                                        tileData = `data:image/png;base64,${tileData}`;
+                                    }
+                                    tile.request = getmbtileImage(tileData, done.bind(this));
+                                } else {
+                                    callback(null);
+                                }
+                            })
+                            .catch((e) => {
+                                //console.log(`Database Error: ${e.message}`);
+                                callback(null);
+                            });
+                    });
                 }
             } catch (e) {
                 console.log('Error:', e);
+                callback(null);
             }
         }
 

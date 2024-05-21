@@ -6,7 +6,7 @@ import {extend, pick} from '../util/util.js';
 import loadTileJSON from './load_tilejson.js';
 import {postTurnstileEvent} from '../util/mapbox.js';
 import TileBounds from './tile_bounds.js';
-import {ResourceType} from '../util/ajax.js';
+import {getmbtileImage, ResourceType} from '../util/ajax.js';
 import browser from '../util/browser.js';
 import {cacheEntryPossiblyAdded} from '../util/tile_request_cache.js';
 import {DedupedRequest, loadVectorTile} from './load_vector_tile.js';
@@ -24,6 +24,7 @@ import Pako from 'pako';
 import type Actor from '../util/actor.js';
 import type {LoadVectorTileResult} from './load_vector_tile.js';
 import type {WorkerTileResult} from './worker_source.js';
+import webpSupported from "../util/webp_supported.js";
 
 /**
  * A source containing vector tiles in [Mapbox Vector Tile format](https://docs.mapbox.com/vector-tiles/reference/).
@@ -274,44 +275,82 @@ class VectorTileSource extends Evented implements Source {
                         y = Rurl[2];
                     y = (1 << z) - 1 - y;
                     const database = params.source;
-                    if (window.openDatabases[database] === undefined) {
-                        //do nothing because offline vectore tile database is not available
-                        callback(null);
-                        return;
-                    }
-                    if (window.openDatabases[database] === true) {
+                    try {
+                        if (window.openDatabases[database] === undefined) {
+                            //do nothing because offline vectore tile database is not available
+                            callback(null);
+                            return;
+                        }
+                        if (window.openDatabases[database] === true) {
+                            if (window.AppType === "CORDOVA") {
+                                window.openDatabases[database] = window.sqlitePlugin.openDatabase({
+                                    name: `${database}.mbtiles`,
+                                    location: 2,
+                                    createFromLocation: 0,
+                                    androidDatabaseImplementation: 1
+                                });
+                            }
+                        }
                         if (window.AppType === "CORDOVA") {
-                            window.openDatabases[database] = window.sqlitePlugin.openDatabase({
-                                name: `${database}.mbtiles`,
-                                location: 2,
-                                createFromLocation: 0,
-                                androidDatabaseImplementation: 1
+                            window.openDatabases[database].transaction(function (tx) {
+                                tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
+                                    const tileData = res.rows.item(0).tile_data64;
+                                    if (tileData !== undefined) {
+                                        const tileDataDecoded = window.atob(tileData),
+                                            tileDataDecodedLength = tileDataDecoded.length,
+                                            tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                                        for (let i = 0; i < tileDataDecodedLength; ++i) {
+                                            tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                        }
+                                        const tileDataInflated = Pako.inflate(tileDataTypedArray);
+                                        params.tileData = tileDataInflated;
+                                        tile.actor = this.dispatcher.getActor();
+                                        tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
+                                    } else {
+                                        callback(null);
+                                    }
+                                }.bind(this), function (tx, e) {
+                                    console.log(`Database Error: ${e.message}`);
+                                    callback(null);
+                                });
+                            }.bind(this));
+                        } else {
+                            const thisI = this;
+                            window.vueApp.utilities.sqlite.open(database + '.mbtiles').then((connection) => {
+                                connection.query(
+                                    `SELECT tile_data AS tile_dataUint8Array
+                                     FROM images
+                                              LEFT OUTER JOIN map ON images.tile_id = map.tile_id
+                                     WHERE map.zoom_level = ${z}
+                                       AND map.tile_column = ${x}
+                                       AND map.tile_row = ${y}`
+                                )
+                                    .then((res) => {
+                                        if (res[0] !== undefined) {
+                                            const tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
+                                            const tileDataDecoded = window.atob(tileData),
+                                                tileDataDecodedLength = tileDataDecoded.length,
+                                                tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                                            for (let i = 0; i < tileDataDecodedLength; ++i) {
+                                                tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                            }
+                                            const tileDataInflated = Pako.inflate(tileDataTypedArray);
+                                            params.tileData = tileDataInflated;
+                                            tile.actor = thisI.dispatcher.getActor();
+                                            tile.request = tile.actor.send('loadTile', params, done.bind(thisI), undefined, true);
+                                        } else {
+                                            callback(null);
+                                        }
+                                    })
+                                    .catch((e) => {
+                                        //console.log(`Database Error: ${e.message}`);
+                                        callback(null);
+                                    });
                             });
                         }
-                    }
-                    if (window.AppType === "CORDOVA") {
-                        window.openDatabases[database].transaction(function (tx) {
-                            tx.executeSql('SELECT BASE64(tile_data) AS tile_data64 FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?', [z, x, y], function (tx, res) {
-                                const tileData = res.rows.item(0).tile_data64;
-                                if (tileData !== undefined) {
-                                    const tileDataDecoded = window.atob(tileData),
-                                        tileDataDecodedLength = tileDataDecoded.length,
-                                        tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
-                                    for (let i = 0; i < tileDataDecodedLength; ++i) {
-                                        tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
-                                    }
-                                    const tileDataInflated = Pako.inflate(tileDataTypedArray);
-                                    params.tileData = tileDataInflated;
-                                    tile.actor = this.dispatcher.getActor();
-                                    tile.request = tile.actor.send('loadTile', params, done.bind(this), undefined, true);
-                                } else {
-                                    callback(null);
-                                }
-                            }.bind(this), function (tx, e) {
-                                console.log(`Database Error: ${e.message}`);
-                                callback(null);
-                            });
-                        }.bind(this));
+                    } catch (e) {
+                        console.log('Error:', e);
+                        callback(null);
                     }
                 }
             }
