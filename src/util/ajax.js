@@ -77,6 +77,7 @@ export type ResponseCallback<T> = (error: ?Error, data: ?T, cacheControl: ?strin
 export class AJAXError extends Error {
     status: number;
     url: string;
+
     constructor(message: string, status: number, url: string) {
         if (status === 401 && isMapboxHTTPURL(url)) {
             message += ': you may have provided an invalid Mapbox access token. See https://docs.mapbox.com/api/overview/#access-tokens-and-token-scopes';
@@ -165,8 +166,8 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
     const finishRequest = (response: Response, cacheableResponse: ?Response, requestTime: ?number) => {
         (
             requestParameters.type === 'arrayBuffer' ? response.arrayBuffer() :
-            requestParameters.type === 'json' ? response.json() :
-            response.text()
+                requestParameters.type === 'json' ? response.json() :
+                    response.text()
         ).then(result => {
             if (aborted) return;
             if (cacheableResponse && requestTime) {
@@ -190,10 +191,12 @@ function makeFetchRequest(requestParameters: RequestParameters, callback: Respon
         validateOrFetch(null, null);
     }
 
-    return {cancel: () => {
-        aborted = true;
-        if (!complete) controller.abort();
-    }};
+    return {
+        cancel: () => {
+            aborted = true;
+            if (!complete) controller.abort();
+        }
+    };
 }
 
 function makeXMLHttpRequest(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
@@ -233,7 +236,7 @@ function makeXMLHttpRequest(requestParameters: RequestParameters, callback: Resp
     return {cancel: () => xhr.abort()};
 }
 
-export const makeRequest = function(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
+export const makeRequest = function (requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
     // We're trying to use the Fetch API if possible. However, in some situations we can't use it:
     // - Safari exposes AbortController, but it doesn't work actually abort any requests in
     //   older versions (see https://bugs.webkit.org/show_bug.cgi?id=174980#c2). In this case,
@@ -252,19 +255,19 @@ export const makeRequest = function(requestParameters: RequestParameters, callba
     return makeXMLHttpRequest(requestParameters, callback);
 };
 
-export const getJSON = function(requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
+export const getJSON = function (requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
     return makeRequest(extend(requestParameters, {type: 'json'}), callback);
 };
 
-export const getArrayBuffer = function(requestParameters: RequestParameters, callback: ResponseCallback<ArrayBuffer>): Cancelable {
+export const getArrayBuffer = function (requestParameters: RequestParameters, callback: ResponseCallback<ArrayBuffer>): Cancelable {
     return makeRequest(extend(requestParameters, {type: 'arrayBuffer'}), callback);
 };
 
-export const postData = function(requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
+export const postData = function (requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
     return makeRequest(extend(requestParameters, {method: 'POST'}), callback);
 };
 
-export const getData = function(requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
+export const getData = function (requestParameters: RequestParameters, callback: ResponseCallback<string>): Cancelable {
     return makeRequest(extend(requestParameters, {method: 'GET'}), callback);
 };
 
@@ -285,7 +288,9 @@ function arrayBufferToImage(data: ArrayBuffer, callback: Callback<HTMLImageEleme
         // but don't free the image immediately because it might be uploaded in the next frame
         // https://github.com/mapbox/mapbox-gl-js/issues/10226
         img.onload = null;
-        requestAnimationFrame(() => { img.src = transparentPngUrl; });
+        requestAnimationFrame(() => {
+            img.src = transparentPngUrl;
+        });
     };
     img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
     const blob: Blob = new Blob([new Uint8Array(data)], {type: 'image/png'});
@@ -309,7 +314,7 @@ export const resetImageRequestQueue = () => {
 };
 resetImageRequestQueue();
 
-export const getImage = function(requestParameters: RequestParameters, callback: ResponseCallback<HTMLImageElement | ImageBitmap>): Cancelable {
+export const getImage = function (requestParameters: RequestParameters, callback: ResponseCallback<HTMLImageElement | ImageBitmap>): Cancelable {
     if (webpSupported.supported) {
         if (!requestParameters.headers) {
             requestParameters.headers = {};
@@ -324,7 +329,9 @@ export const getImage = function(requestParameters: RequestParameters, callback:
             callback,
             cancelled: false,
             // $FlowFixMe[object-this-reference]
-            cancel() { this.cancelled = true; }
+            cancel() {
+                this.cancelled = true;
+            }
         };
         imageQueue.push(queued);
         return queued;
@@ -372,46 +379,49 @@ export const getImage = function(requestParameters: RequestParameters, callback:
     };
 };
 
-export const getUint8ArrayImage = function(imgData, callback: Callback<HTMLImageElement>): Cancelable {
+export const getUint8ArrayImage = function (imgData, callback: Callback<HTMLImageElement>): Cancelable {
     const img: HTMLImageElement = new window.Image();
     img.onload = () => {
         callback(null, img);
         URL.revokeObjectURL(img.src);
     };
     img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
-    if (imgData == undefined){
-      img.src = transparentPngUrl;
-    }else{
-      const blob: Blob = new window.Blob([imgData], { type: 'image/png' });
-      img.src = URL.createObjectURL(blob);
+    if (imgData == undefined) {
+        img.src = transparentPngUrl;
+    } else {
+        const blob: Blob = new window.Blob([imgData], {type: 'image/png'});
+        img.src = URL.createObjectURL(blob);
     }
     return {
-       cancel:function(){console.log("Cancel getUint8ArrayImage")}
-   };
-};
-
-export const getmbtileImage = function(imgData, callback: Callback<HTMLImageElement>): Cancelable {
-        const img = new window.Image();
-        //const URL = window.URL || window.webkitURL;
-        img.onload = () => {
-            callback(null, img);
-            //URL.revokeObjectURL(img.src);
-        };
-        //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
-        if (imgData == undefined) img.src = transparentPngUrl;
-        else {
-          img.src = imgData;
+        cancel() {
+            console.log("Cancel getUint8ArrayImage");
         }
-
-         return {
-            cancel:function(){console.log("Cancel loadmbtileImage")}
-        };
+    };
 };
 
-export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVideoElement>): Cancelable {
+export const getmbtileImage = function (imgData, callback: Callback<HTMLImageElement>): Cancelable {
+    const img = new window.Image();
+    //const URL = window.URL || window.webkitURL;
+    img.onload = () => {
+        callback(null, img);
+        //URL.revokeObjectURL(img.src);
+    };
+    //const blob = new window.Blob([new Uint8Array(imgData)], { type: 'image/png' });
+    if (imgData === undefined) img.src = transparentPngUrl;
+    else {
+        img.src = imgData;
+    }
+
+    return {
+        cancel() {
+        }
+    };
+};
+
+export const getVideo = function (urls: Array<string>, callback: Callback<HTMLVideoElement>): Cancelable {
     const video: HTMLVideoElement = document.createElement('video');
     video.muted = true;
-    video.onloadstart = function() {
+    video.onloadstart = function () {
         callback(null, video);
     };
     for (let i = 0; i < urls.length; i++) {
@@ -422,5 +432,8 @@ export const getVideo = function(urls: Array<string>, callback: Callback<HTMLVid
         s.src = urls[i];
         video.appendChild(s);
     }
-    return {cancel: () => {}};
+    return {
+        cancel: () => {
+        }
+    };
 };
