@@ -4,7 +4,7 @@ import {extend} from './util.js';
 import type {MapEvent} from '../ui/events.js';
 
 export type Listener = (Object) => void;
-type Listeners = {[_: string]: Array<Listener> };
+type Listeners = { [_: string]: Array<Listener> };
 
 function _addEventListener(type: string, listener: Listener, listenerList: Listeners) {
     const listenerExists = listenerList[type] && listenerList[type].indexOf(listener) !== -1;
@@ -145,10 +145,12 @@ export class Evented {
                 parent.fire(event);
             }
 
-        // To ensure that no error events are dropped, print them to the
-        // console if they have no listeners.
+            // To ensure that no error events are dropped, print them to the
+            // console if they have no listeners.
         } else if (event instanceof ErrorEvent) {
-            console.error(event.error);
+            if (event.error.message !== "Unimplemented type: 3") {
+                console.error(event.error);
+            }
         }
 
         return this;

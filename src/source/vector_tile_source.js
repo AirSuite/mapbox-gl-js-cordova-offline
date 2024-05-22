@@ -316,15 +316,14 @@ class VectorTileSource extends Evented implements Source {
                             }.bind(this));
                         } else {
                             const thisI = this;
-                            window.vueApp.utilities.sqlite.open(database + '.mbtiles').then((connection) => {
-                                connection.query(
-                                    `SELECT tile_data AS tile_dataUint8Array
-                                     FROM images
-                                              LEFT OUTER JOIN map ON images.tile_id = map.tile_id
-                                     WHERE map.zoom_level = ${z}
-                                       AND map.tile_column = ${x}
-                                       AND map.tile_row = ${y}`
-                                )
+                            const query = `SELECT tile_data AS tile_dataUint8Array
+                                           FROM tiles
+                                           WHERE zoom_level = ${z}
+                                             AND tile_column = ${x}
+                                             AND tile_row = ${y}`;
+
+                            window.vueApp.utilities.sqlite.open(`${database}.mbtiles`).then((connection) => {
+                                connection.query(query)
                                     .then((res) => {
                                         if (res[0] !== undefined) {
                                             const tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));

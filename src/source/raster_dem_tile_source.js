@@ -87,15 +87,15 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                         });
                     }.bind(this));
                 } else {
-                    window.vueApp.utilities.sqlite.open(database + '.mbtiles').then((connection) => {
-                        connection.query(
-                            `SELECT tile_data AS tile_dataUint8Array
+                    const thisI = this;
+                    const query = `SELECT tile_data AS tile_dataUint8Array
                                  FROM images
                                           LEFT OUTER JOIN map ON images.tile_id = map.tile_id
                                  WHERE map.zoom_level = ${z}
                                    AND map.tile_column = ${x}
-                                   AND map.tile_row = ${y}`
-                        )
+                                   AND map.tile_row = ${y}`;
+                    window.vueApp.utilities.sqlite.open(`${database}.mbtiles`).then((connection) => {
+                        connection.query(query)
                             .then((res) => {
                                 if (res[0] !== undefined) {
                                     let tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
@@ -103,9 +103,9 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                                         //Because Safari doesn't support WEBP we need to convert it tiles PNG
                                         tileData = WEBPtoPNG(tileData);
                                     } else {
-                                        tileData = `data:image/png;base64,${tileData}`;
+                                        tileData = `data:image/webp;base64,${tileData}`;
                                     }
-                                    tile.request = getmbtileImage(tileData, done.bind(this));
+                                    tile.request = getmbtileImage(tileData, imageLoaded.bind(thisI));
                                 } else {
                                     callback(null);
                                 }
