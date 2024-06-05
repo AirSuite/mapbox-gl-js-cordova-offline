@@ -315,37 +315,45 @@ class VectorTileSource extends Evented implements Source {
                                 });
                             }.bind(this));
                         } else {
+                            if (window.DATABASE_QUEUE[database] === undefined) {
+                                window.DATABASE_QUEUE[database] = 0;
+                            } else {
+                                window.DATABASE_QUEUE[database] += 1;
+                            }
                             const thisI = this;
                             const query = `SELECT tile_data AS tile_dataUint8Array
                                            FROM tiles
                                            WHERE zoom_level = ${z}
                                              AND tile_column = ${x}
                                              AND tile_row = ${y}`;
-
-                            window.vueApp.utilities.sqlite.open(`${database}.mbtiles`).then((connection) => {
-                                connection.query(query)
-                                    .then((res) => {
-                                        if (res[0] !== undefined) {
-                                            const tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
-                                            const tileDataDecoded = window.atob(tileData),
-                                                tileDataDecodedLength = tileDataDecoded.length,
-                                                tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
-                                            for (let i = 0; i < tileDataDecodedLength; ++i) {
-                                                tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                            setTimeout(function () {
+                                window.vueApp.utilities.sqlite.open(`${database}.mbtiles`).then((connection) => {
+                                    connection.query(query)
+                                        .then((res) => {
+                                            if (window.DATABASE_QUEUE[database] > 0) window.DATABASE_QUEUE[database] -= 1;
+                                            if (res[0] !== undefined) {
+                                                const tileData = btoa(String.fromCharCode.apply(null, res[0].tile_dataUint8Array));
+                                                const tileDataDecoded = window.atob(tileData),
+                                                    tileDataDecodedLength = tileDataDecoded.length,
+                                                    tileDataTypedArray = new Uint8Array(tileDataDecodedLength);
+                                                for (let i = 0; i < tileDataDecodedLength; ++i) {
+                                                    tileDataTypedArray[i] = tileDataDecoded.charCodeAt(i);
+                                                }
+                                                const tileDataInflated = Pako.inflate(tileDataTypedArray);
+                                                params.tileData = tileDataInflated;
+                                                tile.actor = thisI.dispatcher.getActor();
+                                                tile.request = tile.actor.send('loadTile', params, done.bind(thisI), undefined, true);
+                                            } else {
+                                                callback(null);
                                             }
-                                            const tileDataInflated = Pako.inflate(tileDataTypedArray);
-                                            params.tileData = tileDataInflated;
-                                            tile.actor = thisI.dispatcher.getActor();
-                                            tile.request = tile.actor.send('loadTile', params, done.bind(thisI), undefined, true);
-                                        } else {
+                                        })
+                                        .catch((e) => {
+                                            if (window.DATABASE_QUEUE[database] > 0) window.DATABASE_QUEUE[database] -= 1;
+                                            //console.log(`Database Error: ${e.message}`);
                                             callback(null);
-                                        }
-                                    })
-                                    .catch((e) => {
-                                        //console.log(`Database Error: ${e.message}`);
-                                        callback(null);
-                                    });
-                            });
+                                        });
+                                });
+                            }, window.DATABASE_QUEUE[database] * 100);
                         }
                     } catch (e) {
                         console.log('Error:', e);
