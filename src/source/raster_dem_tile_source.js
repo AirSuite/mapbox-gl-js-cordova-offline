@@ -123,7 +123,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                                     callback(null);
                                 });
                         });
-                    }, window.DATABASE_QUEUE[database] * 100);
+                    }, window.DATABASE_QUEUE[database] * window.DATABASE_QUEUE_LENGTH);
                 }
             } catch (e) {
                 console.log('Error:', e);
