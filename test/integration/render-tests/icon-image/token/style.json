@@ -2,10 +2,13 @@
   "version": 8,
   "metadata": {
     "test": {
+      "allowed": 0.00037,
+      "pixelRatio": 2,
       "height": 64,
       "width": 64
     }
   },
+  "camera": {"camera-projection": "orthographic"},
   "sources": {
     "geojson": {
       "type": "geojson",

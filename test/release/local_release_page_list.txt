@@ -1,7 +1,6 @@
 extrusion-query.html
 featurestate.html
 markers.html
-preload-tiles.html
 projections.html
 scroll_zoom_blocker.html
 threejs-antenna.html
@@ -15,3 +14,7 @@ filter-features-with-globe.html
 globe-with-video.html
 standard-style.html
 raster-array.html
+raster-particle-layer.html
+featuresets.html
+precipitation.html
+compare.html

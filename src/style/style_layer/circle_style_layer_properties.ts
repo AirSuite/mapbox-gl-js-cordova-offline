@@ -1,0 +1,64 @@
+// This file is generated. Edit build/generate-style-code.ts, then run `npm run codegen`.
+/* eslint-disable */
+
+import styleSpec from '../../style-spec/reference/latest';
+
+import {
+    Properties,
+    ColorRampProperty,
+    DataDrivenProperty,
+    DataConstantProperty
+} from '../properties';
+
+
+import type Color from '../../style-spec/util/color';
+import type Formatted from '../../style-spec/expression/types/formatted';
+import type ResolvedImage from '../../style-spec/expression/types/resolved_image';
+import type {StylePropertySpecification} from '../../style-spec/style-spec';
+
+export type LayoutProps = {
+    "circle-sort-key": DataDrivenProperty<number>;
+    "circle-elevation-reference": DataConstantProperty<"none" | "hd-road-markup">;
+    "visibility": DataConstantProperty<"visible" | "none">;
+};
+let layout: Properties<LayoutProps>;
+export const getLayoutProperties = (): Properties<LayoutProps> => layout || (layout = new Properties({
+    "circle-sort-key": new DataDrivenProperty(styleSpec["layout_circle"]["circle-sort-key"]),
+    "circle-elevation-reference": new DataConstantProperty(styleSpec["layout_circle"]["circle-elevation-reference"]),
+    "visibility": new DataConstantProperty(styleSpec["layout_circle"]["visibility"]),
+}));
+
+export type PaintProps = {
+    "circle-radius": DataDrivenProperty<number>;
+    "circle-color": DataDrivenProperty<Color>;
+    "circle-blur": DataDrivenProperty<number>;
+    "circle-opacity": DataDrivenProperty<number>;
+    "circle-translate": DataConstantProperty<[number, number]>;
+    "circle-translate-anchor": DataConstantProperty<"map" | "viewport">;
+    "circle-pitch-scale": DataConstantProperty<"map" | "viewport">;
+    "circle-pitch-alignment": DataConstantProperty<"map" | "viewport">;
+    "circle-stroke-width": DataDrivenProperty<number>;
+    "circle-stroke-color": DataDrivenProperty<Color>;
+    "circle-stroke-opacity": DataDrivenProperty<number>;
+    "circle-emissive-strength": DataConstantProperty<number>;
+    "circle-color-use-theme": DataDrivenProperty<string>;
+    "circle-stroke-color-use-theme": DataDrivenProperty<string>;
+};
+
+let paint: Properties<PaintProps>;
+export const getPaintProperties = (): Properties<PaintProps> => paint || (paint = new Properties({
+    "circle-radius": new DataDrivenProperty(styleSpec["paint_circle"]["circle-radius"]),
+    "circle-color": new DataDrivenProperty(styleSpec["paint_circle"]["circle-color"]),
+    "circle-blur": new DataDrivenProperty(styleSpec["paint_circle"]["circle-blur"]),
+    "circle-opacity": new DataDrivenProperty(styleSpec["paint_circle"]["circle-opacity"]),
+    "circle-translate": new DataConstantProperty(styleSpec["paint_circle"]["circle-translate"]),
+    "circle-translate-anchor": new DataConstantProperty(styleSpec["paint_circle"]["circle-translate-anchor"]),
+    "circle-pitch-scale": new DataConstantProperty(styleSpec["paint_circle"]["circle-pitch-scale"]),
+    "circle-pitch-alignment": new DataConstantProperty(styleSpec["paint_circle"]["circle-pitch-alignment"]),
+    "circle-stroke-width": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-width"]),
+    "circle-stroke-color": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-color"]),
+    "circle-stroke-opacity": new DataDrivenProperty(styleSpec["paint_circle"]["circle-stroke-opacity"]),
+    "circle-emissive-strength": new DataConstantProperty(styleSpec["paint_circle"]["circle-emissive-strength"]),
+    "circle-color-use-theme": new DataDrivenProperty({"type":"string","default":"default","property-type":"data-driven"}),
+    "circle-stroke-color-use-theme": new DataDrivenProperty({"type":"string","default":"default","property-type":"data-driven"}),
+}));

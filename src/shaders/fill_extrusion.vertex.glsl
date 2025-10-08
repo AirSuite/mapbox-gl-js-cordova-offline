@@ -10,9 +10,14 @@ uniform lowp float u_lightintensity;
 uniform float u_vertical_gradient;
 uniform lowp float u_opacity;
 uniform float u_edge_radius;
+uniform float u_width_scale;
 
 in vec4 a_pos_normal_ed;
 in vec2 a_centroid_pos;
+
+#ifdef RENDER_WALL_MODE
+in vec3 a_join_normal_inside;
+#endif
 
 #ifdef PROJECTION_GLOBE_VIEW
 in vec3 a_pos_3;         // Projected position on the globe
@@ -26,6 +31,11 @@ uniform vec3 u_up_dir;
 uniform float u_height_lift;
 #endif
 
+#ifdef TERRAIN
+uniform int u_height_type;
+uniform int u_base_type;
+#endif
+
 uniform highp float u_vertical_scale;
 
 out vec4 v_color;
@@ -37,7 +47,7 @@ uniform mat4 u_light_matrix_1;
 
 out highp vec4 v_pos_light_view_0;
 out highp vec4 v_pos_light_view_1;
-out float v_depth;
+
 #endif
 
 #if defined(ZERO_ROOF_RADIUS) && !defined(LIGHTING_3D_MODE)
@@ -60,17 +70,29 @@ out float v_has_floodlight;
 
 out float v_height;
 
+// linear to sRGB approximation
+vec3 linearTosRGB(vec3 color) {
+    return pow(color, vec3(1./2.2));
+}
+vec3 sRGBToLinear(vec3 srgbIn) {
+    return pow(srgbIn, vec3(2.2));
+}
+
 #pragma mapbox: define highp float base
 #pragma mapbox: define highp float height
 
 #pragma mapbox: define highp vec4 color
 #pragma mapbox: define highp float flood_light_wall_radius
+#pragma mapbox: define highp float line_width
+#pragma mapbox: define highp float emissive_strength
 
 void main() {
     #pragma mapbox: initialize highp float base
     #pragma mapbox: initialize highp float height
     #pragma mapbox: initialize highp vec4 color
     #pragma mapbox: initialize highp float flood_light_wall_radius
+    #pragma mapbox: initialize highp float line_width
+    #pragma mapbox: initialize highp float emissive_strength
     
     base *= u_vertical_scale;
     height *= u_vertical_scale;
@@ -107,11 +129,13 @@ void main() {
     float c_ele = 0.0;
     vec3 pos;
 #ifdef TERRAIN
-    bool flat_roof = centroid_pos.x != 0.0 && t > 0.0;
+    bool is_flat_height = centroid_pos.x != 0.0 && u_height_type == 1;
+    bool is_flat_base = centroid_pos.x != 0.0 && u_base_type == 1;
     ele = elevation(pos_nx.xy);
-    c_ele = flat_roof ? centroid_pos.y == 0.0 ? elevationFromUint16(centroid_pos.x) : flatElevation(centroid_pos) : ele;
-    // If centroid elevation lower than vertex elevation, roof at least 2 meters height above base.
-    h = flat_roof ? max(c_ele + height, ele + base + 2.0) : ele + (t > 0.0 ? height : base == 0.0 ? -5.0 : base);
+    c_ele = is_flat_height || is_flat_base ? (centroid_pos.y == 0.0 ? elevationFromUint16(centroid_pos.x) : flatElevation(centroid_pos)) : ele;
+    float h_height = is_flat_height ? max(c_ele + height, ele + base + 2.0) : ele + height;
+    float h_base = is_flat_base ? max(c_ele + base, ele + base) : ele + (base == 0.0 ? -5.0 : base);
+    h = t > 0.0 ? max(h_base, h_height) : h_base;
     pos = vec3(pos_nx.xy, h);
 #else
     h = t > 0.0 ? height : base;
@@ -134,7 +158,11 @@ void main() {
     vec3 centroid_random = vec3(centroid_pos.xy, centroid_pos.x + centroid_pos.y + 1.0);
     vec3 ground_pos = centroid_pos.x == 0.0 ? pos.xyz : (centroid_random / 8.0);
     vec4 ground = u_matrix * vec4(ground_pos.xy, ele, 1.0);
-    cutoff = max(0.01, cutoff_opacity(u_cutoff_params, ground.z));
+#ifdef CLIP_ZERO_TO_ONE
+    cutoff = cutoff_opacity(u_cutoff_params, ground.z * 2.0 - ground.w);
+#else
+    cutoff = cutoff_opacity(u_cutoff_params, ground.z);
+#endif
     if (centroid_pos.y != 0.0 && centroid_pos.x != 0.0) {
         vec3 g = floor(ground_pos);
         vec3 mod_ = centroid_random - g * 8.0;
@@ -144,11 +172,17 @@ void main() {
         }
     }
     float cutoff_scale = cutoff;
+    v_cutoff_opacity = cutoff;
 
     scaled_pos.z = mix(c_ele, h, cutoff_scale);
 #endif
-    float hidden = float((centroid_pos.x == 0.0 && centroid_pos.y == 1.0) || (cutoff < 0.01 && centroid_pos.x != 0.0));
+    float hidden = float((centroid_pos.x == 0.0 && centroid_pos.y == 1.0) || (cutoff == 0.0 && centroid_pos.x != 0.0) || (color.a == 0.0));
 
+#ifdef RENDER_WALL_MODE
+    vec2 wall_offset = u_width_scale * line_width * (a_join_normal_inside.xy / EXTENT);
+    scaled_pos.xy += (1.0 - a_join_normal_inside.z) * wall_offset * 0.5;
+    scaled_pos.xy -= a_join_normal_inside.z * wall_offset * 0.5;
+#endif
     gl_Position = mix(u_matrix * vec4(scaled_pos, 1), AWAY, hidden);
     h = h - ele;
     v_height = h;
@@ -224,7 +258,10 @@ void main() {
 #endif // FLOOD_LIGHT
 
     v_color = vec4(color.rgb, 1.0);
-    v_flat = vec4(linearProduct(color.rgb, vec3(calculate_NdotL(normal))), 1.0);
+    float ndotl = calculate_NdotL(normal);
+    v_flat.rgb = sRGBToLinear(color.rgb);
+    v_flat.rgb = v_flat.rgb * (ndotl + (1.0 - min(ndotl * 57.29, 1.0)) * emissive_strength);
+    v_flat = vec4(linearTosRGB(v_flat.rgb), 1.0);
 #else // LIGHTING_3D_MODE
     // Assign final color based on surface + ambient light color, diffuse light NdotL, and light color
     // with lower bounds adjusted to hue of light

@@ -2,74 +2,68 @@
 <html>
 <head>
     <title>Mapbox GL JS debug page</title>
-    <meta charset='utf-8'>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <link rel='stylesheet' href='../dist/mapbox-gl.css' />
+    <link rel="stylesheet" href="../dist/mapbox-gl.css" />
     <style>
         body { margin: 0; padding: 0; }
         html, body, #map { height: 100%; }
-        #controls { position: absolute; top: 0; left: 0; }
     </style>
 </head>
 
 <body>
-<div id='map'></div>
-<div id='controls'>
-    <button id="animate">Animate</button><br />
-    <label><input id='terrain-checkbox' type='checkbox'> terrain</label><br />
-    <div>
-        <label>Projection:</label>
-        <select id="projName">
-            <option value="mercator" selected>Mercator</option>
-            <option value="globe">Globe</option>
-            <option value="albers">Albers USA</option>
-            <option value="equalEarth">Equal Earth</option>
-            <option value="equirectangular">Equirectangular</option>
-            <option value="lambertConformalConic">Lambert Conformal Conic</option>
-            <option value="naturalEarth">Natural Earth</option>
-            <option value="winkelTripel">Winkel Tripel</option>
-        </select>
-    </div>
-</div>
-<script src='../dist/mapbox-gl-dev.js'></script>
-<script src='../debug/access_token_generated.js'></script>
-<script>
+<div id="map"></div>
+
+<script src="../dist/mapbox-gl-dev.js"></script>
+<script type="module">
+import {Pane} from 'https://esm.sh/tweakpane@4';
+import {getAccessToken} from './access_token_generated.js';
+
+mapboxgl.accessToken = getAccessToken();
 
 var map = window.map = new mapboxgl.Map({
     container: 'map',
-    devtools: true,
     zoom: 12.5,
     center: [-77.01866, 38.888],
-    style: 'mapbox://styles/mapbox/streets-v9',
+    style: 'mapbox://styles/mapbox/streets-v12',
+    projection: 'globe',
     hash: true
 });
 
+const features = [];
 const spinningMarkers = [];
 ['auto', 'map', 'viewport', 'horizon'].forEach((rotationAlignment, i) => {
     ['auto', 'map', 'viewport'].forEach((pitchAlignment, j) => {
-        var bounds = map.getBounds();
-        var s = bounds.getSouth();
-        var n = bounds.getNorth();
-        var w = bounds.getWest();
-        var e = bounds.getEast();
+        const bounds = map.getBounds();
+        const s = bounds.getSouth();
+        const n = bounds.getNorth();
+        const w = bounds.getWest();
+        const e = bounds.getEast();
 
-        var lng = w + (e - w) * ((i + .5) / 4);
-        var lat = s + (n - s) * ((j + .5) / 3);
+        const lng = w + (e - w) * ((i + .5) / 4);
+        const lat = s + (n - s) * ((j + .5) / 3);
+        const altitude = (i * 2000 + j*2000) * (e - w);
 
-        var popup = new mapboxgl.Popup().setHTML(`Pitch Alignment: ${pitchAlignment}<br>Rotation Alignment: ${rotationAlignment}`);
+        const popup = new mapboxgl.Popup().setHTML(`
+            Pitch Alignment: ${pitchAlignment}<br aria-hidden="true">
+            Rotation Alignment: ${rotationAlignment}<br aria-hidden="true">
+            Altitude: ${altitude.toFixed(0)} meters
+        `);
 
-        var r = Math.round(Math.random() * 255);
-        var g = Math.round(Math.random() * 255);
-        var b = Math.round(Math.random() * 255);
+        const r = Math.round(Math.random() * 255);
+        const g = Math.round(Math.random() * 255);
+        const b = Math.round(Math.random() * 255);
+        const color = `rgb(${r}, ${g}, ${b})`;
 
-        var sc = Math.random() * 2.5 + 0.5;
+        const sc = Math.random() * 2.5 + 0.5;
 
-        var marker = new mapboxgl.Marker({
-            color: `rgb(${r}, ${g}, ${b})`,
+        const marker = new mapboxgl.Marker({
+            color,
             scale: sc,
             draggable: true,
             rotationAlignment,
-            pitchAlignment
+            pitchAlignment,
+            altitude
         })
             .setLngLat([lng, lat])
             .setPopup(popup)
@@ -78,11 +72,62 @@ const spinningMarkers = [];
         marker.togglePopup();
 
         spinningMarkers.push(marker);
+
+        const lngOffset = (e - w)/100;
+        const latOffset = (n - s)/100;
+
+        features.push({
+            type: 'Feature',
+            geometry: {
+                type: 'Polygon',
+                coordinates: [
+                    [
+                        [lng-lngOffset,lat+latOffset],
+                        [lng+lngOffset,lat+latOffset],
+                        [lng+lngOffset,lat-latOffset],
+                        [lng-lngOffset,lat-latOffset],
+                        [lng-lngOffset,lat+latOffset],
+                    ]
+                ]
+            },
+            properties: {altitude, color}
+        });
     });
 });
 
+map.on('style.load',() => {
+    map.setBearing(50);
+    map.setPitch(70);
+
+    map.addSource('fill-extrusions', {
+        type: 'geojson',
+        data: {
+            type: 'FeatureCollection',
+            features: features
+        }
+    });
+
+    map.addLayer({
+        id: 'fill-extrusions',
+        type: 'fill-extrusion',
+        source: 'fill-extrusions',
+        paint: {
+            'fill-extrusion-opacity': 0.6,
+            'fill-extrusion-color': ['get', 'color'],
+            'fill-extrusion-height': ['get', 'altitude'],
+            'fill-extrusion-base': 0,
+            'fill-extrusion-base-alignment': 'terrain'
+        }
+    });
+})
+
+const pane = new Pane();
+pane.addBinding({terrain: false}, 'terrain').on('change', (e) => {
+    map.setTerrain(e.value ? {"source": "mapbox-dem", "exaggeration": 10} : null);
+});
+
 let animate = false;
-document.getElementById('animate').addEventListener('click', () => {
+pane.addBinding({animate: false}, 'animate').on('change', (e) => {
     animate = !animate;
     if (animate) {
         spinMarkers();
@@ -101,28 +146,15 @@ function spinMarkers() {
 }
 window.requestAnimationFrame(spinMarkers);
 
-map.addControl(new mapboxgl.NavigationControl());
-
-map.on('load', function() {
+map.on('style.load', function() {
     map.addSource('mapbox-dem', {
         "type": "raster-dem",
         "url": "mapbox://mapbox.mapbox-terrain-dem-v1",
         "tileSize": 512,
         "maxzoom": 14
     });
-
-    map.setFog({});
 });
 
-document.getElementById('terrain-checkbox').onclick = function() {
-    map.setTerrain(this.checked ? {"source": "mapbox-dem", "exaggeration": 10} : null);
-};
-
-document.getElementById('projName').addEventListener('change', (e) => {
-    const el = document.getElementById('projName');
-    map.setProjection(el.options[el.selectedIndex].value);
-});
 </script>
-
 </body>
 </html>

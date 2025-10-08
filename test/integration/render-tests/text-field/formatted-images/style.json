@@ -2,12 +2,14 @@
   "version": 8,
   "metadata": {
     "test": {
-      "height": 128,
+      "pixelRatio": 2,
+      "height": 32,
       "width": 128
     }
   },
   "center": [ 0, 0 ],
   "zoom": 0,
+  "camera": {"camera-projection": "orthographic"},
   "sources": {
     "point": {
       "type": "geojson",
@@ -18,7 +20,7 @@
             "type": "Feature",
             "geometry": {
               "type": "Point",
-              "coordinates": [ 0, 20 ]
+              "coordinates": [ 0, 27 ]
             }
           }
         ]
@@ -26,22 +28,8 @@
     }
   },
   "glyphs": "local://glyphs/{fontstack}/{range}.pbf",
-  "sprite": "local://sprites/emerald@2x",
+  "sprite": "local://sprites/standard",
   "layers": [
-    {
-      "id": "text",
-      "type": "symbol",
-      "source": "point",
-      "layout": {
-        "icon-image": ["image", "london-overground"],
-        "icon-offset": [0, -20],
-        "text-field": ["format", "London", ["image", "london-underground"]],
-        "text-font": [
-          "Open Sans Semibold",
-          "Arial Unicode MS Bold"
-        ]
-      }
-    },
     {
       "id": "images",
       "type": "symbol",
@@ -51,8 +39,8 @@
         "text-size": 20,
         "text-field": ["format", ["image", "london-overground"],
                                  ["image", "london-underground"],
-                                 ["image", "dlr"],
-                                 ["image", "u-bahn"]
+                                 ["image", "gb-national-rail.london-dlr"],
+                                 ["image", "de-s-bahn.de-u-bahn"]
                                 ],
         "text-font": [
           "Open Sans Semibold",

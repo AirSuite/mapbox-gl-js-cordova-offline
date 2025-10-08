@@ -23,13 +23,14 @@ void main() {
     #pragma mapbox: initialize mediump float stroke_width
     #pragma mapbox: initialize lowp float stroke_opacity
     vec2 extrude = v_data.xy;
-    float extrude_length = length(extrude);
-
+    float blur_positive = blur < 0.0 ? 0.0 : 1.0;
     lowp float antialiasblur = v_data.z;
-    float antialiased_blur = -max(blur, antialiasblur);
-
-    float opacity_t = smoothstep(0.0, antialiased_blur, extrude_length - 1.0);
-
+    float extrude_length = length(extrude) + antialiasblur * (1.0 - blur_positive);
+    float antialiased_blur = -max(abs(blur), antialiasblur);
+    float antialiase_blur_opacity = smoothstep(0.0, antialiasblur, extrude_length - 1.0);
+    float opacity_t = blur_positive == 1.0 ? 
+                        smoothstep(0.0, -antialiased_blur, 1.0 - extrude_length) : 
+                        smoothstep(antialiased_blur, 0.0, extrude_length - 1.0) - antialiase_blur_opacity;
     float color_t = stroke_width < 0.01 ? 0.0 : smoothstep(
         antialiased_blur,
         0.0,

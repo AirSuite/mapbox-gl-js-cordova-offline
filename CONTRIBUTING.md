@@ -9,14 +9,16 @@ Install the Xcode Command Line Tools Package
 xcode-select --install
 ```
 
-Install [node.js](https://nodejs.org/) version 18
-```bash
-brew install node@18
-```
+Install [nvm](https://github.com/nvm-sh/nvm) following the instructions [here](https://github.com/nvm-sh/nvm?tab=readme-ov-file#install--update-script)
 
 Clone the repository
 ```bash
 git clone git@github.com:mapbox/mapbox-gl-js.git
+```
+
+Install the node version defined in `.nvmrc`
+```bash
+nvm install
 ```
 
 Install node module dependencies
@@ -26,16 +28,22 @@ npm install
 
 ### Linux
 
-Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 18, [GNU Make](http://www.gnu.org/software/make/), and libglew-dev
+Install [git](https://git-scm.com/), [GNU Make](http://www.gnu.org/software/make/), and libglew-dev
 ```bash
 sudo apt-get update
-curl -sL https://deb.nodesource.com/setup_18.x | sudo bash -
-sudo apt-get install build-essential git nodejs libglew-dev libxi-dev
+sudo apt-get install build-essential git libglew-dev libxi-dev
 ```
+
+Install [nvm](https://github.com/nvm-sh/nvm) following the instructions [here](https://github.com/nvm-sh/nvm?tab=readme-ov-file#install--update-script)
 
 Clone the repository
 ```bash
 git clone git@github.com:mapbox/mapbox-gl-js.git
+```
+
+Install the node version defined in `.nvmrc`
+```bash
+nvm install
 ```
 
 Install node module dependencies
@@ -45,11 +53,16 @@ npm install
 
 ### Windows
 
-Install [git](https://git-scm.com/), [node.js](https://nodejs.org/) version 18, [npm and node-gyp](https://github.com/Microsoft/nodejs-guidelines/blob/master/windows-environment.md#compiling-native-addon-modules).
+Install [git](https://git-scm.com/), [npm and node-gyp](https://github.com/Microsoft/nodejs-guidelines/blob/master/windows-environment.md#compiling-native-addon-modules) and [nvm](https://github.com/nvm-sh/nvm)
 
 Clone the repository
 ```bash
 git clone git@github.com:mapbox/mapbox-gl-js.git
+```
+
+Install the node version defined in `.nvmrc`
+```bash
+nvm install
 ```
 
 Install node module dependencies
@@ -65,7 +78,7 @@ Start the debug server
 MAPBOX_ACCESS_TOKEN={YOUR_MAPBOX_ACCESS_TOKEN} npm run start-debug
 ```
 
-Open the debug page at [http://localhost:9966/debug](http://localhost:9966/debug)
+Open the debug page at [http://localhost:9966/debug/](http://localhost:9966/debug/)
 
 ## Creating a Standalone Build
 
@@ -121,9 +134,26 @@ Here is a recommended way to get setup:
 6. Write code, open a PR from your branch when you're ready
 7. If you need to rebase your fork's PR branch onto main to resolve conflicts: `git fetch upstream`, `git rebase upstream/main` and force push to Github `git push --force origin your-branch`
 
+### Syncing with Mapbox Internal Codebase
+
+* We use [Copybara](https://github.com/google/copybara) to sync changes between this public GitHub repository and the Mapbox internal codebase
+* After your PR is approved and reviewed, the GL JS team manually merges it into the Mapbox internal codebase
+* Once merged internally, Copybara automatically syncs the changes back to this public repository
+* **Note:** Your PR will appear as "Closed" rather than "Merged" on GitHub after it has been merged internally. This is expected - the changes are included via the Copybara sync process
+
+```mermaid
+flowchart TB
+    A[New PR] --> B[Review]
+    B --> C[Approved]
+    C --> D[Merge to Internal]
+    D --> E[Copybara Sync]
+    E --> F[Public Repo]
+    F --> G[PR Closed]
+```
+
 ## Changelog Conventions
 
-`CHANGELOG.md` is a valuable document many people read. It contains a formatted, lightly editorialized history of changes in the project. Pull requests are the unit of change and are normally categorized and summarized when reviewed. The changelog is maintained by combining automated content search and formatting with a final human edit.
+`CHANGELOG.md` is a valuable document many people read. It contains a formatted, lightly editorialized history of changes in the project. Pull requests are the unit of change and are normally categorized and summarized when reviewed. The changelog is manually curated from the list of commits that go into a release.
 
 What warrants a changelog entry?
 
@@ -133,14 +163,12 @@ What warrants a changelog entry?
 - Any documentation related changes *should not* have a changelog entry
 - Any regression change introduced and fixed within the same release *should not* have a changelog entry
 - Any internal refactoring, technical debt reduction, render test, unit test or benchmark related change *should not* have a changelog entry
+- Any PR labeled `skip changelog` *should not* have a changelog entry
 
-How to add your changelog? Changelog entries are written inside the `<changelog></changelog>` tag in the PR template. A changelog entry should:
+A changelog entry should:
 
 - be descriptive and concise; it should explain the change to a reader without context
 - describe the surface bug and not the underlying problem. This might require some research.
-- be labeled `skip changelog` if the PR has no impact on end users and does not require a changelog entry
-- be labeled `breaking change` if the PR is a breaking change
-- reference a PR and optionally an issue.
 
 ## Documentation Conventions
 
@@ -165,14 +193,6 @@ Our labeling system is
  - **minimalistic:** Labels' usefulness are inversely proportional to how many we have.
  - **objective:** Labels should be objective enough that any two people would agree on a labeling decision.
  - **useful:** Labels should track state or capture semantic meaning that would otherwise be hard to search.
-
-We have divided our labels into categories to make them easier to use.
-
- - type (blue)
- - actionable status (red)
- - non-actionable status (grey)
- - importance / urgency (green)
- - topic / project / misc (yellow)
 
 ## Recommended Reading
 

@@ -1,81 +1,74 @@
-/* eslint-disable flowtype/require-valid-file-annotation */
 
-import flowRemoveTypes from '@mapbox/flow-remove-types';
+/* eslint-disable camelcase */
+
+import esbuild from 'rollup-plugin-esbuild';
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import unassert from 'rollup-plugin-unassert';
 import json from '@rollup/plugin-json';
 import terser from '@rollup/plugin-terser';
-import minifyStyleSpec from './rollup_plugin_minify_style_spec.js';
-import {createFilter} from '@rollup/pluginutils';
 import strip from '@rollup/plugin-strip';
 import replace from '@rollup/plugin-replace';
-import alias from '@rollup/plugin-alias';
-import {fileURLToPath} from 'url';
+import {createFilter} from '@rollup/pluginutils';
+import browserslistToEsbuild from 'browserslist-to-esbuild';
+import minifyStyleSpec from './rollup_plugin_minify_style_spec.js';
 
 // Common set of plugins/transformations shared across different rollup
 // builds (main mapboxgl bundle, style-spec package, benchmarks bundle)
 
-export const plugins = ({minified, production, test, bench, keepClassNames}) => [
-    flow(),
+export const plugins = ({mode, minified, production, test, bench, keepClassNames}) => [
     minifyStyleSpec(),
+    esbuild({
+        target: browserslistToEsbuild(),
+        minify: false,
+        sourceMap: true,
+        define: {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            'import.meta.env': JSON.stringify({mode}),
+        },
+    }),
     json({
         exclude: 'src/style-spec/reference/v8.json'
     }),
-    alias({
-        entries: [{
-            find: 'tracked_parameters_proxy',
-            replacement: production ?
-                fileURLToPath(new URL('../src/tracked-parameters/internal/tracked_parameters_mock.js', import.meta.url)) :
-                fileURLToPath(new URL('../src/tracked-parameters/internal/tracked_parameters_ui.js', import.meta.url))
-        }]
-    }),
     (production && !bench) ? strip({
         sourceMap: true,
-        functions: ['PerformanceUtils.*', 'WorkerPerformanceUtils.*', 'Debug.*', 'performance.mark']
+        functions: ['PerformanceUtils.*', 'WorkerPerformanceUtils.*', 'Debug.*'],
+        include: ['**/*.ts']
     }) : false,
-    production || bench ? unassert() : false,
-    replace({
-        'process.env.ROLLUP_WATCH': JSON.stringify(process.env.ROLLUP_WATCH),
-    }),
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    production || bench ? unassert({include: ['*.js', '**/*.js', '*.ts', '**/*.ts']}) : false,
     test ? replace({
-        'process.env.CI': JSON.stringify(process.env.CI),
-        'process.env.UPDATE': JSON.stringify(process.env.UPDATE)
+        preventAssignment: true,
+        values: {
+            'process.env.CI': JSON.stringify(process.env.CI),
+            'process.env.UPDATE': JSON.stringify(process.env.UPDATE)
+        }
     }) : false,
     glsl(['./src/shaders/*.glsl', './3d-style/shaders/*.glsl'], production),
     minified ? terser({
+        ecma: 2020,
+        module: true,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        keep_classnames: keepClassNames,
         compress: {
             pure_getters: true,
             passes: 3
         },
-        keep_classnames: keepClassNames
     }) : false,
     resolve({
         browser: true,
-        preferBuiltins: false,
-        mainFields: ['browser', 'main']
+        preferBuiltins: false
     }),
     commonjs({
         // global keyword handling causes Webpack compatibility issues, so we disabled it:
         // https://github.com/mapbox/mapbox-gl-js/pull/6956
         ignoreGlobal: true
-    })
+    }),
 ].filter(Boolean);
-
-// Using this instead of rollup-plugin-flow due to
-// https://github.com/leebyron/rollup-plugin-flow/issues/5
-export function flow() {
-    return {
-        name: 'flow-remove-types',
-        transform: (code) => ({
-            code: flowRemoveTypes(code).toString(),
-            map: null
-        })
-    };
-}
 
 // Using this instead of rollup-plugin-string to add minification
 function glsl(include, minify) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const filter = createFilter(include);
     return {
         name: 'glsl',
@@ -84,11 +77,17 @@ function glsl(include, minify) {
 
             // barebones GLSL minification
             if (minify) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
                 code = code.trim() // strip whitespace at the start/end
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     .replace(/\s*\/\/[^\n]*\n/g, '\n') // strip double-slash comments
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     .replace(/\n+/g, '\n') // collapse multi line breaks
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     .replace(/\n\s+/g, '\n') // strip indentation
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     .replace(/\s?([+-\/*=,])\s?/g, '$1') // strip whitespace around operators
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     .replace(/([;,\{\}])\n(?=[^#])/g, '$1'); // strip more line breaks
             }
 

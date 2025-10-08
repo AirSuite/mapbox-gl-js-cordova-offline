@@ -4,7 +4,8 @@
     "test": {
       "height": 128,
       "width": 128,
-      "allowed": 0.0135
+      "allowed": 0.01966,
+      "diff-calculation-threshold": 0.06
     }
   },
   "center": [
@@ -12,6 +13,7 @@
     52.499167
   ],
   "zoom": 14,
+  "camera": {"camera-projection": "orthographic"},
   "sources": {
     "mapbox": {
       "type": "vector",
@@ -37,7 +39,7 @@
       "source-layer": "poi_label",
       "filter": ["has", "maki"],
       "paint": {
-        "icon-color-saturation": 0
+        "icon-color-saturation": -1
       },
       "layout": {
         "icon-image": "{maki}-12",

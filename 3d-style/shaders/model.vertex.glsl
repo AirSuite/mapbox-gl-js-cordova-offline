@@ -22,6 +22,7 @@ in vec3 a_pos_3f;
 // interpolatedHeight = pow(pos_z * .x + .y, .z)
 
 uniform mat4 u_matrix;
+uniform mat4 u_node_matrix;
 uniform mat4 u_lighting_matrix;
 uniform vec3 u_camera_pos;
 uniform vec4 u_color_mix;
@@ -38,8 +39,8 @@ uniform highp mat4 u_normal_matrix;
 #ifdef RENDER_SHADOWS
 uniform mat4 u_light_matrix_0;
 uniform mat4 u_light_matrix_1;
-out vec4 v_pos_light_view_0;
-out vec4 v_pos_light_view_1;
+out highp vec4 v_pos_light_view_0;
+out highp vec4 v_pos_light_view_1;
 out float v_depth_shadows;
 #endif
 
@@ -86,6 +87,7 @@ void main() {
     vec4 translate = normal_matrix[1];
     vec3 pos_a = floor(pos_color);
     vec3 rgb = 1.05 * (pos_color - pos_a);
+    float hidden = float(pos_a.x > EXTENT);
     float color_mix = pos_a.z / 100.0;
     v_color_mix = vec4(sRGBToLinear(rgb), color_mix);
 
@@ -105,7 +107,7 @@ void main() {
     pos.xyz += pos_model_tile;
     local_pos = pos.xyz;
 
-    gl_Position = u_matrix * pos;
+    gl_Position = mix(u_matrix * pos, AWAY, hidden);
     pos.z *= meter_to_tile;
     v_position_height.xyz = pos.xyz - u_camera_pos;
 #else
@@ -147,7 +149,14 @@ void main() {
 
 #ifdef TERRAIN_FRAGMENT_OCCLUSION
     v_depth = gl_Position.z / gl_Position.w;
+
+    #ifdef CLIP_ZERO_TO_ONE
+        v_depth = -1.0 + 2.0 * v_depth; 
+    #endif
+
 #endif
+
+
 
 #ifdef HAS_ATTRIBUTE_a_normal_3f
 #ifdef MODEL_POSITION_ON_GPU
@@ -170,22 +179,22 @@ void main() {
 #endif
 
 #ifdef RENDER_SHADOWS
-    vec3 shadow_pos = local_pos;
+    vec4 shadow_pos = u_node_matrix * vec4(local_pos, 1.0);
 #ifdef NORMAL_OFFSET
 #ifdef HAS_ATTRIBUTE_a_normal_3f
 #ifdef MODEL_POSITION_ON_GPU
-     // flip the xy to bring it to the same, wrong, fill extrusion normal orientation toward inside.
-     // See the explanation in shadow_normal_offset.
-     vec3 offset = shadow_normal_offset(vec3(-normal_3f.xy, normal_3f.z));
-     shadow_pos += offset * shadow_normal_offset_multiplier0();
+    // flip the xy to bring it to the same, wrong, fill extrusion normal orientation toward inside.
+    // See the explanation in shadow_normal_offset.
+    vec3 offset = shadow_normal_offset(vec3(-normal_3f.xy, normal_3f.z));
+    shadow_pos.xyz += offset * shadow_normal_offset_multiplier0();
 #else
-    vec3 offset = shadow_normal_offset_model(normalize(normal_3f));
-    shadow_pos += offset * shadow_normal_offset_multiplier0();
+    vec3 offset = shadow_normal_offset_model(normal_3f);
+    shadow_pos.xyz += offset * shadow_normal_offset_multiplier0();
 #endif
 #endif // HAS_ATTRIBUTE_a_normal_3f
 #endif // NORMAL_OFFSET
-    v_pos_light_view_0 = u_light_matrix_0 * vec4(shadow_pos, 1);
-    v_pos_light_view_1 = u_light_matrix_1 * vec4(shadow_pos, 1);
+    v_pos_light_view_0 = u_light_matrix_0 * shadow_pos;
+    v_pos_light_view_1 = u_light_matrix_1 * shadow_pos;
     v_depth_shadows = gl_Position.w;
 #endif // RENDER_SHADOWS
 }

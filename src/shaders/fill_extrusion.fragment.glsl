@@ -35,11 +35,12 @@ in float v_flood_radius;
 in float v_has_floodlight;
 #endif
 
-uniform float u_emissive_strength;
-
 in float v_height;
 
+#pragma mapbox: define highp float emissive_strength
+
 void main() {
+    #pragma mapbox: initialize highp float emissive_strength
 
 #if defined(ZERO_ROOF_RADIUS) || defined(RENDER_SHADOWS) || defined(LIGHTING_3D_MODE)
     vec3 normal = normalize(v_normal);
@@ -102,7 +103,15 @@ float flood_radiance = 0.0;
 
     color.rgb = mix(litColor, floodLitColor, flood_radiance);
 #else // FLOOD_LIGHT
-    float shadowed_lighting_factor = shadowed_light_factor_normal(normal, v_pos_light_view_0, v_pos_light_view_1, 1.0 / gl_FragCoord.w);
+    float shadowed_lighting_factor;
+#ifdef RENDER_CUTOFF
+    shadowed_lighting_factor = shadowed_light_factor_normal_opacity(normal, v_pos_light_view_0, v_pos_light_view_1, 1.0 / gl_FragCoord.w, v_cutoff_opacity);
+    if (v_cutoff_opacity == 0.0) {
+        discard;
+    }
+#else // RENDER_CUTOFF
+    shadowed_lighting_factor = shadowed_light_factor_normal(normal, v_pos_light_view_0, v_pos_light_view_1, 1.0 / gl_FragCoord.w);
+#endif // RENDER_CUTOFF
     color.rgb = apply_lighting(color.rgb, normal, shadowed_lighting_factor);
 #endif // !FLOOD_LIGHT 
 #else // RENDER_SHADOWS
@@ -112,7 +121,7 @@ float flood_radiance = 0.0;
 #endif // FLOOD_LIGHT
 #endif // !RENDER_SHADOWS
 
-    color.rgb = mix(color.rgb, v_flat.rgb, u_emissive_strength);
+    color.rgb = mix(color.rgb, v_flat.rgb, emissive_strength);
     color *= u_opacity;
 #endif // LIGHTING_3D_MODE
 
@@ -121,7 +130,11 @@ float flood_radiance = 0.0;
 #endif
 
 #ifdef INDICATOR_CUTOUT
-    color = applyCutout(color);
+    color = applyCutout(color, h);
+#endif
+
+#ifdef FEATURE_CUTOUT
+    color = apply_feature_cutout(color, gl_FragCoord);
 #endif
 
     glFragColor = color;

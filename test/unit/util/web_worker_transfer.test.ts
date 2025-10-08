@@ -1,0 +1,91 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
+import {test, expect} from '../../util/vitest';
+import {register, serialize, deserialize} from '../../../src/util/web_worker_transfer';
+
+test('round trip', () => {
+    class Foo {
+        n;
+        b;
+        buffer;
+        _cached;
+
+        constructor(n, b) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            this.n = n;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            this.b = b;
+            this.buffer = new ArrayBuffer(100);
+            this.squared();
+        }
+
+        squared() {
+            if (this._cached) {
+                return this._cached;
+            }
+            this._cached = this.n * this.n;
+            return this._cached;
+        }
+    }
+
+    register(Foo, 'Foo', {omit: ['_cached']});
+
+    const foo = new Foo(10, 4895947598347521289105569050n);
+    const transferables = new Set();
+    const deserialized = deserialize(serialize(foo, transferables));
+    expect(deserialized instanceof Foo).toBeTruthy();
+    const bar = deserialized;
+
+    expect(foo !== bar).toBeTruthy();
+    expect(bar.constructor === Foo).toBeTruthy();
+    expect(bar.n === 10).toBeTruthy();
+    expect(bar.b === 4895947598347521289105569050n).toBeTruthy();
+    expect(bar.buffer === foo.buffer).toBeTruthy();
+    expect(transferables.has(foo.buffer)).toBeTruthy();
+    expect(bar._cached === undefined).toBeTruthy();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    expect(bar.squared() === 100).toBeTruthy();
+});
+
+test('duplicate buffers', () => {
+    const foo = new ArrayBuffer(1);
+    const transferables = new Set();
+    const deserialized = deserialize(serialize([foo, foo], transferables));
+    expect(deserialized).toEqual([foo, foo]);
+    expect(transferables.size === 1).toBeTruthy();
+});
+
+test('custom serialization', () => {
+    class Bar {
+        id;
+        _deserialized;
+        constructor(id) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            this.id = id;
+            this._deserialized = false;
+        }
+
+        static serialize(b) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            return {foo: `custom serialization,${b.id}`};
+        }
+
+        static deserialize(input) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            const b = new Bar(input.foo.split(',')[1]);
+            b._deserialized = true;
+            return b;
+        }
+    }
+
+    register(Bar, 'Bar');
+
+    const bar = new Bar('a');
+    expect(!bar._deserialized).toBeTruthy();
+
+    const deserialized = deserialize(serialize(bar));
+    expect(deserialized instanceof Bar).toBeTruthy();
+    const bar2 = deserialized;
+    expect(bar2.id).toEqual(bar.id);
+    expect(bar2._deserialized).toBeTruthy();
+});

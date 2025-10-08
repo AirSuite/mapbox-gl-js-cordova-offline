@@ -1,14 +1,3 @@
-highp vec3 hash(highp vec2 p) {
-    highp vec3 p3 = fract(p.xyx * vec3(443.8975, 397.2973, 491.1871));
-    p3 += dot(p3, p3.yxz + 19.19);
-    return fract((p3.xxy + p3.yzz) * p3.zyx);
-}
-
-vec3 dither(vec3 color, highp vec2 seed) {
-    vec3 rnd = hash(seed) + hash(seed + 0.59374) - 0.5;
-    return color + rnd / 255.0;
-}
-
 #ifdef FOG
 
 uniform mediump vec4 u_fog_color;
@@ -58,6 +47,9 @@ float fog_opacity(float t) {
 
 float globe_glow_progress() {
     highp vec2 uv = gl_FragCoord.xy / u_viewport;
+    #ifdef FLIP_Y
+        uv.y = 1.0 - uv.y;
+    #endif
     highp vec3 ray_dir = mix(
         mix(u_frustum_tl, u_frustum_tr, uv.x),
         mix(u_frustum_bl, u_frustum_br, uv.x),
@@ -123,12 +115,7 @@ vec4 fog_apply_premultiplied(vec4 color, vec3 pos, float heightMeters) {
 }
 
 vec3 fog_dither(vec3 color) {
-#ifdef FOG_DITHERING
-    vec2 dither_seed = gl_FragCoord.xy + u_fog_temporal_offset;
-    return dither(color, dither_seed);
-#else
     return color;
-#endif
 }
 
 vec4 fog_dither(vec4 color) {

@@ -2,8 +2,32 @@
   "version": 8,
   "metadata": {
     "test": {
-      "height": 512,
-      "allowed": 0.0015
+      "width": 400,
+      "height": 400,
+      "allowed": 0.0015,
+      "operations": [
+        ["wait"],
+        [
+          "setFeatureState",
+          {
+            "source": "trees",
+            "id": "3a"
+          },
+          {
+            "hover": true
+          }
+        ],
+        [
+          "setFeatureState",
+          {
+            "source": "trees",
+            "id": 14
+          },
+          {
+            "hover": true
+          }
+        ]
+      ]
     }
   },
   "sources": {
@@ -27,9 +51,9 @@
     "oak2": "local://models/oak2.glb",
     "oak3": "local://models/oak3.glb"
   },
-  "pitch": 60,
-  "bearing": 0,
-  "zoom": 15,
+  "pitch": 55,
+  "bearing": -20,
+  "zoom": 15.2,
   "center": [
     -122.40784,
     37.78432
@@ -90,22 +114,19 @@
       "type": "model",
       "source": "trees",
       "layout": {
-        "model-id": [
-          "match",
-          ["%", ["get", "id"], 3 ],
-          0,
-          ["literal", "oak3"],
-          1,
-          ["literal", "oak2"],
-          ["literal", "oak1"]
-        ]
+        "model-id": "oak1"
       },
       "paint": {
-        "model-scale": [
+        "model-scale": 
+        [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          ["literal", [ 16, 16, 16 ]],
+          [
             "match",
             ["%", ["get", "id"], 5 ],
             0,
-            ["literal", [ 16, 16, 16 ]],
+            ["literal", [ 8, 8, 8 ]],
             1,
             ["literal", [ 8, 8, 8 ]],
             2,
@@ -113,6 +134,7 @@
             3,
             ["literal", [ 4, 4, 4 ]],
             ["literal", [ 2, 2, 2 ]]
+          ]
         ],
         "model-rotation": ["match", ["%", ["get", "id"], 4],
           0, ["literal", [0.0, 0.0, 0.0]],

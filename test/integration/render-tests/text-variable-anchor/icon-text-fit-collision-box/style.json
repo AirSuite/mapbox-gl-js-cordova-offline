@@ -4,10 +4,11 @@
     "test": {
       "height": 128,
       "width": 128,
-      "allowed": 0.0076,
+      "allowed": 0.01222,
       "collisionDebug": true
     }
   },
+  "camera": {"camera-projection": "orthographic"},
   "glyphs": "local://glyphs/{fontstack}/{range}.pbf",
   "sources": {
     "geojson": {

@@ -1,10 +1,29 @@
 /* eslint-env browser */
-/* eslint-disable prefer-arrow-callback,prefer-template */
-/* eslint no-loop-func: "off" */
-/* eslint camelcase: "off" */
-/* global mapboxgl */
 /* global mapboxglVersions */
+/* eslint-disable prefer-arrow-callback, prefer-template, no-promise-executor-return, jsdoc/require-property-description */
+import {getAccessToken} from './access_token_generated.js';
 
+const accessToken = getAccessToken();
+
+// Regex patterns for content sanitization
+const REGEX_PATTERNS = {
+    MAPBOX_JS_CDN: /https:\/\/api\.mapbox\.com\/mapbox-gl-js\/v[0-9]+\.[0-9]+\.[0-9]+\/mapbox-gl\.js/g,
+    MAPBOX_CSS_CDN: /https:\/\/api\.mapbox\.com\/mapbox-gl-js\/v[0-9]+\.[0-9]+\.[0-9]+\/mapbox-gl\.css/g,
+    SENTRY_SCRIPT: /<script src="https:\/\/js\.sentry-cdn\.com\/[0-9a-f]*\.min\.js"\s*crossorigin="anonymous"><\/script>/g,
+    INSTRUMENTILE_SCRIPT: /<script>if\(window\.map instanceof mapboxgl\.Map\)var i=new instrumentile.*<\/script>/g,
+    API_KEY: /pk\..*?"/g,
+    LOCAL_JS_SCRIPT: /<script src="(.*)mapbox-gl(.*)\.js"><\/script>/g,
+    LOCAL_CSS_LINK: /<link rel="stylesheet"(.*)mapbox-gl\.css"(.*)\/>/g
+};
+
+/**
+ * @typedef {Object} Page
+ * @property {string} key
+ * @property {string} title
+ * @property {string} [url]
+ */
+
+/** @type {Page[]} */
 const pages = [
     {
         "key": "standard-style",
@@ -22,20 +41,12 @@ const pages = [
         "url": "./filter-features-with-globe.html"
     },
     {
-        "key": "custom-style-layer",
-        "title": "Add a custom style layer"
-    },
-    {
         "key": "mapbox-gl-geocoder",
         "title": "Add a geocoder"
     },
     {
         "key": "mapbox-gl-directions",
         "title": "Display driving directions"
-    },
-    {
-        "key": "locate-user",
-        "title": "Locate the user"
     },
     {
         "key": "mapbox-gl-draw",
@@ -107,24 +118,19 @@ const pages = [
         "url": "./globe-with-video.html"
     },
     {
-        "key": "scroll_zoom_blocker",
-        "title": "Gestures",
-        "url": "./scroll_zoom_blocker.html"
+        "key": "interactions",
+        "title": "Interactions",
+        "url": "./featuresets.html"
+    },
+    {
+        "key": "precipitation",
+        "title": "Precipitation",
+        "url": "./precipitation.html"
     },
     {
         "key": "raster-array",
         "title": "Raster Array",
         "url": "./raster-array.html"
-    },
-    {
-        "key": "custom-source",
-        "title": "Custom Source",
-        "url": "./custom-source.html"
-    },
-    {
-        "key": "atmosphere",
-        "title": "Atmosphere",
-        "url": "./atmosphere.html"
     }
 ];
 
@@ -132,16 +138,12 @@ const versions = {
     'latest': {}
 };
 
-Object.keys(mapboxglVersions).forEach(function(version) {
-    versions[version] = mapboxglVersions[version];
-});
+for (const [version, metadata] of Object.entries(mapboxglVersions)) {
+    versions[version] = metadata;
+}
 
-document.addEventListener('DOMContentLoaded', function() {
-    const jsLatest = document.createElement("a");
-    jsLatest.href = "../../dist/mapbox-gl.js";
-    const cssLatest = document.createElement("a");
-    cssLatest.href = "../../dist/mapbox-gl.css";
-
+// Wait for DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
     const titleItem = document.querySelector('#title');
     const titleElement = document.querySelector('#title-text');
     const titleDropdown = document.querySelector('#title .dropdown');
@@ -153,183 +155,233 @@ document.addEventListener('DOMContentLoaded', function() {
     const prevButton = document.querySelector('#prev');
     const nextButton = document.querySelector('#next');
 
-    document.querySelector('.navbar-expand').addEventListener('click', function() {
-        versionItem.classList.remove('active');
-        titleItem.classList.remove('active');
-    });
+    /** @type {AbortController} */
+    let abortController;
 
-    const params = {
-        page: pages[0].key,
-        version: 'latest',
-        index: 0
-    };
-
-    location.hash.substr(1).split('&').forEach(function (param) {
-        const entry = param.split('=', 2);
-        params[entry[0]] = entry[1];
-    });
-
-    if (!params.access_token) {
-        if (mapboxgl.accessToken) {
-            params.access_token = mapboxgl.accessToken;
-        } else {
-            params.access_token = prompt("Access Token");
+    /**
+     * Returns the appropriate JS and CSS URLs for the selected version
+     * @param {string} version
+     * @returns {{js: string, css: string}}
+     */
+    function getUrls(version) {
+        if (version === 'latest') {
+            return {
+                js: './dist/mapbox-gl.js',
+                css: './dist/mapbox-gl.css'
+            };
         }
+        return {
+            js: `https://api.mapbox.com/mapbox-gl-js/${version}/mapbox-gl.js`,
+            css: `https://api.mapbox.com/mapbox-gl-js/${version}/mapbox-gl.css`
+        };
     }
 
-    titleElement.addEventListener('click', function() {
-        versionItem.classList.remove('active');
-        titleItem.classList[titleItem.classList.contains('active') ? 'remove' : 'add']('active');
-    });
-
-    let pageIndex = 0;
-    for (let i = 0; i < pages.length; i++) {
-        if (params.page === pages[i].key) {
-            pageIndex = i;
-            break;
-        }
-    }
-    params.index = pageIndex;
-    params.page = pages[pageIndex].key;
-
-    for (let i = 0; i < pages.length; ++i) {
-        const page = pages[i];
-        const item = document.createElement('a');
-        item.classList.add('dropdown-item');
-        item.innerHTML = '<span class="item-title">' + page.title + '</span>';
-        item.dataset.page = page;
-        item.dataset.index = i;
-        item.addEventListener('click', function() {
-            pageIndex = this.dataset.index;
-            if (pageIndex < 0) pageIndex = 0;
-            params.page = pages[pageIndex].key;
-            params.index = pageIndex;
-            titleItem.classList.remove('active');
-            load();
-        });
-        titleDropdown.appendChild(item);
+    /**
+     * Sanitizes content from remote docs.mapbox.com pages
+     * @param {string} doc
+     * @param {string} jsUrl
+     * @param {string} cssUrl
+     * @returns {string}
+     */
+    function sanitizeRemoteContent(doc, jsUrl, cssUrl) {
+        return doc
+            .replace(REGEX_PATTERNS.MAPBOX_JS_CDN, jsUrl)
+            .replace(REGEX_PATTERNS.MAPBOX_CSS_CDN, cssUrl)
+            .replace(REGEX_PATTERNS.API_KEY, `${accessToken}"`)
+            .replace(REGEX_PATTERNS.INSTRUMENTILE_SCRIPT, '')
+            .replace(REGEX_PATTERNS.SENTRY_SCRIPT, '');
     }
 
-    if (!(params.version in versions)) {
-        params.version = 'latest';
+    /**
+     * Sanitizes content from local HTML files
+     * @param {string} doc
+     * @param {string} jsUrl
+     * @param {string} cssUrl
+     * @returns {string}
+     */
+    function sanitizeLocalContent(doc, jsUrl, cssUrl) {
+        return doc
+            .replace(REGEX_PATTERNS.LOCAL_JS_SCRIPT, `<script src="${jsUrl}"></script>`)
+            .replace(REGEX_PATTERNS.LOCAL_CSS_LINK, `<link rel="stylesheet" href="${cssUrl}" />`);
     }
 
-    versionNumber.innerText = params.version;
-    versionButton.addEventListener('click', function() {
-        titleItem.classList.remove('active');
-        versionItem.classList[versionItem.classList.contains('active') ? 'remove' : 'add']('active');
-    });
-
-    Object.keys(versions).forEach(function(version) {
-        const item = document.createElement('a');
-        item.classList.add('dropdown-item');
-        const metadata = versions[version];
-        if (metadata.prerelease) {
-            item.classList.add('item-prerelease');
-        }
-        item.innerHTML = '<span class="item-title">' + version + '</span> <span class="item-meta">' + (metadata.released ? (new Date(metadata.released)).toISOString().substr(0, 10) : '&lt;unknown&gt;') +  '</span>';
-        item.dataset.version = version;
-        item.addEventListener('click', function() {
-            params.version = this.dataset.version;
-            versionItem.classList.remove('active');
-            load();
-        });
-        versionDropdown.appendChild(item);
-    });
-
-    let req;
-    let url;
-
-    function load() {
-        if (req) {
-            req.abort();
+    /**
+     * @param {Page} page
+     */
+    async function loadContent(page) {
+        if (abortController) {
+            abortController.abort();
         }
 
-        while (container.firstChild) container.removeChild(container.firstChild);
+        container.replaceChildren();
 
-        params.page = pages[pageIndex].key;
-        const version = params.version;
+        abortController = new AbortController();
+        const url = page.url || `https://docs.mapbox.com/mapbox-gl-js/assets/${page.key}-demo.html`;
+        const {js, css} = getUrls(state.version);
 
-        const page = pages[pageIndex];
-        titleElement.innerText = page.title;
-        versionNumber.innerText = params.version;
-
-        req = new XMLHttpRequest();
-        req.addEventListener("load", loadedHTML);
-
-        url = page.url ? page.url : 'https://docs.mapbox.com/mapbox-gl-js/assets/' + page.key + '-demo.html';
-        req.open("GET", url);
-        req.send();
-
-        function loadedHTML() {
-            if (req.status !== 200) {
-                container.innerText = 'Failed to load ' + url + ': ' + req.statusText;
+        try {
+            const response = await fetch(url, {signal: abortController.signal});
+            if (!response.ok) {
+                container.innerText = `Failed to load ${url}: ${response.statusText}`;
                 return;
             }
+
+            let doc = await response.text();
+
+            // Apply correct sanitization based on content source
+            doc = page.url ?
+                sanitizeLocalContent(doc, js, css) :
+                sanitizeRemoteContent(doc, js, css);
+
+            // Create and populate iframe
             const iframe = document.createElement('iframe');
             container.appendChild(iframe);
             const iframeDoc = iframe.contentWindow.document.open("text/html", "replace");
-
-            const js = version === 'latest' ? jsLatest.href : 'https://api.mapbox.com/mapbox-gl-js/' + version + '/mapbox-gl.js';
-            const css = version === 'latest' ? cssLatest.href : 'https://api.mapbox.com/mapbox-gl-js/' + version + '/mapbox-gl.css';
-
-            let doc = req.response;
-
-            if (!page.url) { // Perform cleanups for pages hosted on docs.mapbox.com, otherwise directly use demo code
-                const versionLibRegex = /https:\/\/api\.mapbox\.com\/mapbox-gl-js\/v[0-9]+\.[0-9]+\.[0-9]+\/mapbox-gl\.js/g;
-                const versionCSSRegex = /https:\/\/api\.mapbox\.com\/mapbox-gl-js\/v[0-9]+\.[0-9]+\.[0-9]+\/mapbox-gl\.css/g;
-                const sentryRegex = /<script src="https:\/\/js\.sentry-cdn\.com\/[0-9a-f]*\.min\.js"\s*crossorigin="anonymous"><\/script>/g;
-                const instrumentileRegex = /<script>if\(window\.map instanceof mapboxgl\.Map\)var i=new instrumentile.*<\/script>/g;
-                const apiKeyRegex = /pk\..*?"/g;
-
-                // Update versions + api key
-                doc = doc.replace(versionLibRegex, js);
-                doc = doc.replace(versionCSSRegex, css);
-                doc = doc.replace(apiKeyRegex, params.access_token + '"');
-
-                // Remove extraneous analytics
-                doc = doc.replace(instrumentileRegex, '');
-                doc = doc.replace(sentryRegex, '');
-            } else { // Perform cleanups of pages locally referenced
-                const versionLibRegex = /<script src='(.*)mapbox-gl(.*)\.js'><\/script>/g;
-                const versionCSSRegex = /<link rel='stylesheet'(.*)mapbox-gl\.css'(.*)\/>/g;
-                const apiKeyRegex = /<script(.*)access_token_generated\.js(.*)\/script>/g;
-
-                doc = doc.replace(versionLibRegex, '<script src="' + js + '"></script>');
-                doc = doc.replace(versionCSSRegex, '<link rel="stylesheet" href="' + css + '" />');
-                doc = doc.replace(apiKeyRegex, '<script>mapboxgl.accessToken="' + params.access_token + '"</script>');
-            }
-
-            iframeDoc.write([doc].join(''));
+            iframeDoc.write(doc);
             iframeDoc.close();
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                container.innerText = `Failed to load ${url}: ${error.message}`;
+            }
         }
-
-        prevButton.classList[(pageIndex === 0) ? 'add' : 'remove']('disabled');
-        nextButton.classList[(pageIndex + 1 === pages.length) ? 'add' : 'remove']('disabled');
-
-        let hash = 'page=' + page.key;
-        if (version !== 'latest') {
-            hash += '&version=' + version;
-        }
-        if (!mapboxgl.accessToken) {
-            hash += '&access_token=' + params.access_token;
-        }
-        location.hash = hash;
     }
 
-    prevButton.addEventListener('click', function() {
-        if (pageIndex > 0) {
-            pageIndex--;
-            load();
-        }
-    });
+    /**
+     * @param {number} pageIndex
+     */
+    function loadPage(pageIndex) {
+        const page = pages[pageIndex];
 
-    nextButton.addEventListener('click', function() {
-        if (pageIndex + 1 < pages.length) {
-            pageIndex++;
-            load();
-        }
-    });
+        // Update state
+        state.page = page.key;
+        state.index = pageIndex;
 
-    load();
+        // Update UI
+        titleElement.innerText = page.title;
+        versionNumber.innerText = state.version;
+
+        // Update navigation buttons
+        prevButton.classList.toggle('disabled', pageIndex === 0);
+        nextButton.classList.toggle('disabled', pageIndex + 1 === pages.length);
+
+        // Update URL hash
+        let hash = `page=${page.key}`;
+        if (state.version !== 'latest') {
+            hash += `&version=${state.version}`;
+        }
+
+        location.hash = hash;
+
+        // Load content
+        loadContent(page);
+    }
+
+    /**
+     * Initialize the state from URL parameters
+     * @returns {{page: string, version: string, index: number}}
+     */
+    function initState() {
+        const state = {
+            page: pages[0].key,
+            version: 'latest',
+            index: 0
+        };
+
+        const searchParams = new URLSearchParams(location.hash.slice(1));
+        for (const [key, value] of searchParams) {
+            state[key] = value;
+        }
+
+        if (!(state.version in versions)) {
+            state.version = 'latest';
+        }
+
+        const pageIndex = pages.findIndex(p => p.key === state.page);
+        if (pageIndex === -1) {
+            state.index = 0;
+            state.page = pages[0].key;
+        } else {
+            state.index = pageIndex;
+            state.page = pages[pageIndex].key;
+        }
+
+        return state;
+    }
+
+    /**
+     * Initialize all UI elements and event listeners
+     * @param {{page: string, version: string, index: number}} state
+     */
+    function initUI(state) {
+        function closeDropdown() {
+            versionItem.classList.remove('active');
+            titleItem.classList.remove('active');
+        }
+
+        // Navbar expand button
+        document.querySelector('.navbar-expand').addEventListener('click', closeDropdown);
+
+        // Title dropdown toggle
+        titleElement.addEventListener('click', () => {
+            versionItem.classList.remove('active');
+            titleItem.classList.toggle('active');
+        });
+
+        // Create page dropdown items
+        for (const [i, page] of pages.entries()) {
+            const item = document.createElement('a');
+            item.classList.add('dropdown-item');
+            item.innerHTML = `<span class="item-title">${page.title}</span>`;
+            item.addEventListener('click', () => {
+                state.page = page.key;
+                state.index = i;
+                closeDropdown();
+                loadPage(i);
+            });
+            titleDropdown.appendChild(item);
+        }
+
+        // Navigation buttons
+        prevButton.addEventListener('click', () => {
+            if (state.index > 0) {
+                state.index--;
+                loadPage(state.index);
+            }
+        });
+
+        nextButton.addEventListener('click', () => {
+            if (state.index + 1 < pages.length) {
+                state.index++;
+                loadPage(state.index);
+            }
+        });
+
+        // Version selector
+        versionNumber.innerText = state.version;
+        versionButton.addEventListener('click', () => {
+            titleItem.classList.remove('active');
+            versionItem.classList.toggle('active');
+        });
+
+        // Create version dropdown items
+        for (const [version, metadata] of Object.entries(versions)) {
+            const item = document.createElement('a');
+            item.classList.add('dropdown-item');
+            if (metadata.prerelease) {
+                item.classList.add('item-prerelease');
+            }
+            item.innerHTML = `<span class="item-title">${version}</span> <span class="item-meta">${metadata.released?.split('T')[0] || '&lt;unknown&gt;'}</span>`;
+            item.addEventListener('click', () => {
+                state.version = version;
+                closeDropdown();
+                loadPage(state.index);
+            });
+            versionDropdown.appendChild(item);
+        }
+    }
+
+    const state = initState();
+    initUI(state);
+
+    loadPage(state.index);
 });

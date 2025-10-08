@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - 'debug/**'
+      - '**.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+        cache: npm
+        cache-dependency-path: 'package-lock.json'
+    - run: npm ci --no-audit --no-fund
+    - run: |
+        npm run codegen
+        git add -A && git diff --staged --exit-code
+    - run: npm run tsc
+    - run: npm run test-style-spec
+    - run: npm run test-expressions
+    - run: npm run lint
+    - run: npm run lint-css
+
+  test-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+        cache: npm
+        cache-dependency-path: 'package-lock.json'
+    - run: npm ci --no-audit --no-fund
+    - run: npx playwright install chromium --with-deps --no-shell
+    - run: npm run build-dev
+    - run: npm run build-prod
+    - run: npm run build-prod-min
+    - run: npm run build-style-spec
+    - run: npm run build-csp
+    - run: npm run test-build
+    - run: (cd ./test/build/transpilation && npm ci && npm run build)
+    - run: xvfb-run -a npm run test-csp
+    - run: npm run build-css
+    - run: npm run size
+    - run: npm run prepare-release-pages
+      if: ${{ always() }}
+
+  test-typings:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+        cache: npm
+        cache-dependency-path: 'package-lock.json'
+    - run: npm ci --no-audit --no-fund
+    - run: npm run build-dts
+    - run: (cd ./test/build/typings && npm ci && npm run tsc)
+
+  test-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+        cache: npm
+        cache-dependency-path: 'package-lock.json'
+    - run: npm ci --no-audit --no-fund
+    - run: npx playwright install chrome --with-deps
+    - run: xvfb-run -a npm run test-unit
+
+  report:
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    permissions:
+      pull-requests: write
+    needs: [
+      check,
+      test-build,
+      test-typings,
+      test-unit
+    ]
+    steps:
+    - id: report
+      run: |
+        status_emoji() {
+          case "$1" in
+            success) echo "✅" ;;
+            failure) echo "❌" ;;
+            cancelled) echo "🚫" ;;
+            skipped) echo "⏭️" ;;
+            *) echo "❓" ;;
+          esac
+        }
+
+        overall_status="✅ All Passed"
+        if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+          overall_status="❌ Some Failed"
+        elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+          overall_status="🚫 Some Cancelled"
+        fi
+
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## $overall_status
+
+        | Job | Status |
+        |-----|--------|
+        | check | $(status_emoji "${{ needs.check.result }}") |
+        | test-build | $(status_emoji "${{ needs.test-build.result }}") |
+        | test-typings | $(status_emoji "${{ needs.test-typings.result }}") |
+        | test-unit | $(status_emoji "${{ needs.test-unit.result }}") |
+        EOF

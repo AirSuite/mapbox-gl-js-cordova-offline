@@ -2,9 +2,9 @@
 <html>
 <head>
     <title>Gestures</title>
-    <meta charset='utf-8'>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <link rel='stylesheet' href='../dist/mapbox-gl.css' />
+    <link rel="stylesheet" href="../dist/mapbox-gl.css" />
     <style>
         html, body {
             margin: 0;
@@ -71,23 +71,22 @@
     </ul>
 </div>
 <div style='width: 500px; height: 500px;'></div>
-<script src='../dist/mapbox-gl-dev.js'></script>
-<script src='../debug/access_token_generated.js'></script>
-<script>
+<script src="../dist/mapbox-gl-dev.js"></script>
+<script type="module">
+import {getAccessToken} from './access_token_generated.js';
 
-if (!mapboxgl.supported()) {
-    alert('Your browser does not support Mapbox GL');
-} else {
-    const map = new mapboxgl.Map({
-        container: 'map',
-        devtools: true,
-        zoom: 12.5,
-        center: [-77.01866, 38.888],
-        style: 'mapbox://styles/mapbox/streets-v11',
-        cooperativeGestures: true
-    });
-    map.addControl(new mapboxgl.FullscreenControl());
-}
+mapboxgl.accessToken = getAccessToken();
+
+const map = new mapboxgl.Map({
+    container: 'map',
+    devtools: true,
+    zoom: 12.5,
+    center: [-77.01866, 38.888],
+    style: 'mapbox://styles/mapbox/streets-v11',
+    cooperativeGestures: true
+});
+
+map.addControl(new mapboxgl.FullscreenControl());
 
 </script>
 </body>

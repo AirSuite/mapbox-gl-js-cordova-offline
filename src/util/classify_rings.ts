@@ -1,0 +1,54 @@
+import quickselect from 'quickselect';
+import {calculateSignedArea} from './util';
+
+import type Point from '@mapbox/point-geometry';
+
+type Ring = Point[] & {area?: number};
+
+// classifies an array of rings into polygons with outer rings and holes
+export default function classifyRings(rings: Ring[], maxRings: number): Array<Ring[]> {
+    const len = rings.length;
+
+    if (len <= 1) return [rings];
+
+    const polygons: Array<Ring[]> = [];
+    let polygon,
+        ccw;
+
+    for (let i = 0; i < len; i++) {
+        const area = calculateSignedArea(rings[i]);
+        if (area === 0) continue;
+
+        rings[i].area = Math.abs(area);
+
+        if (ccw === undefined) ccw = area < 0;
+
+        if (ccw === area < 0) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+            if (polygon) polygons.push(polygon);
+            polygon = [rings[i]];
+
+        } else {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            (polygon).push(rings[i]);
+        }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    if (polygon) polygons.push(polygon);
+
+    // Earcut performance degrades with the # of rings in a polygon. For this
+    // reason, we limit strip out all but the `maxRings` largest rings.
+    if (maxRings > 1) {
+        for (let j = 0; j < polygons.length; j++) {
+            if (polygons[j].length <= maxRings) continue;
+            quickselect(polygons[j], maxRings, 1, polygons[j].length - 1, compareAreas);
+            polygons[j] = polygons[j].slice(0, maxRings);
+        }
+    }
+
+    return polygons;
+}
+
+function compareAreas(a: Ring, b: Ring): number {
+    return b.area - a.area;
+}

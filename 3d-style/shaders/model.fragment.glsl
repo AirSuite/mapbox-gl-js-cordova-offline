@@ -19,8 +19,8 @@ in highp vec4 v_position_height;
 in lowp vec4 v_color_mix;
 
 #ifdef RENDER_SHADOWS
-in vec4 v_pos_light_view_0;
-in vec4 v_pos_light_view_1;
+in highp vec4 v_pos_light_view_0;
+in highp vec4 v_pos_light_view_1;
 in float v_depth_shadows;
 #endif
 
@@ -64,15 +64,45 @@ uniform sampler2D u_normalTexture;
 #ifdef HAS_TEXTURE_u_emissionTexture
 uniform sampler2D u_emissionTexture;
 #endif
+#ifdef APPLY_LUT_ON_GPU
+uniform highp sampler3D u_lutTexture;
+#endif
 
 #ifdef TERRAIN_FRAGMENT_OCCLUSION
 in highp float v_depth;
-uniform sampler2D u_depthTexture;
-uniform vec2 u_inv_depth_size;
+uniform highp sampler2D u_depthTexture;
+uniform highp vec2 u_inv_depth_size;
+uniform highp vec2 u_depth_range_unpack;
+
+#ifdef DEPTH_D24
+    highp float unpack_depth(highp float depth) {
+        return  depth * u_depth_range_unpack.x + u_depth_range_unpack.y;
+    }
+#else
+    // Unpack depth from RGBA. A piece of code copied in various libraries and WebGL
+    // shadow mapping examples.
+    // https://aras-p.info/blog/2009/07/30/encoding-floats-to-rgba-the-final/
+    highp float unpack_depth_rgba(highp vec4 rgba_depth)
+    {
+        const highp vec4 bit_shift = vec4(1.0 / (255.0 * 255.0 * 255.0), 1.0 / (255.0 * 255.0), 1.0 / 255.0, 1.0);
+        return dot(rgba_depth, bit_shift) * 2.0 - 1.0;
+    }
+#endif
 
 bool isOccluded() {
-    vec2 coord = gl_FragCoord.xy * u_inv_depth_size;
-    highp float depth = unpack_depth(texture(u_depthTexture, coord));
+    highp vec2 coord = gl_FragCoord.xy * u_inv_depth_size;
+
+    #ifdef FLIP_Y
+        coord.y = 1.0 - coord.y;
+    #endif
+
+
+    #ifdef DEPTH_D24
+        highp float depth = unpack_depth(texture(u_depthTexture, coord).r);
+    #else
+        highp float depth = unpack_depth_rgba(texture(u_depthTexture, coord));
+    #endif
+
     // Add some marging to avoid depth precision issues
     return v_depth > depth + 0.0005;
 }
@@ -160,7 +190,12 @@ vec4 getBaseColor() {
         albedo *= texColor;
     }
 #endif
-    return vec4(mix(albedo.rgb, v_color_mix.rgb, v_color_mix.a), albedo.a);
+
+    vec4 color = vec4(mix(albedo.rgb, v_color_mix.rgb, v_color_mix.a), albedo.a);
+#ifdef APPLY_LUT_ON_GPU
+    color = applyLUT(u_lutTexture, color);
+#endif
+    return color;
 }
 
 // From http://www.thetenthplanet.de/archives/1180
@@ -179,6 +214,11 @@ highp mat3 cotangentFrame(highp vec3 N, highp vec3 p, highp vec2 uv ) {
     highp vec3 dp1perp = cross( N, dp1 );
     highp vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
     highp vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+#ifdef FLIP_Y
+    T = -T;
+    B = -B;
+#endif
+
     // construct a scale-invariant frame
     // Some Adrenos GPU needs to set explicitely highp
     highp float lengthT = dot(T,T);
@@ -202,7 +242,11 @@ highp vec3 getNormal(){
     highp vec3 fdx = vec3(dFdx(v_position_height.x), dFdx(v_position_height.y), dFdx(v_position_height.z));
     highp vec3 fdy = vec3(dFdy(v_position_height.x), dFdy(v_position_height.y), dFdy(v_position_height.z));
     // Z flipped so it is towards the camera.
+#ifdef FLIP_Y
+    n = normalize(cross(fdx,fdy));
+#else
     n = normalize(cross(fdx,fdy)) * -1.0;
+#endif
 #endif
 
 #if defined(HAS_TEXTURE_u_normalTexture) && defined(HAS_ATTRIBUTE_a_uv_2f)
@@ -465,6 +509,12 @@ vec4 finalColor;
 #if defined(HAS_TEXTURE_u_emissionTexture) && defined(HAS_ATTRIBUTE_a_uv_2f)
     emissive.rgb *= sRGBToLinear(texture(u_emissionTexture, uv_2f).rgb);
 #endif
+#ifdef APPLY_LUT_ON_GPU
+    // Note: the color is multiplied by the length of u_emissiveFactor
+    // which avoids increasing the brightness if the LUT doesn't have pure black.
+    float emissiveFactorLength = max(length(u_emissiveFactor.rgb), 0.001);
+    emissive.rgb = sRGBToLinear(applyLUT(u_lutTexture, linearTosRGB(emissive.rgb / emissiveFactorLength).rbg)) * emissiveFactorLength;
+#endif
     color += emissive.rgb;
 
     // Apply transparency
@@ -474,7 +524,11 @@ vec4 finalColor;
 
     resEmission *= v_height_based_emission_params.z + v_height_based_emission_params.w * pow(clamp(v_height_based_emission_params.x, 0.0, 1.0), v_height_based_emission_params.y);
 
-    color = mix(color, v_color_mix.rgb, min(1.0, resEmission));
+    vec3 color_mix = v_color_mix.rgb;
+#ifdef APPLY_LUT_ON_GPU
+    color_mix = applyLUT(u_lutTexture, color_mix);
+#endif
+    color = mix(color, color_mix, min(1.0, resEmission));
 #ifdef HAS_ATTRIBUTE_a_color_4f
     // pbr includes color. If pbr is used, color_4f is used to pass information about light geometry.
     // calculate distance to line segment, multiplier 1.3 additionally deattenuates towards extruded corners.
@@ -501,7 +555,11 @@ vec4 finalColor;
 #endif
 
 #ifdef INDICATOR_CUTOUT
-    finalColor = applyCutout(finalColor);
+    finalColor = applyCutout(finalColor, v_position_height.w);
+#endif
+
+#ifdef FEATURE_CUTOUT
+    finalColor = apply_feature_cutout(finalColor, gl_FragCoord);
 #endif
 
     glFragColor = finalColor;

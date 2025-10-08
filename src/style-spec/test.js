@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-// @noflow
-/* eslint-disable no-process-exit */
 
 import fs from 'fs';
 import {execSync} from 'child_process';
 import {createRequire} from 'module';
 
-const packageJson = JSON.parse(fs.readFileSync('./package.json'));
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const packageJson = JSON.parse(fs.readFileSync('./package.json').toString());
 
-process.on('unhandledRejection', error => {
+process.on('unhandledRejection', (/** @type {Error} */ error) => {
     // don't log `error` directly, because errors from child_process.execSync
     // contain an (undocumented) `envPairs` with environment variable values
     console.log(error.message || 'unhandledRejection');
@@ -19,7 +18,9 @@ const require = createRequire(import.meta.url);
 const stylePath = require.resolve('mapbox-gl-styles/styles/basic-v9.json');
 
 try {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     for (const bin in packageJson.bin) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         const script = packageJson.bin[bin];
         const command = [script, stylePath].join(' ');
 
@@ -27,6 +28,7 @@ try {
         execSync(command).toString();
     }
 } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     console.log(error.message);
     process.exit(1);
 }

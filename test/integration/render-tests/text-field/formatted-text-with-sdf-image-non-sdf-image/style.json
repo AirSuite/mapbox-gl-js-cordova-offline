@@ -2,12 +2,14 @@
   "version": 8,
   "metadata": {
     "test": {
+      "spriteFormat": "raster",
       "height": 128,
       "width": 200
     }
   },
   "center": [ 0, 0 ],
   "zoom": 0,
+  "camera": {"camera-projection": "orthographic"},
   "sources": {
     "point": {
       "type": "geojson",

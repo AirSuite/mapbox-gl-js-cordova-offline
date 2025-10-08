@@ -2,6 +2,7 @@
     "version": 8,
     "metadata": {
         "test": {
+            "pixelRatio": 2,
             "height": 128,
             "width": 128
         }
@@ -11,6 +12,7 @@
         0
     ],
     "zoom": 0,
+    "camera": {"camera-projection": "orthographic"},
     "sources": {
         "icon-source": {
             "type": "geojson",

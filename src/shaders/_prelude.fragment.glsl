@@ -21,14 +21,14 @@ highp vec4 pack_depth(highp float ndc_z) {
 }
 
 #ifdef INDICATOR_CUTOUT
-uniform vec2 u_indicator_cutout_centers;
+uniform vec3 u_indicator_cutout_centers;
 uniform vec4 u_indicator_cutout_params;
 #endif
 
-// TODO: could be moved to a separate prelude
-vec4 applyCutout(vec4 color) {
+vec4 applyCutout(vec4 color, float height) {
 #ifdef INDICATOR_CUTOUT
-    float holeMinOpacity = u_indicator_cutout_params.x;
+    float verticalFadeRange = u_indicator_cutout_centers.z * 0.25; // Fade relative to the height of the indicator
+    float holeMinOpacity = mix(1.0, u_indicator_cutout_params.x, smoothstep(u_indicator_cutout_centers.z, u_indicator_cutout_centers.z + verticalFadeRange, height));
     float holeRadius = max(u_indicator_cutout_params.y, 0.0);
     float holeAspectRatio = u_indicator_cutout_params.z;
     float fadeStart = u_indicator_cutout_params.w;
@@ -54,19 +54,30 @@ in float v_cutoff_opacity;
 #endif
 
 // This function should be used in cases where mipmap usage is expected and
-// the sampling coordinates are not continous. The lod_parameter should be 
-// a continous function derived from the sampling coordinates. 
-vec4 textureLodCustom(sampler2D image, vec2 pos, vec2 lod_coord) {
-    vec2 size = vec2(textureSize(image, 0));
-    vec2 dx = dFdx(lod_coord.xy * size);
-    vec2 dy = dFdy(lod_coord.xy * size);
-    float delta_max_sqr = max(dot(dx, dx), dot(dy, dy));
-    float lod = 0.5 * log2(delta_max_sqr); 
+// the sampling coordinates are not continous. The lod_parameter should be
+// a continous function derived from the sampling coordinates.
+vec4 textureLodCustom(sampler2D image, highp vec2 pos, highp vec2 lod_coord) {
+    highp vec2 size = vec2(textureSize(image, 0));
+    highp vec2 dx = dFdx(lod_coord.xy * size);
+    highp vec2 dy = dFdy(lod_coord.xy * size);
+    highp float delta_max_sqr = max(dot(dx, dx), dot(dy, dy));
+    highp float lod = 0.5 * log2(delta_max_sqr);
     // Note: textureLod doesn't support anisotropic filtering
-    // We could use textureGrad instead which supports it, but it's discouraged 
+    // We could use textureGrad instead which supports it, but it's discouraged
     // in the ARM Developer docs:
-    // "Do not use textureGrad() unless absolutely necessary. 
+    // "Do not use textureGrad() unless absolutely necessary.
     // It is much slower that texture() and textureLod()..."
     // https://developer.arm.com/documentation/101897/0301/Buffers-and-textures/Texture-sampling-performance
     return textureLod(image, pos, lod);
+}
+
+vec4 applyLUT(highp sampler3D lut, vec4 col) {
+    vec3 size = vec3(textureSize(lut, 0));
+    // Sample from the center of the pixel in the LUT
+    vec3 uvw = (col.rbg * float(size - 1.0) + 0.5) / size;
+    return vec4(texture(lut, uvw).rgb * col.a, col.a);
+}
+
+vec3 applyLUT(highp sampler3D lut, vec3 col) {
+    return applyLUT(lut, vec4(col, 1.0)).rgb;
 }

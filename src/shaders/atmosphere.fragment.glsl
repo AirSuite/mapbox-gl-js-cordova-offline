@@ -4,7 +4,7 @@ uniform float u_transition;
 uniform highp float u_fadeout_range;
 uniform highp float u_temporal_offset;
 
-uniform vec4 u_color;
+uniform vec4 u_atmosphere_fog_color;
 uniform vec4 u_high_color;
 uniform vec4 u_space_color;
 
@@ -72,11 +72,11 @@ void main() {
     // https://www.desmos.com/calculator/l5v8lw9zby
     float t = exp(-horizon_angle / u_fadeout_range);
 
-    float alpha_0 = u_color.a;
+    float alpha_0 = u_atmosphere_fog_color.a;
     float alpha_1 = u_high_color.a;
     float alpha_2 = u_space_color.a;
 
-    vec3 color_stop_0 = u_color.rgb;
+    vec3 color_stop_0 = u_atmosphere_fog_color.rgb;
     vec3 color_stop_1 = u_high_color.rgb;
     vec3 color_stop_2 = u_space_color.rgb;
 
@@ -94,13 +94,6 @@ void main() {
     vec3 c2 = mix(c0, c1, t);
 
     vec3 c = c2;
-
-    // Do not apply dithering for mobile
-    // Performance impact is quite noticable whereas the visual difference is not that high
-#ifndef NATIVE
-    // Dither
-    c = dither(c, gl_FragCoord.xy + u_temporal_offset);
-#endif
 
     // Blending with background space color
     glFragColor = vec4(c * t, t);

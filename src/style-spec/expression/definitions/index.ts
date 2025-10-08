@@ -1,0 +1,754 @@
+import {
+    NumberType,
+    StringType,
+    BooleanType,
+    ColorType,
+    ObjectType,
+    ValueType,
+    ErrorType,
+    CollatorType,
+    array,
+    toString as typeToString,
+} from '../types';
+import {typeOf, Color, validateRGBA, validateHSLA, toString as valueToString} from '../values';
+import CompoundExpression from '../compound_expression';
+import RuntimeError from '../runtime_error';
+import Let from './let';
+import Var from './var';
+import Literal from './literal';
+import Assertion from './assertion';
+import Coercion from './coercion';
+import At from './at';
+import AtInterpolated from './at_interpolated';
+import In from './in';
+import IndexOf from './index_of';
+import Match from './match';
+import Case from './case';
+import Slice from './slice';
+import Split from './split';
+import Step from './step';
+import Interpolate from './interpolate';
+import Coalesce from './coalesce';
+import {
+    Equals,
+    NotEquals,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual
+} from './comparison';
+import CollatorExpression from './collator';
+import NumberFormat from './number_format';
+import FormatExpression from './format';
+import ImageExpression from './image';
+import Length from './length';
+import Within from './within';
+import Config from './config';
+import Distance from './distance';
+import {mulberry32} from '../../util/random';
+
+import type {Type} from '../types';
+import type {Value} from '../values';
+import type EvaluationContext from '../evaluation_context';
+import type {Varargs} from '../compound_expression';
+import type {Expression, ExpressionRegistry} from '../expression';
+
+const expressions: ExpressionRegistry = {
+    // special forms
+    '==': Equals,
+    '!=': NotEquals,
+    '>': GreaterThan,
+    '<': LessThan,
+    '>=': GreaterThanOrEqual,
+    '<=': LessThanOrEqual,
+    'array': Assertion,
+    'at': At,
+    'at-interpolated': AtInterpolated,
+    'boolean': Assertion,
+    'case': Case,
+    'coalesce': Coalesce,
+    'collator': CollatorExpression,
+    'format': FormatExpression,
+    'image': ImageExpression,
+    'in': In,
+    'index-of': IndexOf,
+    'interpolate': Interpolate,
+    'interpolate-hcl': Interpolate,
+    'interpolate-lab': Interpolate,
+    'length': Length,
+    'let': Let,
+    'literal': Literal,
+    'match': Match,
+    'number': Assertion,
+    'number-format': NumberFormat,
+    'object': Assertion,
+    'slice': Slice,
+    'step': Step,
+    'string': Assertion,
+    'to-boolean': Coercion,
+    'to-color': Coercion,
+    'to-number': Coercion,
+    'to-string': Coercion,
+    'var': Var,
+    'within': Within,
+    'distance': Distance,
+    'config': Config,
+    'split': Split
+};
+
+function rgba(ctx: EvaluationContext, [r, g, b, a]: Expression[]) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    r = r.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    g = g.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    b = b.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const alpha = a ? a.evaluate(ctx) : 1;
+    const error = validateRGBA(r, g, b, alpha);
+    if (error) throw new RuntimeError(error);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    return new Color(r as unknown as number / 255, g as unknown as number / 255, b as unknown as number / 255, alpha);
+}
+
+function hsla(ctx: EvaluationContext, [h, s, l, a]: Expression[]) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    h = h.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    s = s.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    l = l.evaluate(ctx);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const alpha = a ? a.evaluate(ctx) : 1;
+    const error = validateHSLA(h, s, l, alpha);
+    if (error) throw new RuntimeError(error);
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    const colorFunction = `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+    const color = Color.parse(colorFunction);
+    if (!color) throw new RuntimeError(`Failed to parse HSLA color: ${colorFunction}`);
+    return color;
+}
+
+function has<T extends object>(key: keyof T, obj: T): boolean {
+    return key in obj;
+}
+
+function get<T extends object>(key: keyof T, obj: T): T[keyof T] | null {
+    const v = obj[key];
+    return typeof v === 'undefined' ? null : v;
+}
+
+function binarySearch(v: unknown, a: Record<number, unknown>, i: number, j: number): boolean {
+    while (i <= j) {
+        const m = (i + j) >> 1;
+        if (a[m] === v)
+            return true;
+        if (a[m] > v)
+            j = m - 1;
+        else
+            i = m + 1;
+    }
+    return false;
+}
+
+function varargs(type: Type): Varargs {
+    return {type};
+}
+
+function hashString(str: string) {
+    let hash = 0;
+    if (str.length === 0) {
+        return hash;
+    }
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash;
+}
+
+CompoundExpression.register(expressions, {
+    'error': [
+        ErrorType,
+        [StringType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [v]) => { throw new RuntimeError(v.evaluate(ctx)); }
+    ],
+    'typeof': [
+        StringType,
+        [ValueType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [v]) => typeToString(typeOf(v.evaluate(ctx)))
+    ],
+    'to-rgba': [
+        array(NumberType, 4),
+        [ColorType],
+        (ctx, [v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            return v.evaluate(ctx).toNonPremultipliedRenderColor(null).toArray();
+        }
+    ],
+    'to-hsla': [
+        array(NumberType, 4),
+        [ColorType],
+        (ctx, [v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            return v.evaluate(ctx).toNonPremultipliedRenderColor(null).toHslaArray();
+        }
+    ],
+    'rgb': [
+        ColorType,
+        [NumberType, NumberType, NumberType],
+        rgba
+    ],
+    'rgba': [
+        ColorType,
+        [NumberType, NumberType, NumberType, NumberType],
+        rgba
+    ],
+    'hsl': [
+        ColorType,
+        [NumberType, NumberType, NumberType],
+        hsla
+    ],
+    'hsla': [
+        ColorType,
+        [NumberType, NumberType, NumberType, NumberType],
+        hsla
+    ],
+    'has': {
+        type: BooleanType,
+        overloads: [
+            [
+                [StringType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                (ctx, [key]) => has(key.evaluate(ctx), ctx.properties())
+            ], [
+                [StringType, ObjectType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                (ctx, [key, obj]) => has(key.evaluate(ctx), obj.evaluate(ctx))
+            ]
+        ]
+    },
+    'get': {
+        type: ValueType,
+        overloads: [
+            [
+                [StringType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                (ctx, [key]) => get(key.evaluate(ctx), ctx.properties())
+            ], [
+                [StringType, ObjectType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument
+                (ctx, [key, obj]) => get(key.evaluate(ctx), obj.evaluate(ctx))
+            ]
+        ]
+    },
+    'feature-state': [
+        ValueType,
+        [StringType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [key]) => get(key.evaluate(ctx), ctx.featureState || {}) as Value
+    ],
+    'properties': [
+        ObjectType,
+        [],
+        (ctx) => ctx.properties() as Value
+    ],
+    'geometry-type': [
+        StringType,
+        [],
+        (ctx) => ctx.geometryType()
+    ],
+    'worldview': [
+        StringType,
+        [],
+        (ctx) => ctx.globals.worldview || ""
+    ],
+    'is-active-floor': [
+        BooleanType,
+        varargs(StringType),
+        (ctx, args) => {
+            const hasActiveFloors = ctx.globals.activeFloors && ctx.globals.activeFloors.size > 0;
+            if (!hasActiveFloors) { return false; }
+            const floorIds: Set<string> = ctx.globals.activeFloors;
+            return args.some(arg => {
+                const value = arg.evaluate(ctx) as string;
+                return floorIds.has(value);
+            });
+        }
+    ],
+    'id': [
+        ValueType,
+        [],
+        (ctx) => ctx.id()
+    ],
+    'zoom': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.zoom
+    ],
+    'pitch': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.pitch || 0
+    ],
+    'distance-from-center': [
+        NumberType,
+        [],
+        (ctx) => ctx.distanceFromCenter()
+    ],
+    'measure-light': [
+        NumberType,
+        [StringType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [s]) => ctx.measureLight(s.evaluate(ctx))
+    ],
+    'heatmap-density': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.heatmapDensity || 0
+    ],
+    'line-progress': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.lineProgress || 0
+    ],
+    'raster-value': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterValue || 0
+    ],
+    'raster-particle-speed': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.rasterParticleSpeed || 0
+    ],
+    'sky-radial-progress': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.skyRadialProgress || 0
+    ],
+    'accumulated': [
+        ValueType,
+        [],
+        (ctx) => (ctx.globals.accumulated === undefined ? null : ctx.globals.accumulated)
+    ],
+    '+': [
+        NumberType,
+        varargs(NumberType),
+        (ctx, args) => {
+            let result = 0;
+            for (const arg of args) {
+                result += arg.evaluate(ctx);
+            }
+            return result;
+        }
+    ],
+    '*': [
+        NumberType,
+        varargs(NumberType),
+        (ctx, args) => {
+            let result = 1;
+            for (const arg of args) {
+                result *= arg.evaluate(ctx);
+            }
+            return result;
+        }
+    ],
+    '-': {
+        type: NumberType,
+        overloads: [
+            [
+                [NumberType, NumberType],
+                (ctx, [a, b]) => a.evaluate(ctx) - b.evaluate(ctx)
+            ], [
+                [NumberType],
+                (ctx, [a]) => -a.evaluate(ctx)
+            ]
+        ]
+    },
+    '/': [
+        NumberType,
+        [NumberType, NumberType],
+        (ctx, [a, b]) => a.evaluate(ctx) / b.evaluate(ctx)
+    ],
+    '%': [
+        NumberType,
+        [NumberType, NumberType],
+        (ctx, [a, b]) => a.evaluate(ctx) % b.evaluate(ctx)
+    ],
+    'ln2': [
+        NumberType,
+        [],
+        () => Math.LN2
+    ],
+    'pi': [
+        NumberType,
+        [],
+        () => Math.PI
+    ],
+    'e': [
+        NumberType,
+        [],
+        () => Math.E
+    ],
+    '^': [
+        NumberType,
+        [NumberType, NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [b, e]) => Math.pow(b.evaluate(ctx), e.evaluate(ctx))
+    ],
+    'sqrt': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [x]) => Math.sqrt(x.evaluate(ctx))
+    ],
+    'log10': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.log(n.evaluate(ctx)) / Math.LN10
+    ],
+    'ln': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.log(n.evaluate(ctx))
+    ],
+    'log2': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.log2(n.evaluate(ctx))
+    ],
+    'sin': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.sin(n.evaluate(ctx))
+    ],
+    'cos': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.cos(n.evaluate(ctx))
+    ],
+    'tan': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.tan(n.evaluate(ctx))
+    ],
+    'asin': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.asin(n.evaluate(ctx))
+    ],
+    'acos': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.acos(n.evaluate(ctx))
+    ],
+    'atan': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.atan(n.evaluate(ctx))
+    ],
+    'min': [
+        NumberType,
+        varargs(NumberType),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument
+        (ctx, args) => Math.min(...args.map(arg => arg.evaluate(ctx)))
+    ],
+    'max': [
+        NumberType,
+        varargs(NumberType),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument
+        (ctx, args) => Math.max(...args.map(arg => arg.evaluate(ctx)))
+    ],
+    'abs': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.abs(n.evaluate(ctx))
+    ],
+    'round': [
+        NumberType,
+        [NumberType],
+        (ctx, [n]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const v = n.evaluate(ctx);
+            // Javascript's Math.round() rounds towards +Infinity for halfway
+            // values, even when they're negative. It's more common to round
+            // away from 0 (e.g., this is what python and C++ do)
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+            return v < 0 ? -Math.round(-v) : Math.round(v);
+        }
+    ],
+    'floor': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.floor(n.evaluate(ctx))
+    ],
+    'ceil': [
+        NumberType,
+        [NumberType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, [n]) => Math.ceil(n.evaluate(ctx))
+    ],
+    'filter-==': [
+        BooleanType,
+        [StringType, ValueType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        (ctx, [k, v]) => ctx.properties()[(k).value] === (v).value
+    ],
+    'filter-id-==': [
+        BooleanType,
+        [ValueType],
+        (ctx, [v]) => ctx.id() === (v).value
+    ],
+    'filter-type-==': [
+        BooleanType,
+        [StringType],
+        (ctx, [v]) => ctx.geometryType() === (v).value
+    ],
+    'filter-<': [
+        BooleanType,
+        [StringType, ValueType],
+        (ctx, [k, v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            const a = ctx.properties()[(k).value];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a < b;
+        }
+    ],
+    'filter-id-<': [
+        BooleanType,
+        [ValueType],
+        (ctx, [v]) => {
+            const a = ctx.id();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a < b;
+        }
+    ],
+    'filter->': [
+        BooleanType,
+        [StringType, ValueType],
+        (ctx, [k, v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            const a = ctx.properties()[(k).value];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a > b;
+        }
+    ],
+    'filter-id->': [
+        BooleanType,
+        [ValueType],
+        (ctx, [v]) => {
+            const a = ctx.id();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a > b;
+        }
+    ],
+    'filter-<=': [
+        BooleanType,
+        [StringType, ValueType],
+        (ctx, [k, v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            const a = ctx.properties()[(k).value];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a <= b;
+        }
+    ],
+    'filter-id-<=': [
+        BooleanType,
+        [ValueType],
+        (ctx, [v]) => {
+            const a = ctx.id();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a <= b;
+        }
+    ],
+    'filter->=': [
+        BooleanType,
+        [StringType, ValueType],
+        (ctx, [k, v]) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            const a = ctx.properties()[(k).value];
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a >= b;
+        }
+    ],
+    'filter-id->=': [
+        BooleanType,
+        [ValueType],
+        (ctx, [v]) => {
+            const a = ctx.id();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const b = (v).value;
+            return typeof a === typeof b && a >= b;
+        }
+    ],
+    'filter-has': [
+        BooleanType,
+        [ValueType],
+        (ctx, [k]) => (k).value in ctx.properties()
+    ],
+    'filter-has-id': [
+        BooleanType,
+        [],
+        (ctx) => (ctx.id() !== null && ctx.id() !== undefined)
+    ],
+    'filter-type-in': [
+        BooleanType,
+        [array(StringType)],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [v]) => (v).value.indexOf(ctx.geometryType()) >= 0
+    ],
+    'filter-id-in': [
+        BooleanType,
+        [array(ValueType)],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [v]) => (v).value.indexOf(ctx.id()) >= 0
+    ],
+    'filter-in-small': [
+        BooleanType,
+        [StringType, array(ValueType)],
+        // assumes v is an array literal
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [k, v]) => (v).value.indexOf(ctx.properties()[(k).value]) >= 0
+    ],
+    'filter-in-large': [
+        BooleanType,
+        [StringType, array(ValueType)],
+        // assumes v is a array literal with values sorted in ascending order and of a single type
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
+        (ctx, [k, v]) => binarySearch(ctx.properties()[(k).value], (v).value, 0, (v).value.length - 1)
+    ],
+    'all': {
+        type: BooleanType,
+        overloads: [
+            [
+                [BooleanType, BooleanType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+                (ctx, [a, b]) => a.evaluate(ctx) && b.evaluate(ctx)
+            ],
+            [
+                varargs(BooleanType),
+                (ctx, args) => {
+                    for (const arg of args) {
+                        if (!arg.evaluate(ctx))
+                            return false;
+                    }
+                    return true;
+                }
+            ]
+        ]
+    },
+    'any': {
+        type: BooleanType,
+        overloads: [
+            [
+                [BooleanType, BooleanType],
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+                (ctx, [a, b]) => a.evaluate(ctx) || b.evaluate(ctx)
+            ],
+            [
+                varargs(BooleanType),
+                (ctx, args) => {
+                    for (const arg of args) {
+                        if (arg.evaluate(ctx))
+                            return true;
+                    }
+                    return false;
+                }
+            ]
+        ]
+    },
+    '!': [
+        BooleanType,
+        [BooleanType],
+        (ctx, [b]) => !b.evaluate(ctx)
+    ],
+    'is-supported-script': [
+        BooleanType,
+        [StringType],
+        // At parse time this will always return true, so we need to exclude this expression with isGlobalPropertyConstant
+        (ctx, [s]) => {
+            const isSupportedScript = ctx.globals && ctx.globals.isSupportedScript;
+            if (isSupportedScript) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                return isSupportedScript(s.evaluate(ctx));
+            }
+            return true;
+        }
+    ],
+    'upcase': [
+        StringType,
+        [StringType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [s]) => s.evaluate(ctx).toUpperCase()
+    ],
+    'downcase': [
+        StringType,
+        [StringType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [s]) => s.evaluate(ctx).toLowerCase()
+    ],
+    'concat': [
+        StringType,
+        varargs(ValueType),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        (ctx, args) => args.map(arg => valueToString(arg.evaluate(ctx))).join('')
+    ],
+    'resolved-locale': [
+        StringType,
+        [CollatorType],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        (ctx, [collator]) => collator.evaluate(ctx).resolvedLocale()
+    ],
+    'random': [
+        NumberType,
+        [NumberType, NumberType, ValueType],
+        (ctx, args) => {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-assignment
+            const [min, max, seed] = args.map(arg => arg.evaluate(ctx));
+            if (min > max) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+                return min;
+            }
+            if (min === max) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+                return min;
+            }
+            let seedVal;
+            if (typeof seed === 'string') {
+                seedVal = hashString(seed);
+            } else if (typeof seed === 'number') {
+                seedVal = seed;
+            } else {
+                throw new RuntimeError(`Invalid seed input: ${seed}`);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+            const random = mulberry32(seedVal)();
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            return min + random * (max - min);
+        }
+    ],
+});
+
+export default expressions;

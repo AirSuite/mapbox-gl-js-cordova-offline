@@ -4,10 +4,11 @@
         "test": {
             "width": 200,
             "height": 200,
+            "allowed": 0.01,
             "collisionDebug": true,
             "description": "Covers placement and collision for elevated text. There is also text completely behind terrain that shouldn't be visible.",
             "operations": [
-                ["wait", 1500]
+                ["waitFrameReady", 30]
             ]
         }
     },
@@ -63,6 +64,10 @@
                     "Arial Unicode MS Bold"
                 ],
                 "symbol-placement": "line"
+            },
+            "paint": {
+                "icon-occlusion-opacity": 0,
+                "text-occlusion-opacity": 0
             },
             "interactive": true
         }

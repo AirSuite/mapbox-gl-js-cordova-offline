@@ -1,10 +1,13 @@
 
+/**
+ * NOTE: When skipping a GL JS test, it also needs to be skipped in Native at projects/gl-native/metrics/ignores/platform-all.json
+ */
+
 const todo = [
     // "https://github.com/mapbox/mapbox-gl-js/issues/2716
     "query-tests/regressions/mapbox-gl-js#4494",
-
-    // https://github.com/mapbox/mapbox-gl-js/issues/7207
-    "render-tests/fill-pattern/update-feature-state",
+    // To be ported: https://mapbox.atlassian.net/browse/GLJS-892
+    "query-tests/symbol/above-horizon",
 
     // https://github.com/mapbox/mapbox-gl-js/issues/5649,
     "render-tests/map-mode/static",
@@ -31,7 +34,80 @@ const todo = [
     "render-tests/model-layer/landmark-conflation-buckingham",
 
     // https://mapbox.atlassian.net/browse/MAPS3D-987
-    "render-tests/model-layer/landmark-shadows-terrain"
+    "render-tests/model-layer/landmark-shadows-terrain",
+
+    // https://mapbox.atlassian.net/browse/GLJS-1005
+    "expression-tests/image/two-arguments/available",
+    "render-tests/image-fallback-nested/add-image-after",
+
+    // Known issues with the elevated lines implementation
+    // https://github.com/mapbox/mapbox-gl-js-internal/pull/1909
+    "render-tests/elevated-line/join-none",
+    "render-tests/elevated-line/join-linear-elevation",
+    // z-fighting issues
+    "render-tests/elevated-line-sort-key/literal",
+    "render-tests/elevated-line-color/property-function",
+    // Rendering issue at tile border
+    "render-tests/elevated-line-translate/function",
+    "render-tests/elevated-line-translate-anchor/map",
+    "render-tests/elevated-line-translate-anchor/viewport-terrain",
+    "render-tests/elevated-line-translate-anchor/viewport",
+    // Globe projection not supported yet
+    "render-tests/elevated-line-pattern-trim-offset/globe-end-offset",
+    "render-tests/elevated-line-pattern-trim-offset/globe-mid-offset",
+    "render-tests/elevated-line-pattern-trim-offset/globe-start-offset",
+    // blur issues
+    "render-tests/elevated-line-blur/high-pitch",
+    "render-tests/elevated-line-blur/property-function",
+    // border issues
+    "render-tests/elevated-line-border/color",
+    "render-tests/elevated-line-border/default",
+    "render-tests/elevated-line-border/gradient",
+    "render-tests/elevated-line-border/trim-offset",
+    "render-tests/elevated-line-border/width",
+    // opacity issues
+    "render-tests/elevated-line-join/bevel-transparent",
+    "render-tests/elevated-line-opacity/data-driven",
+    "render-tests/elevated-line-opacity/multiple-layers",
+    "render-tests/elevated-line-opacity/property-function",
+    // possibly related to incorrect line progress values near line-joins and line-caps
+    "render-tests/elevated-line-join/property-function-dasharray",
+    "render-tests/elevated-line-pattern-trim-offset/end-offset",
+    "render-tests/elevated-line-pattern-trim-offset/line-join-none-start-offset",
+    "render-tests/elevated-line-pattern-trim-offset/mid-offset",
+    "render-tests/elevated-line-pattern-trim-offset/shared-source",
+    "render-tests/elevated-line-pattern-trim-offset/start-offset",
+    "render-tests/elevated-line-pattern/line-join-none-fract-zoom",
+    "render-tests/elevated-line-trim-offset/gradient-end-offset",
+    "render-tests/elevated-line-trim-offset/gradient-mid-offset",
+    "render-tests/elevated-line-trim-offset/gradient-round-cap",
+    "render-tests/elevated-line-trim-offset/gradient-shared-source",
+    "render-tests/elevated-line-trim-offset/gradient-start-offset",
+    "render-tests/elevated-line-trim-offset/gradient-step",
+    "render-tests/elevated-line-trim-offset/gradient-with-dash",
+    "render-tests/elevated-line-trim-offset/pure-color-end-offset",
+    "render-tests/elevated-line-trim-offset/pure-color-mid-offset",
+    "render-tests/elevated-line-trim-offset/pure-color-round-cap",
+    "render-tests/elevated-line-trim-offset/pure-color-shared-source",
+    "render-tests/elevated-line-trim-offset/pure-color-start-offset",
+    "render-tests/elevated-line-trim-offset/pure-color-with-dash",
+    "render-tests/elevated-line-trim-offset/trim-color-fade",
+    "render-tests/elevated-line-gradient/gradient-shared-source",
+    "render-tests/elevated-line-gradient/gradient-step",
+    "render-tests/elevated-line-gradient/gradient-with-dash",
+    "render-tests/elevated-line-gradient/gradient",
+    "render-tests/elevated-line-gradient/translucent",
+    // pattern issues
+    "render-tests/elevated-line-pattern/line-join-none-runtime-pattern",
+    "render-tests/elevated-line-pattern/line-join-none-with-offset",
+    "render-tests/elevated-line-pattern/line-join-none",
+    "render-tests/elevated-line-pattern/overscaled",
+    // line-width projected
+    "render-tests/elevated-line-width/projected",
+    // https://mapbox.atlassian.net/browse/MAPSNAT-2636
+    "render-tests/icon-text-fit/stretch-nine-part-content-interpolate-text-size",
+    // https://mapbox.atlassian.net/browse/GLJS-1189
+    "render-tests/background-pattern/image-update/delayed/same-size-before-color-theme-change",
 ];
 
 const skip = [
@@ -61,9 +137,6 @@ const skip = [
     // Current behavior is arbitrary
     "render-tests/geojson/inline-linestring-fill",
 
-    // Render SDF icon and normal icon in one layer
-    "render-tests/icon-image/icon-sdf-non-sdf-one-layer",
-
     // Mapbox-gl-js does not support tile-mode
     "render-tests/icon-text-fit/text-variable-anchor-tile-map-mode",
     "render-tests/map-mode/tile",
@@ -90,10 +163,6 @@ const skip = [
     // non-deterministic symbol placement on tile boundaries"
     "render-tests/text-variable-anchor/pitched",
 
-    // Flaky
-    // https://github.com/mapbox/mapbox-gl-js/issues/11234
-    "render-tests/video/projected",
-
     // Non-deterministic
     "query-tests/terrain/draped/lines/slope-occlusion-box-query",
 
@@ -110,38 +179,15 @@ const skip = [
     // Extremely flaky: https://github.com/mapbox/mapbox-gl-js/issues/11726
     "query-tests/terrain/draped/lines/slope-occlusion",
 
-    // Broken due to chrome update https://mapbox.atlassian.net/browse/GLJS-303
-    "query-tests/terrain/circle/map-aligned/overzoomed",
-    "render-tests/debug/collision-overscaled-fractional-zoom",
-    "render-tests/globe/globe-transforms/north-pole",
-    "render-tests/icon-image/stretchable-content",
-    "render-tests/icon-opacity/default",
-    "render-tests/icon-opacity/function",
-    "render-tests/icon-opacity/icon-only",
-    "render-tests/icon-opacity/literal",
-    "render-tests/icon-opacity/text-and-icon",
-    "render-tests/icon-translate-anchor/map",
-    "render-tests/icon-translate-anchor/viewport",
-    "render-tests/icon-translate/default",
-    "render-tests/icon-translate/function",
-    "render-tests/icon-translate/literal",
-    "render-tests/icon-visibility/visible",
-    "render-tests/raster-resampling/function",
-    "render-tests/raster-resampling/literal",
-    "render-tests/regressions/mapbox-gl-js#7172",
-    "render-tests/runtime-styling/set-style-sprite",
-    "render-tests/symbol-placement/point",
-    "render-tests/symbol-spacing/point-close",
-    "render-tests/symbol-spacing/point-far",
-    "render-tests/symbol-visibility/visible",
-    "render-tests/terrain/wireframe",
-
     // Unimplemented in -js:
     // https://mapbox.atlassian.net/browse/MAPS3D-671
     "render-tests/lighting-3d-mode/shadow/fill-extrusion-flat-roof",
 
     // fill-extrusion-rounded-roof not implemented in -js
     "render-tests/lighting-3d-mode/fill-extrusion/rounded-flat-roof",
+
+    // https://mapbox.atlassian.net/browse/MAPS3D-1742
+    "render-tests/model-layer/landmark-conflation-multiple-model-layers",
 
     // alpha textures not supported in -js
     "render-tests/model-layer/model-opacity-cutout-texture",
@@ -158,20 +204,6 @@ const skip = [
     // Dithering of fog is always enabled in GL-JS
     "render-tests/fog/dithering-runtime-off",
 
-    // Needs updated model fixtures
-    "render-tests/model-layer/landmark-conflation-border-overlapping-extrusion",
-    "render-tests/model-layer/landmark-conflation-borders",
-    "render-tests/model-layer/landmark-conflation-borders-add-layer",
-    "render-tests/model-layer/landmark-conflation-borders-terrain",
-    "render-tests/model-layer/landmark-conflation-multiple-model-layers",
-    "render-tests/model-layer/landmark-shadows-terrain",
-    "render-tests/model-layer/landmark-shadows-opacity",
-    "render-tests/model-layer/landmark-terrain",
-    "render-tests/model-layer/lighting-3d-mode/shadow",
-    "render-tests/model-layer/landmark-conflation-multiple-sources",
-    "render-tests/model-layer/landmark-shadow-skip-render",
-    "render-tests/model-layer/landmark-multiple-model-layers-z-offset-hide-evaluated",
-
     // Not implemented in gl-js
     "render-tests/fill-extrusion-partial-rendering/partial-rendering-0",
     "render-tests/fill-extrusion-partial-rendering/partial-rendering-1",
@@ -186,7 +218,54 @@ const skip = [
     "render-tests/model-layer/multiple-models-terrain",
 
     // The algorithm for raster colour gradient texels stretching needs an adjustment
-    "render-tests/raster-color/categorical"
+    "render-tests/raster-color/categorical",
+
+    // Not working correctly
+    // https://github.com/mapbox/mapbox-gl-js-internal/pull/1909
+    "render-tests/lines-elevated-line-join-none",
+    "render-tests/lines-elevated-line-joins-linear-elevation",
+
+    // Support image updates with different size
+    "render-tests/background-pattern/image-update/delayed/different-size",
+    "render-tests/background-pattern/image-update/delayed/different-size-before-color-theme-change",
+    "render-tests/background-pattern/image-update/delayed/different-size-with-color-theme",
+
+    // https://mapbox.atlassian.net/browse/GLJS-1295
+    "render-tests/placement/icon-optional",
+    "render-tests/placement/text-optional/basic",
+    "render-tests/placement/text-optional/text-variable-anchor",
+    // limit number of holes experimental for native
+    "render-tests/fill-limit-number-holes",
+
+    // Needs updated model fixtures
+    "render-tests/model-layer/landmark-conflation-border-overlapping-extrusion",
+    "render-tests/model-layer/landmark-conflation-borders",
+    "render-tests/model-layer/landmark-conflation-borders-add-layer",
+    "render-tests/model-layer/landmark-conflation-borders-terrain",
+    "render-tests/model-layer/landmark-conflation-multiple-model-layers",
+    "render-tests/model-layer/landmark-shadows-terrain",
+    "render-tests/model-layer/landmark-shadows-opacity",
+    "render-tests/model-layer/landmark-terrain",
+    "render-tests/model-layer/lighting-3d-mode/shadow",
+    "render-tests/model-layer/landmark-conflation-multiple-sources",
+    "render-tests/model-layer/landmark-shadow-skip-render",
+    "render-tests/model-layer/landmark-multiple-model-layers-z-offset-hide-evaluated",
+    "render-tests/model-layer/landmark-shadows-opacity-cutoff-range",
+    "render-tests/model-layer/landmark-front-cutoff",
+    "render-tests/model-layer/landmark-front-cutoff-disabled",
+    "render-tests/model-layer/landmark-front-cutoff-no-fade",
+    "render-tests/model-layer/landmark-front-cutoff-opacity",
+    "render-tests/model-layer/landmark-front-cutoff-terrain",
+    "render-tests/clip-layer/clip-layer-default-below-one-batched-model",
+
+    // fill-extrusions always get removed. This will be separated (similar to symbol and model) in future.
+    "render-tests/clip-layer/clip-layer-keep-fill-extrusions",
+
+    // Requires support for hd-roads-markup/elevationId - not yet supported in gl-js
+    "render-tests/model-layer/model-elevation-reference/hd-road-markup/with-elevation-id",
+    "render-tests/building/terrain/terrain-toggle-conflation-works",
+    "render-tests/building/terrain/terrain-unsupported",
+    "render-tests/building/globe-unsupported"
 ];
 
 export default {todo, skip};

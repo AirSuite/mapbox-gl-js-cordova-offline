@@ -1,0 +1,93 @@
+import type Point from '@mapbox/point-geometry';
+import type {SymbolFeature} from '../data/bucket/symbol_bucket';
+
+export default function (features: Array<SymbolFeature>): Array<SymbolFeature> {
+    const leftIndex: {
+        [_: string]: number;
+    } = {};
+    const rightIndex: {
+        [_: string]: number;
+    } = {};
+    const mergedFeatures = [];
+    let mergedIndex = 0;
+
+    function add(k: number) {
+        mergedFeatures.push(features[k]);
+        mergedIndex++;
+    }
+
+    function mergeFromRight(leftKey: string, rightKey: string, geom: Array<Array<Point>>) {
+        const i = rightIndex[leftKey];
+        delete rightIndex[leftKey];
+        rightIndex[rightKey] = i;
+
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        mergedFeatures[i].geometry[0].pop();
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+        mergedFeatures[i].geometry[0] = mergedFeatures[i].geometry[0].concat(geom[0]);
+        return i;
+    }
+
+    function mergeFromLeft(leftKey: string, rightKey: string, geom: Array<Array<Point>>) {
+        const i = leftIndex[rightKey];
+        delete leftIndex[rightKey];
+        leftIndex[leftKey] = i;
+
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        mergedFeatures[i].geometry[0].shift();
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
+        mergedFeatures[i].geometry[0] = geom[0].concat(mergedFeatures[i].geometry[0]);
+        return i;
+    }
+
+    function getKey(text: string, geom: Array<Array<Point>>, onRight?: boolean | null) {
+        const point = onRight ? geom[0][geom[0].length - 1] : geom[0][0];
+        return `${text}:${point.x}:${point.y}`;
+    }
+
+    for (let k = 0; k < features.length; k++) {
+        const feature = features[k];
+        const geom = feature.geometry;
+        const text = feature.text ? feature.text.toString() : null;
+
+        if (!text) {
+            add(k);
+            continue;
+        }
+
+        const leftKey = getKey(text, geom),
+            rightKey = getKey(text, geom, true);
+
+        if ((leftKey in rightIndex) && (rightKey in leftIndex) && (rightIndex[leftKey] !== leftIndex[rightKey])) {
+            // found lines with the same text adjacent to both ends of the current line, merge all three
+            const j = mergeFromLeft(leftKey, rightKey, geom);
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
+            const i = mergeFromRight(leftKey, rightKey, mergedFeatures[j].geometry);
+
+            delete leftIndex[leftKey];
+            delete rightIndex[rightKey];
+
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
+            rightIndex[getKey(text, mergedFeatures[i].geometry, true)] = i;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            mergedFeatures[j].geometry = null;
+
+        } else if (leftKey in rightIndex) {
+            // found mergeable line adjacent to the start of the current line, merge
+            mergeFromRight(leftKey, rightKey, geom);
+
+        } else if (rightKey in leftIndex) {
+            // found mergeable line adjacent to the end of the current line, merge
+            mergeFromLeft(leftKey, rightKey, geom);
+
+        } else {
+            // no adjacent lines, add as a new item
+            add(k);
+            leftIndex[leftKey] = mergedIndex - 1;
+            rightIndex[rightKey] = mergedIndex - 1;
+        }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+    return mergedFeatures.filter((f) => f.geometry);
+}

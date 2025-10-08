@@ -2,7 +2,8 @@
   "version": 8,
   "metadata": {
     "test": {
-      "height": 256
+      "height": 256,
+      "allowed": 0.00612
     }
   },
   "center": [
@@ -10,6 +11,7 @@
     52.499167
   ],
   "zoom": 14,
+  "camera": {"camera-projection": "orthographic"},
   "sources": {
     "mapbox": {
       "type": "vector",

@@ -1,14 +1,14 @@
-/* eslint-env browser */
-/* global mapboxgl:readonly */
 import customLayerImplementations from '../custom_layer_implementations.js';
+import {mapboxgl} from './mapboxgl.js';
+import {renderTestNow} from './constants.js';
 
 function handleOperation(map, operations, opIndex, doneCb) {
     const operation = operations[opIndex];
     const opName = operation[0];
     //Delegate to special handler if one is available
     if (opName in operationHandlers) {
-        operationHandlers[opName](map, operation.slice(1), () => {
-            doneCb(opIndex);
+        operationHandlers[opName](map, operation.slice(1), (promise) => {
+            doneCb(opIndex, promise);
         });
     } else {
         map[opName](...operation.slice(1));
@@ -21,23 +21,64 @@ const MIN_FRAMES = 1;
 export const operationHandlers = {
     wait(map, params, doneCb) {
         if (params.length) {
-            window._renderTestNow += params[0];
-            mapboxgl.setNow(window._renderTestNow);
+            renderTestNow.current += params[0];
+            mapboxgl.setNow(renderTestNow.current);
         }
 
         waitForRender(map, () => map.loaded(), doneCb);
+    },
+    forceContextRestart(map, params, doneCb) {
+        const canvas = map.getCanvas();
+        const ext = map.painter.context.gl.getExtension('WEBGL_lose_context');
+        canvas.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+            setTimeout(() => {
+                ext.restoreContext();
+                doneCb();
+            });
+        });
+        ext.loseContext();
+    },
+    waitFrameReady(map, params, doneCb) {
+        let timeIterationInterval = 0;
+        if (params.length) {
+            timeIterationInterval = params[0];
+        }
+
+        let prevTime = Date.now();
+
+        waitForRender(map, () => {
+            if (timeIterationInterval !== 0) {
+                renderTestNow.current += timeIterationInterval;
+            } else {
+                const curTime = Date.now();
+                renderTestNow.current += curTime - prevTime;
+                prevTime = curTime;
+            }
+            mapboxgl.setNow(renderTestNow.current);
+            return map.frameReady();
+        }, doneCb);
     },
     sleep(map, params, doneCb) {
         setTimeout(doneCb, params[0]);
     },
     addImage(map, params, doneCb) {
+        params[1] = params[1].replace('./', '/test/integration/');
+        if (params[1].endsWith('.js')) {
+            import(/* @vite-ignore */ params[1]).then(({image}) => {
+                map.addImage(params[0], image, params[2] || {});
+                doneCb();
+            });
+            return;
+        }
+
         const image = new Image();
         image.onload = () => {
             map.addImage(params[0], image, params[2] || {});
             doneCb();
         };
 
-        image.src = params[1].replace('./', '');
+        image.src = params[1];
         image.onerror = () => {
             throw new Error(`addImage opertation failed with src ${image.src}`);
         };
@@ -98,7 +139,9 @@ export const operationHandlers = {
         waitForRender(map, () => true, doneCb);
     },
     updateFakeCanvas(map, params, doneCb) {
-        const updateFakeCanvas = async function() {
+        params[1] = params[1].replace('./', '/test/integration/');
+        params[2] = params[2].replace('./', '/test/integration/');
+        const updateFakeCanvas = async function () {
             const canvasSource = map.getSource(params[0]);
             canvasSource.play();
             // update before pause should be rendered
@@ -112,7 +155,7 @@ export const operationHandlers = {
     setStyle(map, params, doneCb) {
         // Disable local ideograph generation (enabled by default) for
         // consistent local ideograph rendering using fixtures in all runs of the test suite.
-        map.setStyle(params[0], {localIdeographFontFamily: false});
+        map.setStyle(params[0], {localIdeographFontFamily: false, ...params[1]});
         doneCb();
     },
     pauseSource(map, params, doneCb) {
@@ -145,6 +188,7 @@ export const operationHandlers = {
         doneCb();
     },
     updateImage(map, params, doneCb) {
+        params[1] = params[1].replace('./', '/test/integration/');
         map.loadImage(params[1], (error, image) => {
             if (error) throw error;
 
@@ -161,6 +205,7 @@ export const operationHandlers = {
         doneCb();
     },
     setCustomTexture(map, params, doneCb) {
+        params[1] = params[1].replace('./', '/test/integration/');
         map.loadImage(params[1], (error, image) => {
             if (error) throw error;
 
@@ -184,7 +229,7 @@ export const operationHandlers = {
     check(map, params, doneCb) {
         // We still don't handle params[0] === "shadowPassVerticesCount" as lazy shadow map rendering is not implemented
         if (params[0] === "renderedVerticesCount") {
-            const layer = map.getLayer(params[1]);
+            const layer = map.style.getLayer(params[1]);
             const layerStats = layer.getLayerRenderingStats();
             const renderedVertices = params[0] === "renderedVerticesCount" ? layerStats.numRenderedVerticesInTransparentPass : layerStats.numRenderedVerticesInShadowPass;
             if (renderedVertices !== params[2]) {
@@ -192,26 +237,47 @@ export const operationHandlers = {
             }
         }
         doneCb();
+    },
+    updateGeoJSONData(map, [sourceId, data], doneCb) {
+        map.getSource(sourceId).updateData(data);
+        doneCb();
+    },
+    on(map, params, doneCb) {
+        doneCb(new Promise((resolve) => {
+            map.on(params[0], async () => {
+                await applyOperations(map, {operations: params[1]}, params[0]);
+                resolve();
+            });
+        }));
+    },
+    showCollisionBoxes(map, params, doneCb) {
+        map.showCollisionBoxes = true;
+        doneCb();
     }
 };
 
-export async function applyOperations(map, {operations}) {
+export async function applyOperations(map, {operations}, currentTestName) {
     if (!operations) return Promise.resolve();
+    const pending = [];
 
     return new Promise((resolve, reject) => {
         let currentOperation = null;
         // Start recursive chain
-        const scheduleNextOperation = (lastOpIndex) => {
+        const scheduleNextOperation = (lastOpIndex, promise) => {
+            if (promise) {
+                pending.push(promise);
+            }
             if (lastOpIndex === operations.length - 1) {
                 // Stop recusive chain when at the end of the operations
-                resolve();
+                // Also wait for all pending operations
+                Promise.all(pending).then(() => resolve());
                 return;
             }
             currentOperation = operations[lastOpIndex + 1];
             handleOperation(map, operations, ++lastOpIndex, scheduleNextOperation);
         };
         map.once('error', (e) => {
-            reject(new Error(`Error occured during ${JSON.stringify(currentOperation)}. ${e.error.stack}`));
+            reject(new Error(`${currentTestName}: Error occured during ${JSON.stringify(currentOperation)}. ${e.error.stack}`));
         });
         scheduleNextOperation(-1);
     });
@@ -224,6 +290,8 @@ function updateCanvas(imagePath) {
         const image = new Image();
         image.src = imagePath.replace('./', '');
         image.onload = () => {
+            canvas.width = image.width;
+            canvas.height = image.height;
             resolve(ctx.drawImage(image, 0, 0, image.width, image.height));
         };
 
@@ -235,7 +303,7 @@ function updateCanvas(imagePath) {
 
 function waitForRender(map, conditional, doneCb) {
     let frameCt = 0;
-    const wait = function() {
+    const wait = function () {
         if (conditional() && frameCt >= MIN_FRAMES) {
             doneCb();
         } else {

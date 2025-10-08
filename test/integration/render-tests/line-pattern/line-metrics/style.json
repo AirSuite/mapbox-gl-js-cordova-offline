@@ -2,7 +2,8 @@
   "version": 8,
   "metadata": {
     "test": {
-      "height": 256
+      "height": 256,
+      "allowed": 0.0003
     }
   },
   "center": [
@@ -32,7 +33,7 @@
       "lineMetrics": true
     }
   },
-  "sprite": "local://sprites/emerald",
+  "sprite": "local://sprites/standard",
   "layers": [
     {
       "id": "background",
@@ -47,7 +48,7 @@
       "source": "geojson",
       "paint": {
         "line-color": "#000",
-        "line-pattern": "generic_icon",
+        "line-pattern": "information",
         "line-width": 25
       }
     }
